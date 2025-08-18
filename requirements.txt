@@ -52,8 +52,6 @@ pdf2image
 
 pillow
 
-bson
-
 pymongo
 
 motor
