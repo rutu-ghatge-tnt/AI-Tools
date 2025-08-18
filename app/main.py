@@ -1,8 +1,7 @@
-# app/main.py
-
 from fastapi import FastAPI
 from app.api import router as api_router
-from app.image_extractor.route import router as image_extractor_router  # ✅ NEW import
+from app.ai_ingredient_intelligence.api.analyze_inci import router as analyze_inci_router   # ✅ import here
+from app.image_extractor.route import router as image_extractor_router
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(
@@ -11,7 +10,7 @@ app = FastAPI(
     version="1.0"
 )
 
-# ✅ CORS Configuration: Allow only your frontend origin
+# ✅ CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["https://tt.skintruth.in", "http://localhost:5174", "http://localhost:5173"],     
@@ -23,10 +22,12 @@ app.add_middleware(
 # ✅ Existing chatbot API
 app.include_router(api_router, prefix="/api")
 
-# ✅ New image-to-JSON API 
-app.include_router(image_extractor_router, prefix="/api")  # <--- added here
+# ✅ Add analyze-inci API
+app.include_router(analyze_inci_router, prefix="/api")   # <--- added
 
-# ✅ Root healthcheck endpoint
+# ✅ New image-to-JSON API
+app.include_router(image_extractor_router, prefix="/api")
+
 @app.get("/")
 async def root():
     return {"message": "Welcome to SkinBB AI Chatbot API. Use POST /api/chat to interact v1."}
