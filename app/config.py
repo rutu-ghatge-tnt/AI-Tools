@@ -23,10 +23,6 @@ CHROMA_DB_PATH: str = str("chroma_db")
 if not CLAUDE_API_KEY:
     raise ValueError("❌ CLAUDE_API_KEY is not set in the .env file.")
 
-import os
-from pathlib import Path
-from dotenv import load_dotenv
-
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 

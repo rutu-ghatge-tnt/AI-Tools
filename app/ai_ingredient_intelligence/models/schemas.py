@@ -8,6 +8,8 @@ class AnalyzeInciItem(BaseModel):
     ingredient_name: str
     supplier_name: Optional[str] = None
     description: Optional[str] = None
+    rephrased_description: Optional[str] = None   # ✅ new
+    category_decided: Optional[str] = None        # ✅ new
     functionality_category_tree: Optional[List[List[str]]] = []
     chemical_class_category_tree: Optional[List[List[str]]] = []
     match_score: float
