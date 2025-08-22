@@ -15,8 +15,15 @@ class AnalyzeInciItem(BaseModel):
     matched_count: int
     total_brand_inci: int
 
+class InciGroup(BaseModel):
+    inci_list: List[str]                  # the set of INCI names matched
+    items: List[AnalyzeInciItem]          # all branded ingredients that matched this INCI set
+    count: int    
+    
 class AnalyzeInciResponse(BaseModel):
-    matched: List[AnalyzeInciItem]
+    grouped: List[InciGroup]  
     unmatched: List[str]
     overall_confidence: float
     processing_time: float
+
+                        # how many branded ingredients matched

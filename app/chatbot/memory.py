@@ -1,4 +1,5 @@
-# app/memory.py
+# app/chatbot/memory.py
+"""Session-based in-memory chat history management"""
 from typing import Dict, List
 from uuid import uuid4
 

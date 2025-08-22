@@ -1,3 +1,4 @@
+# app/image_extractor/route.py
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from .claude import extract_structured_info
 from .google_vision import extract_text_from_image

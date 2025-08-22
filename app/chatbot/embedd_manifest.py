@@ -1,3 +1,4 @@
+# app/chatbot/embedd_manifest.py
 import json
 from pathlib import Path
 

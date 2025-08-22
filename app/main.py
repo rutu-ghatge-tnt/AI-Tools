@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from app.api import router as api_router
+from app.chatbot.api import router as api_router
 from app.ai_ingredient_intelligence.api.analyze_inci import router as analyze_inci_router   # ✅ import here
 from app.image_extractor.route import router as image_extractor_router
 from fastapi.middleware.cors import CORSMiddleware

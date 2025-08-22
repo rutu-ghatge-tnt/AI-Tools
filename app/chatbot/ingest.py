@@ -1,4 +1,5 @@
-# app/ingest.py
+# app/chatbot/ingest.py
+"""Ingest and embed documents into ChromaDB vectorstore"""
 import os
 from pathlib import Path
 from tqdm import tqdm
@@ -6,8 +7,8 @@ from rich import print as rprint
 import traceback
 import pandas as pd
 from app.config import CHROMA_DB_PATH
-from app.utils import extract_text
-from app.embedd_manifest import load_manifest, save_manifest
+from app.chatbot.utils import extract_text
+from app.chatbot.embedd_manifest import load_manifest, save_manifest
 
 # LangChain setup
 os.environ["LANGCHAIN_ENDPOINT"] = "none"

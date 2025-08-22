@@ -1,4 +1,5 @@
-# app/llm_claude.py
+# app/chatbot/llm_claude.py
+"""Claude LLM integration via LangChain"""
 try:
     from langchain_anthropic import ChatAnthropic
 except ImportError:
