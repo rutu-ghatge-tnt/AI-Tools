@@ -1,8 +1,14 @@
-from typing import List, Optional
+from typing import List, Optional, Union
 from pydantic import BaseModel, Field
+from fastapi import UploadFile
 
 class AnalyzeInciRequest(BaseModel):
-    inci_names: List[str] = Field(..., description="Raw INCI names from product label")
+    inci_names: Optional[List[str]] = Field(None, description="Raw INCI names from product label")
+    # New fields for different input types
+    pdf_file: Optional[UploadFile] = Field(None, description="PDF file containing ingredient list")
+    image_file: Optional[UploadFile] = Field(None, description="Image file containing ingredient list")
+    camera_image: Optional[str] = Field(None, description="Base64 encoded camera image")
+    input_type: str = Field(..., description="Type of input: 'text', 'pdf', 'image', or 'camera'")
 
 class AnalyzeInciItem(BaseModel):
     ingredient_name: str
@@ -27,5 +33,7 @@ class AnalyzeInciResponse(BaseModel):
     unmatched: List[str]
     overall_confidence: float
     processing_time: float
+    extracted_text: Optional[str] = Field(None, description="Text extracted from input")
+    input_type: str = Field(..., description="Type of input processed")
 
                         # how many branded ingredients matched

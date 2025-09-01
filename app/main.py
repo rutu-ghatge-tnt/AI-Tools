@@ -1,7 +1,8 @@
 from fastapi import FastAPI
 from app.chatbot.api import router as api_router
 from app.ai_ingredient_intelligence.api.analyze_inci import router as analyze_inci_router   # ✅ import here
-from app.image_extractor.route import router as image_extractor_router
+from app.ai_ingredient_intelligence.api.formulation_report import router as formulation_report_router
+from app.product_listing_image_extraction.route import router as image_extractor_router
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(
@@ -24,6 +25,9 @@ app.include_router(api_router, prefix="/api")
 
 # ✅ Add analyze-inci API
 app.include_router(analyze_inci_router, prefix="/api")   # <--- added
+
+# ✅ Add formulation report API
+app.include_router(formulation_report_router, prefix="/api")
 
 # ✅ New image-to-JSON API
 app.include_router(image_extractor_router, prefix="/api")

@@ -69,7 +69,7 @@ User Question:
 ---
 Your structured response (in Markdown with \\n line breaks):
 """
-)
+    )
 
 
     return RetrievalQA.from_chain_type(

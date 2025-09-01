@@ -3,7 +3,7 @@ import os
 import httpx
 import re
 import json
-from app.image_extractor.prompt_template import build_prompt  # ✅ Import shared prompt
+from app.product_listing_image_extraction.prompt_template import build_prompt  # ✅ Import shared prompt
 
 CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
 CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"

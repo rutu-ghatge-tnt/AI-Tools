@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: 'Helvetica Neue', Arial, sans-serif; margin: 30px; color: #333; }
+    h1 { color: #2a4d69; font-size: 22px; margin-bottom: 10px; }
+    pre { white-space: pre-wrap; font-size: 14px; line-height: 1.5; }
+    .download-btn {
+      display: inline-block; padding: 8px 14px; margin-bottom: 20px;
+      background: #2a4d69; color: #fff; text-decoration: none; border-radius: 5px;
+    }
+  </style>
+</head>
+<body>
+  <h1>{{ title }}</h1>
+  <p><b>Project:</b> {{ project }} | <b>Date:</b> {{ date }}</p>
+
+  <a href="{{ pdf_url }}" class="download-btn">⬇ Download PDF</a>
+
+  <pre>{{ report_text }}</pre>
+</body>
+</html>

@@ -1,8 +1,8 @@
 # app/chatbot/api.py
 from fastapi import APIRouter
-from pydantic import BaseModel
 from app.chatbot.rag_pipeline import get_rag_chain
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel
 import asyncio
 import json
 
