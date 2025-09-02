@@ -11,12 +11,19 @@ app = FastAPI(
     version="1.0"
 )
 
-# ✅ CORS
+# ✅ CORS - Updated for production
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://tt.skintruth.in", "http://localhost:5174", "http://localhost:5173"],     
+    allow_origins=[
+        "https://tt.skintruth.in", 
+        "https://capi.skintruth.in",
+        "http://localhost:5174", 
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://localhost:8000"
+    ],     
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -35,3 +42,12 @@ app.include_router(image_extractor_router, prefix="/api")
 @app.get("/")
 async def root():
     return {"message": "Welcome to SkinBB AI Chatbot API. Use POST /api/chat to interact v1."}
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "message": "Server is running"}
+
+@app.options("/{path:path}")
+async def options_handler(path: str):
+    """Handle preflight OPTIONS requests for CORS"""
+    return {"message": "OK"}
