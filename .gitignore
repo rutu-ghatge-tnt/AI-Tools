@@ -152,5 +152,10 @@ __marimo__/
 # .idea/
 # .vscode/
 
+# Vision key files
+.vision_key.json
 vision_key.json
+
+# Special directories
 AV_Skinbb_Web_Industry/
+SkinBB_Web_Industry/
