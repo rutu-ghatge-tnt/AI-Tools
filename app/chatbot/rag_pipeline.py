@@ -72,8 +72,13 @@ Your structured response (in Markdown with \\n line breaks):
     )
 
 
+    llm = get_claude_llm()
+    if llm is None:
+        print("Warning: Claude LLM not available, returning None")
+        return None
+    
     return RetrievalQA.from_chain_type(
-    llm=get_claude_llm(),
+    llm=llm,
     chain_type="stuff",
     retriever=retriever,
     chain_type_kwargs={

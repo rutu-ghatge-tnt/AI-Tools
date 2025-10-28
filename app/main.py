@@ -2,7 +2,17 @@ from fastapi import FastAPI
 from app.chatbot.api import router as api_router
 from app.ai_ingredient_intelligence.api.analyze_inci import router as analyze_inci_router   # ✅ import here
 from app.ai_ingredient_intelligence.api.formulation_report import router as formulation_report_router
-from app.product_listing_image_extraction.route import router as image_extractor_router
+# from app.product_listing_image_extraction.route import router as image_extractor_router  # Commented out - module doesn't exist
+import sys
+import os
+from pathlib import Path
+
+# Add Face Analysis path to Python path
+face_analysis_path = Path(__file__).parent / "Face-Analysis"
+sys.path.insert(0, str(face_analysis_path))
+
+# Import Face Analysis app
+from face_analysis.backend.api.main import app as face_analysis_app
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(
@@ -20,7 +30,8 @@ app.add_middleware(
         "http://localhost:5174", 
         "http://localhost:5173",
         "http://localhost:3000",
-        "http://localhost:8000"
+        "http://localhost:8000",
+        "http://localhost:8501",
     ],     
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -36,8 +47,11 @@ app.include_router(analyze_inci_router, prefix="/api")   # <--- added
 # ✅ Add formulation report API
 app.include_router(formulation_report_router, prefix="/api")
 
-# ✅ New image-to-JSON API
-app.include_router(image_extractor_router, prefix="/api")
+# ✅ New image-to-JSON API - Commented out - module doesn't exist
+# app.include_router(image_extractor_router, prefix="/api")
+
+# ✅ Face Analysis API - Mount as sub-application
+app.mount("/face-analysis", face_analysis_app)
 
 @app.get("/")
 async def root():

@@ -4,8 +4,11 @@ from pathlib import Path
 import os
 from dotenv import load_dotenv
 
-# Load variables from .env file
-load_dotenv()
+# Get the absolute path to the project root directory
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load variables from .env file in project root
+load_dotenv(BASE_DIR / ".env")
 
 # Claude API settings
 from typing import Optional
@@ -21,10 +24,9 @@ CHROMA_DB_PATH: str = str("chroma_db")
 
 # Optional: Validate critical env variables early
 if not CLAUDE_API_KEY:
-    raise ValueError("❌ CLAUDE_API_KEY is not set in the .env file.")
-
-BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(BASE_DIR / ".env")
+    print("Warning: CLAUDE_API_KEY is not set in the .env file. Chatbot functionality will be limited.")
+else:
+    print(f"✅ Claude API key loaded successfully (model: {CLAUDE_MODEL})")
 
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://skinbb_owner:SkinBB%4054321@93.127.194.42:27017/skin_bb?authSource=admin")
 DB_NAME = os.getenv("DB_NAME", "skin_bb")

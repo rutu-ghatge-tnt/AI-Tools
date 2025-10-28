@@ -57,9 +57,12 @@ async def chat_endpoint(request: ChatRequest):
 
     async def stream_response():
         try:
-            rag_result = rag_chain.invoke(rag_inputs)
-            answer = rag_result.get("result", "").strip()
-            answer = answer.replace("\\n", "\n")  # Convert escaped backslash-n into real newline
+            if rag_chain is None:
+                answer = "Chatbot service is currently unavailable. Please check your API configuration."
+            else:
+                rag_result = rag_chain.invoke(rag_inputs)
+                answer = rag_result.get("result", "").strip()
+                answer = answer.replace("\\n", "\n")  # Convert escaped backslash-n into real newline
         except Exception as e:
             print("RAG error:", e)
             answer = "Sorry, something went wrong while processing your question."
