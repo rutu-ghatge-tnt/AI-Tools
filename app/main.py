@@ -46,7 +46,7 @@ app.add_middleware(
         "http://localhost:8000",
         "http://localhost:8501",
         "https://metaverse.skinbb.com"
-    ],     
+    ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
