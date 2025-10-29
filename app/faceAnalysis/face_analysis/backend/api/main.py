@@ -3,7 +3,7 @@ FastAPI Backend for Face Analysis System
 Provides REST API endpoints for face analysis and filtering
 """
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form, BackgroundTasks
+from fastapi import FastAPI, APIRouter, File, UploadFile, HTTPException, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
@@ -24,7 +24,10 @@ from ..core.config import settings
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI app
+# Create router for routes
+router = APIRouter()
+
+# Initialize FastAPI app (keep for backward compatibility)
 app = FastAPI(
     title="Face Analysis API",
     description="AI-powered facial skin health analysis system",
@@ -51,7 +54,23 @@ recommendation_engine = RecommendationEngine()
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
 os.makedirs(settings.RESULTS_DIR, exist_ok=True)
 
+# Add OPTIONS handler for CORS preflight - must be before other routes
+@router.options("/{path:path}")
+@app.options("/{path:path}")
+async def options_handler(path: str):
+    """Handle preflight OPTIONS requests for CORS"""
+    return JSONResponse(
+        status_code=200,
+        content={"message": "OK"},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+        }
+    )
+
 # Health check endpoint
+@router.get("/")
 @app.get("/")
 async def root():
     """Root endpoint with API information"""
@@ -68,12 +87,14 @@ async def root():
         }
     }
 
+@router.get("/health")
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
 
 # Analysis Endpoints
+@router.post("/analyze")
 @app.post("/analyze")
 async def analyze_face(
     file: UploadFile = File(...),
@@ -119,6 +140,7 @@ async def analyze_face(
             "timestamp": datetime.now().isoformat()
         }
 
+@router.post("/analyze/json")
 @app.post("/analyze/json")
 async def analyze_face_json(request: dict):
     """Analyze facial skin health from JSON with base64 image"""
@@ -165,6 +187,7 @@ async def analyze_face_json(request: dict):
         }
 
 # Privacy Filter Endpoints
+@router.post("/privacy-filter")
 @app.post("/privacy-filter")
 async def apply_privacy_filter(file: UploadFile = File(...)):
     """Apply privacy filter to uploaded image"""
@@ -204,6 +227,7 @@ async def apply_privacy_filter(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 # Recommendation Endpoints
+@router.post("/recommendations")
 @app.post("/recommendations")
 async def get_recommendations(request: dict):
     """Get product recommendations based on analysis and budget"""
@@ -241,6 +265,7 @@ async def get_recommendations(request: dict):
         }
 
 # Configuration Endpoints
+@router.get("/config")
 @app.get("/config")
 async def get_config():
     """Get application configuration"""
@@ -254,6 +279,7 @@ async def get_config():
         "analysis_parameters": settings.SKIN_ANALYSIS_PARAMETERS
     }
 
+@router.get("/config/analysis-parameters")
 @app.get("/config/analysis-parameters")
 async def get_analysis_parameters():
     """Get available analysis parameters"""

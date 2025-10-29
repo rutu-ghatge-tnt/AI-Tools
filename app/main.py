@@ -23,8 +23,8 @@ from pathlib import Path
 face_analysis_path = Path(__file__).parent / "faceAnalysis"
 sys.path.insert(0, str(face_analysis_path))
 
-# Import Face Analysis app
-from face_analysis.backend.api.main import app as face_analysis_app
+# Import Face Analysis router
+from face_analysis.backend.api.main import router as face_analysis_router
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(
@@ -63,8 +63,8 @@ app.include_router(formulation_report_router, prefix="/api")
 # ✅ New image-to-JSON API - Commented out - module doesn't exist
 # app.include_router(image_extractor_router, prefix="/api")
 
-# ✅ Face Analysis API - Mount as sub-application
-app.mount("/face-analysis", face_analysis_app)
+# ✅ Face Analysis API - Include router instead of mounting
+app.include_router(face_analysis_router, prefix="/api/face-analysis", tags=["Face Analysis"])
 
 @app.get("/")
 async def root():
@@ -73,8 +73,3 @@ async def root():
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "message": "Server is running"}
-
-@app.options("/{path:path}")
-async def options_handler(path: str):
-    """Handle preflight OPTIONS requests for CORS"""
-    return {"message": "OK"}
