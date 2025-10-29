@@ -20,7 +20,7 @@ from app.ai_ingredient_intelligence.api.formulation_report import router as form
 from pathlib import Path
 
 # Add Face Analysis path to Python path
-face_analysis_path = Path(__file__).parent / "Face-Analysis"
+face_analysis_path = Path(__file__).parent / "faceAnalysis"
 sys.path.insert(0, str(face_analysis_path))
 
 # Import Face Analysis app
