@@ -8,7 +8,6 @@ except ImportError:
     )
 
 from app.config import CLAUDE_API_KEY, CLAUDE_MODEL
-from pydantic import SecretStr
 
 def get_claude_llm():
     if CLAUDE_API_KEY is None:
@@ -20,7 +19,6 @@ def get_claude_llm():
             temperature=0.3,
             timeout=60,
             streaming=True,
-            stop=None,  # Provide a suitable value or list of stop sequences if needed
         )
     except Exception as e:
         print(f"Warning: Could not initialize Claude client: {e}")

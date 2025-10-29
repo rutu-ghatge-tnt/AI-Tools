@@ -1,10 +1,22 @@
+# Suppress warnings before any imports
+import os
+import sys
+import warnings
+import logging
+
+# Suppress TensorFlow/MediaPipe warnings
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+os.environ['ABSL_MIN_LOG_LEVEL'] = '2'
+logging.getLogger('tensorflow').setLevel(logging.ERROR)
+logging.getLogger('absl').setLevel(logging.ERROR)
+warnings.filterwarnings('ignore', message='.*Feedback manager.*')
+warnings.filterwarnings('ignore', category=UserWarning, module='langchain')
+
 from fastapi import FastAPI
 from app.chatbot.api import router as api_router
 from app.ai_ingredient_intelligence.api.analyze_inci import router as analyze_inci_router   # ✅ import here
 from app.ai_ingredient_intelligence.api.formulation_report import router as formulation_report_router
 # from app.product_listing_image_extraction.route import router as image_extractor_router  # Commented out - module doesn't exist
-import sys
-import os
 from pathlib import Path
 
 # Add Face Analysis path to Python path

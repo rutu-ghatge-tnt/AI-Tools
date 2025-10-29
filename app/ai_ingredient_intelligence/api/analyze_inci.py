@@ -1,11 +1,10 @@
 # app/api/analyze_inci.py
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, Form
 import time
 from typing import List, Optional
 from collections import defaultdict
 
 from app.ai_ingredient_intelligence.logic.matcher import match_inci_names
-from app.ai_ingredient_intelligence.logic.ocr_processor import OCRProcessor
 from app.ai_ingredient_intelligence.models.schemas import (
     AnalyzeInciRequest,
     AnalyzeInciResponse,
@@ -15,46 +14,23 @@ from app.ai_ingredient_intelligence.models.schemas import (
 
 router = APIRouter(tags=["INCI Analysis"])
 
-# Initialize OCR processor
-ocr_processor = OCRProcessor()
-
 
 @router.post("/analyze-inci-form", response_model=AnalyzeInciResponse)
 async def analyze_inci_form(
-    input_type: str = Form(..., description="Type of input: 'text', 'pdf', 'image', or 'camera'"),
-    inci_names: Optional[List[str]] = Form(None, description="Raw INCI names from product label"),
-    pdf_file: Optional[UploadFile] = File(None, description="PDF file containing ingredient list"),
-    image_file: Optional[UploadFile] = File(None, description="Image file containing ingredient list"),
-    camera_image: Optional[str] = Form(None, description="Base64 encoded camera image")
+    inci_names: List[str] = Form(..., description="Raw INCI names from product label")
 ):
     start = time.time()
     
     try:
-        # Validate input type
-        if input_type not in ['text', 'pdf', 'image', 'camera']:
-            raise HTTPException(status_code=400, detail="Invalid input_type. Must be 'text', 'pdf', 'image', or 'camera'")
+        if not inci_names:
+            raise HTTPException(status_code=400, detail="inci_names is required")
         
-        # Validate required inputs based on type
-        if input_type == 'text' and not inci_names:
-            raise HTTPException(status_code=400, detail="inci_names is required for text input type")
-        elif input_type == 'pdf' and not pdf_file:
-            raise HTTPException(status_code=400, detail="pdf_file is required for PDF input type")
-        elif input_type == 'image' and not image_file:
-            raise HTTPException(status_code=400, detail="image_file is required for image input type")
-        elif input_type == 'camera' and not camera_image:
-            raise HTTPException(status_code=400, detail="camera_image is required for camera input type")
-        
-        # Process input and extract ingredients
-        ingredients, extracted_text = await ocr_processor.process_input(
-            input_type=input_type,
-            inci_names=inci_names,
-            pdf_file=pdf_file,
-            image_file=image_file,
-            camera_image=camera_image
-        )
+        # Process text input
+        ingredients = inci_names
+        extracted_text = ", ".join(ingredients)
         
         if not ingredients:
-            raise HTTPException(status_code=400, detail="No ingredients could be extracted from the input")
+            raise HTTPException(status_code=400, detail="No ingredients provided")
         
         # Match ingredients using existing logic
         matched_raw, unmatched = await match_inci_names(ingredients)
@@ -92,7 +68,7 @@ async def analyze_inci_form(
         overall_confidence=confidence,
         processing_time=round(time.time() - start, 3),
         extracted_text=extracted_text,
-        input_type=input_type
+        input_type="text"
     )
 
 
@@ -102,31 +78,18 @@ async def analyze_inci(payload: dict):
     start = time.time()
     
     try:
-        # Handle simple frontend format: { inci_names: ["ingredient1", "ingredient2", ...] }
-        if "inci_names" in payload and isinstance(payload["inci_names"], list):
-            ingredients = payload["inci_names"]
-            extracted_text = ", ".join(ingredients)
-            input_type = "text"
-        else:
-            # Handle full format with input_type
-            if "input_type" not in payload:
-                raise HTTPException(status_code=400, detail="Missing required field: input_type or inci_names")
-            
-            if payload["input_type"] not in ['text', 'pdf', 'image', 'camera']:
-                raise HTTPException(status_code=400, detail="Invalid input_type. Must be 'text', 'pdf', 'image', or 'camera'")
-            
-            # Process input and extract ingredients
-            ingredients, extracted_text = await ocr_processor.process_input(
-                input_type=payload["input_type"],
-                inci_names=payload.get("inci_names"),
-                pdf_file=payload.get("pdf_file"),
-                image_file=payload.get("image_file"),
-                camera_image=payload.get("camera_image")
-            )
-            input_type = payload["input_type"]
+        # Validate payload format: { inci_names: ["ingredient1", "ingredient2", ...] }
+        if "inci_names" not in payload:
+            raise HTTPException(status_code=400, detail="Missing required field: inci_names")
+        
+        if not isinstance(payload["inci_names"], list):
+            raise HTTPException(status_code=400, detail="inci_names must be a list of strings")
+        
+        ingredients = payload["inci_names"]
+        extracted_text = ", ".join(ingredients)
         
         if not ingredients:
-            raise HTTPException(status_code=400, detail="No ingredients could be extracted from the input")
+            raise HTTPException(status_code=400, detail="No ingredients provided")
         
         # Match ingredients using existing logic
         matched_raw, unmatched = await match_inci_names(ingredients)
@@ -164,5 +127,5 @@ async def analyze_inci(payload: dict):
         overall_confidence=confidence,
         processing_time=round(time.time() - start, 3),
         extracted_text=extracted_text,
-        input_type=input_type
+        input_type="text"
     )
