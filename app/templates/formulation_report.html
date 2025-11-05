@@ -317,23 +317,45 @@
                 return `<div class="section-header">${line}</div>`;
             }
             
+            // Skip lines that are clearly descriptive text (not ingredients)
+            const descriptiveWords = [
+                'ensures', 'prevents', 'provides', 'key considerations', 'ideal', 'range',
+                'compatible', 'minimize', 'degradation', 'components', 'sensory', 'experience',
+                'without', 'excessive', 'acidity', 'alkalinity', 'natural', 'stability', 'efficacy',
+                'active', 'potential', 'sensitive', 'pleasant'
+            ];
+            
+            const isDescriptiveText = descriptiveWords.some(word => 
+                line.toLowerCase().includes(word)
+            );
+            
             // Check for ingredient lists - improved detection for long names
-            if (line.length > 0 && line.length < 200 && !line.includes('|') && !line.match(/^\d+\)/)) {
-                // List of common cosmetic ingredient keywords
+            // Only apply to lines that are NOT descriptive text and look like actual ingredient names
+            if (line.length > 0 && line.length < 200 && !line.includes('|') && !line.match(/^\d+\)/) && !isDescriptiveText) {
+                // List of common cosmetic ingredient keywords (more specific)
                 const ingredientKeywords = [
                     'Aqua', 'Water', 'Glycerin', 'Niacinamide', 'Hyaluronic', 'Salicylic', 'Benzoyl', 'Peroxide',
-                    'Tocopherol', 'Retinol', 'Acid', 'Oil', 'Extract', 'Butter', 'Wax', 'Alcohol', 'Ester',
-                    'Peptide', 'Vitamin', 'Mineral', 'Sulfate', 'Chloride', 'Citrate', 'Lactate', 'Gluconate',
+                    'Tocopherol', 'Retinol', 'Oil', 'Extract', 'Butter', 'Wax', 'Alcohol', 'Ester',
+                    'Peptide', 'Vitamin', 'Sulfate', 'Chloride', 'Citrate', 'Lactate', 'Gluconate',
                     'Dimethicone', 'Crosspolymer', 'Copolymer', 'Acrylate', 'Methacrylate', 'Polymer', 'Siloxane',
                     'Taurate', 'VP', 'Ammonium', 'Sodium', 'Potassium', 'Calcium', 'Magnesium', 'Zinc'
                 ];
                 
-                // Check if line contains ingredient keywords or looks like an ingredient name
-                const isIngredient = ingredientKeywords.some(keyword => 
-                    line.toLowerCase().includes(keyword.toLowerCase())
-                ) || line.match(/^[A-Z][a-zA-Z\s\/\-]+$/);
+                // More strict ingredient detection - must start with capital letter and be a single ingredient name
+                // Not a sentence or descriptive phrase
+                const isSingleIngredient = line.match(/^[A-Z][a-zA-Z\s\/\-]+$/) && 
+                    !line.includes(' and ') && 
+                    !line.includes(' of ') &&
+                    !line.includes(' for ') &&
+                    !line.includes(' with ') &&
+                    line.split(' ').length <= 5; // Max 5 words for ingredient names
                 
-                if (isIngredient) {
+                // Check if line contains ingredient keywords (but only if it's a single ingredient, not descriptive)
+                const hasIngredientKeyword = ingredientKeywords.some(keyword => 
+                    line.toLowerCase().includes(keyword.toLowerCase()) && isSingleIngredient
+                );
+                
+                if (hasIngredientKeyword || isSingleIngredient) {
                     // Handle long ingredient names by allowing them to wrap
                     return `<span class="ingredient-item" style="display: inline-block; max-width: 300px; word-wrap: break-word; white-space: normal;">${line}</span>`;
                 }
