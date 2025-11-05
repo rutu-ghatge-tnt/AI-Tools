@@ -329,7 +329,7 @@ def create_table_from_data(table_data):
     return table
 
 async def generate_report_text(inci_str: str, branded_ingredients: Optional[List[str]] = None, not_branded_ingredients: Optional[List[str]] = None) -> str:
-    """Generate report text using OpenAI first, fallback to Claude if OpenAI fails"""
+    """Generate report text using Claude first, fallback to OpenAI if Claude fails"""
     
     # Build categorization context if provided
     categorization_info = ""
@@ -343,32 +343,7 @@ async def generate_report_text(inci_str: str, branded_ingredients: Optional[List
     
     user_prompt = f"Generate report for this INCI list:\n{inci_str}{categorization_info}\n\nREMEMBER: Every table cell must have content. NO EMPTY CELLS!"
     
-    # Try OpenAI first
-    if openai_client:
-        try:
-            print("🔄 Attempting to generate report with OpenAI...")
-            completion = openai_client.chat.completions.create(
-                model="gpt-5",
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.1,
-                max_completion_tokens=4000
-            )
-            report_text = completion.choices[0].message.content
-            report_text = clean_ai_response(report_text)
-            print("✅ Report generated successfully with OpenAI")
-            return report_text
-            
-        except Exception as e:
-            print(f"❌ OpenAI failed: {type(e).__name__}: {e}")
-            if "quota" in str(e).lower() or "rate" in str(e).lower():
-                print("🔄 OpenAI quota exceeded, falling back to Claude...")
-            else:
-                print("🔄 OpenAI error, falling back to Claude...")
-    
-    # Fallback to Claude
+    # Try Claude first
     if claude_client:
         try:
             print("🔄 Attempting to generate report with Claude...")
@@ -389,8 +364,33 @@ async def generate_report_text(inci_str: str, branded_ingredients: Optional[List
             return report_text
             
         except Exception as e:
-            print(f"❌ Claude also failed: {type(e).__name__}: {e}")
-            raise HTTPException(status_code=500, detail=f"Both OpenAI and Claude failed. Claude error: {str(e)}")
+            print(f"❌ Claude failed: {type(e).__name__}: {e}")
+            if "quota" in str(e).lower() or "rate" in str(e).lower():
+                print("🔄 Claude quota exceeded, falling back to OpenAI...")
+            else:
+                print("🔄 Claude error, falling back to OpenAI...")
+    
+    # Fallback to OpenAI
+    if openai_client:
+        try:
+            print("🔄 Attempting to generate report with OpenAI...")
+            # Remove temperature parameter as GPT-5 only supports default (1)
+            completion = openai_client.chat.completions.create(
+                model="gpt-5",
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_completion_tokens=4000
+            )
+            report_text = completion.choices[0].message.content
+            report_text = clean_ai_response(report_text)
+            print("✅ Report generated successfully with OpenAI")
+            return report_text
+            
+        except Exception as e:
+            print(f"❌ OpenAI also failed: {type(e).__name__}: {e}")
+            raise HTTPException(status_code=500, detail=f"Both Claude and OpenAI failed. OpenAI error: {str(e)}")
     
     # If both fail
     raise HTTPException(status_code=500, detail="No AI service available. Please check your API keys.")
@@ -429,8 +429,29 @@ async def generate_report(payload: FormulationReportRequest, request: Request):
             # Regenerate with stronger prompt
             retry_prompt = f"{SYSTEM_PROMPT}\n\nCRITICAL: The previous response had empty table cells, missing notes, or missing ingredients. Regenerate with NO EMPTY CELLS, MEANINGFUL NOTES, ALL INGREDIENTS INCLUDED.\n\nGenerate report for this INCI list:\n{inci_str}{retry_categorization}\n\nEVERY SINGLE TABLE CELL MUST CONTAIN MEANINGFUL TEXT!\nINCLUDE ALL {ingredient_count} INGREDIENTS - DO NOT SKIP ANY!\n\nExample of proper notes:\nAqua: Primary solvent, base ingredient\nGlycerin: Humectant, skin conditioning agent\nNiacinamide: Vitamin B3, brightening active\nProprietary Blend XYZ: Unknown proprietary ingredient, requires manufacturer clarification"
             
-            # Try to regenerate with the same service that worked
-            if openai_client and "OpenAI" in str(report_text):
+            # Try to regenerate with Claude first (same as initial generation)
+            if claude_client:
+                try:
+                    retry_response = claude_client.messages.create(
+                        model="claude-3-opus-20240229",
+                        max_tokens=4000,
+                        temperature=0.0,
+                        messages=[{"role": "user", "content": retry_prompt}]
+                    )
+                    report_text = retry_response.content[0].text
+                except:
+                    # If Claude fails on retry, try OpenAI
+                    if openai_client:
+                        retry_completion = openai_client.chat.completions.create(
+                            model="gpt-5",
+                            messages=[
+                                {"role": "system", "content": SYSTEM_PROMPT},
+                                {"role": "user", "content": retry_prompt.split("\n\n")[-1] if "\n\n" in retry_prompt else retry_prompt}
+                            ],
+                            max_completion_tokens=4000
+                        )
+                        report_text = retry_completion.choices[0].message.content
+            elif openai_client:
                 try:
                     retry_completion = openai_client.chat.completions.create(
                         model="gpt-5",
@@ -438,7 +459,6 @@ async def generate_report(payload: FormulationReportRequest, request: Request):
                             {"role": "system", "content": SYSTEM_PROMPT},
                             {"role": "user", "content": retry_prompt.split("\n\n")[-1] if "\n\n" in retry_prompt else retry_prompt}
                         ],
-                        temperature=0.0,
                         max_completion_tokens=4000
                     )
                     report_text = retry_completion.choices[0].message.content
@@ -452,25 +472,6 @@ async def generate_report(payload: FormulationReportRequest, request: Request):
                             messages=[{"role": "user", "content": retry_prompt}]
                         )
                         report_text = retry_response.content[0].text
-            elif claude_client:
-                try:
-                    retry_response = claude_client.messages.create(
-                        model="claude-3-opus-20240229",
-                        max_tokens=4000,
-                        temperature=0.0,
-                        messages=[{"role": "user", "content": retry_prompt}]
-                    )
-                    report_text = retry_response.content[0].text
-                except:
-                    # If Claude fails on retry, try OpenAI
-                    if openai_client:
-                        retry_completion = openai_client.completions.create(
-                            model="gpt-5",
-                            prompt=retry_prompt,
-                            temperature=0.0,
-                            max_tokens=2500
-                        )
-                        report_text = retry_completion.choices[0].text
         
         if not validate_report_content(report_text):
             print("❌ Failed to generate valid report after multiple attempts")
