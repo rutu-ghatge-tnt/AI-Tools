@@ -4,7 +4,7 @@ import datetime
 import os
 from fastapi import APIRouter, HTTPException, Response, Request
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 from openai import OpenAI
 import anthropic
 from reportlab.lib.pagesizes import letter, A4
@@ -19,6 +19,8 @@ router = APIRouter(tags=["Formulation Reports"])
 
 class FormulationReportRequest(BaseModel):
     inciList: List[str]
+    brandedIngredients: List[str] = []  # List of branded ingredient names from analyze_inci
+    notBrandedIngredients: List[str] = []  # List of not branded ingredient names from analyze_inci
 
 # Initialize OpenAI and Claude clients
 openai_api_key = os.getenv("OPENAI_API_KEY")
@@ -45,13 +47,14 @@ Generate a clean, structured report with these exact sections:
    - Include ALL ingredients provided - do not skip any
    - Keep it simple and clean
 
-2) Matched vs Unmatched Ingredients
+2) Branded vs Not Branded Ingredients
    - Create a table with: Ingredient | Status | Notes
    - Use pipe (|) separators
-   - Status: "MATCHED" or "UNMATCHED"
-   - MATCHED: Common, well-known cosmetic ingredients with established functions
-   - UNMATCHED: Rare, proprietary, or unclear ingredients that need further research
-   - Examples of UNMATCHED: Proprietary blends, trade names, unclear chemical names, very rare ingredients
+   - Status: "BRANDED" or "NOT BRANDED"
+   - BRANDED: Ingredients that are part of proprietary branded ingredient systems or trade name products
+   - NOT BRANDED: Standard, non-proprietary cosmetic ingredients (INCI names)
+   - Examples of BRANDED: Proprietary blends, trade names, branded actives, supplier-specific formulations
+   - Examples of NOT BRANDED: Standard INCI names like Aqua, Glycerin, Niacinamide, Hyaluronic Acid
    - Notes: REQUIRED for every ingredient. Examples:
      * Aqua: "Primary solvent, base ingredient"
      * Glycerin: "Humectant, skin conditioning agent"
@@ -62,7 +65,7 @@ Generate a clean, structured report with these exact sections:
      * Proprietary Blend XYZ: "Unknown proprietary ingredient, requires manufacturer clarification"
    - FAILURE TO PROVIDE NOTES WILL RESULT IN INCOMPLETE REPORT
    - INCLUDE ALL INGREDIENTS FROM THE INCI LIST - DO NOT SKIP ANY
-   - IMPORTANT: Mark at least 10-20% of ingredients as UNMATCHED if they are rare, proprietary, or unclear
+   - IMPORTANT: Mark ingredients as BRANDED if they are proprietary/trade name products, otherwise mark as NOT BRANDED
 
 3) Actives & Excipients Table
    - Create a table with: Ingredient | Category | Function | Concentration Range
@@ -124,18 +127,18 @@ def validate_report_content(report_text: str, expected_ingredient_count: int = N
     if "| |" in report_text or "||" in report_text:
         return False
     
-    # Check if the matched vs unmatched table has notes
-    if "2) Matched vs Unmatched Ingredients" in report_text:
+    # Check if the branded vs not branded table has notes
+    if "2) Branded vs Not Branded Ingredients" in report_text or "2) Matched vs Unmatched Ingredients" in report_text:
         # Look for the table structure
         lines = report_text.split('\n')
         in_table = False
         has_notes = False
         ingredient_count = 0
-        matched_count = 0
-        unmatched_count = 0
+        branded_count = 0
+        not_branded_count = 0
         
         for line in lines:
-            if "2) Matched vs Unmatched Ingredients" in line:
+            if "2) Branded vs Not Branded Ingredients" in line or "2) Matched vs Unmatched Ingredients" in line:
                 in_table = True
                 continue
             
@@ -149,11 +152,11 @@ def validate_report_content(report_text: str, expected_ingredient_count: int = N
                         has_notes = True
                         ingredient_count += 1
                         
-                        # Count matched vs unmatched
-                        if 'MATCHED' in status_cell:
-                            matched_count += 1
-                        elif 'UNMATCHED' in status_cell:
-                            unmatched_count += 1
+                        # Count branded vs not branded (also check for old MATCHED/UNMATCHED for backward compatibility)
+                        if 'BRANDED' in status_cell or 'MATCHED' in status_cell:
+                            branded_count += 1
+                        elif 'NOT BRANDED' in status_cell or 'UNMATCHED' in status_cell:
+                            not_branded_count += 1
                             
                 elif len(cells) >= 1 and cells[0].strip() and cells[0].strip() not in ['Ingredient']:
                     # Count ingredient rows (even if notes are missing)
@@ -168,10 +171,9 @@ def validate_report_content(report_text: str, expected_ingredient_count: int = N
             print(f"⚠️ Warning: Only found {ingredient_count} ingredients in report, expected around {expected_ingredient_count}")
             return False
         
-        # Check if we have both matched and unmatched ingredients
-        if ingredient_count > 0 and unmatched_count == 0:
-            print(f"⚠️ Warning: All ingredients marked as MATCHED, but some should be UNMATCHED. Found {matched_count} matched, {unmatched_count} unmatched")
-            return False
+        # It's okay if all are one category - just check that we have notes
+        if ingredient_count > 0:
+            print(f"ℹ️ Found {branded_count} branded, {not_branded_count} not branded ingredients")
         
         return has_notes
     
@@ -326,20 +328,35 @@ def create_table_from_data(table_data):
     
     return table
 
-async def generate_report_text(inci_str: str) -> str:
+async def generate_report_text(inci_str: str, branded_ingredients: Optional[List[str]] = None, not_branded_ingredients: Optional[List[str]] = None) -> str:
     """Generate report text using OpenAI first, fallback to Claude if OpenAI fails"""
+    
+    # Build categorization context if provided
+    categorization_info = ""
+    if branded_ingredients or not_branded_ingredients:
+        categorization_info = "\n\nINGREDIENT CATEGORIZATION FROM DATABASE ANALYSIS:\n"
+        if branded_ingredients:
+            categorization_info += f"- BRANDED Ingredients (found in database): {', '.join(branded_ingredients)}\n"
+        if not_branded_ingredients:
+            categorization_info += f"- NOT BRANDED Ingredients (not found in database): {', '.join(not_branded_ingredients)}\n"
+        categorization_info += "\nUse this categorization information to accurately mark ingredients as BRANDED or NOT BRANDED in the report.\n"
+    
+    user_prompt = f"Generate report for this INCI list:\n{inci_str}{categorization_info}\n\nREMEMBER: Every table cell must have content. NO EMPTY CELLS!"
     
     # Try OpenAI first
     if openai_client:
         try:
             print("🔄 Attempting to generate report with OpenAI...")
-            completion = openai_client.completions.create(
+            completion = openai_client.chat.completions.create(
                 model="gpt-5",
-                prompt=f"{SYSTEM_PROMPT}\n\nGenerate report for this INCI list:\n{inci_str}\n\nREMEMBER: Every table cell must have content. NO EMPTY CELLS!",
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt}
+                ],
                 temperature=0.1,
-                max_tokens=2500
+                max_completion_tokens=4000
             )
-            report_text = completion.choices[0].text
+            report_text = completion.choices[0].message.content
             report_text = clean_ai_response(report_text)
             print("✅ Report generated successfully with OpenAI")
             return report_text
@@ -356,13 +373,13 @@ async def generate_report_text(inci_str: str) -> str:
         try:
             print("🔄 Attempting to generate report with Claude...")
             response = claude_client.messages.create(
-                model="claude-3-5-sonnet-20241022",
+                model="claude-3-opus-20240229",
                 max_tokens=4000,
                 temperature=0.1,
                 messages=[
                     {
                         "role": "user",
-                        "content": f"{SYSTEM_PROMPT}\n\nGenerate report for this INCI list:\n{inci_str}\n\nREMEMBER: Every table cell must have content. NO EMPTY CELLS!"
+                        "content": f"{SYSTEM_PROMPT}\n\n{user_prompt}"
                     }
                 ]
             )
@@ -383,8 +400,12 @@ async def generate_report(payload: FormulationReportRequest, request: Request):
     try:
         inci_str = ", ".join(payload.inciList)
 
-        # 🔹 Generate report text using OpenAI or Claude fallback
-        report_text = await generate_report_text(inci_str)
+        # 🔹 Generate report text using OpenAI or Claude fallback with categorization info
+        report_text = await generate_report_text(
+            inci_str, 
+            branded_ingredients=payload.brandedIngredients,
+            not_branded_ingredients=payload.notBrandedIngredients
+        )
         
         # 🔹 Validate and fix empty notes if needed
         max_retries = 3
@@ -395,24 +416,37 @@ async def generate_report(payload: FormulationReportRequest, request: Request):
             retry_count += 1
             print(f"⚠️ Report validation failed (attempt {retry_count}/{max_retries}). Regenerating...")
             
+            # Build categorization info for retry
+            retry_categorization = ""
+            if payload.brandedIngredients or payload.notBrandedIngredients:
+                retry_categorization = "\n\nINGREDIENT CATEGORIZATION FROM DATABASE ANALYSIS:\n"
+                if payload.brandedIngredients:
+                    retry_categorization += f"- BRANDED Ingredients (found in database): {', '.join(payload.brandedIngredients)}\n"
+                if payload.notBrandedIngredients:
+                    retry_categorization += f"- NOT BRANDED Ingredients (not found in database): {', '.join(payload.notBrandedIngredients)}\n"
+                retry_categorization += "\nUse this categorization information to accurately mark ingredients as BRANDED or NOT BRANDED in the report.\n"
+            
             # Regenerate with stronger prompt
-            retry_prompt = f"{SYSTEM_PROMPT}\n\nCRITICAL: The previous response had empty table cells, missing notes, missing ingredients, or no UNMATCHED ingredients. Regenerate with NO EMPTY CELLS, MEANINGFUL NOTES, ALL INGREDIENTS INCLUDED, and SOME INGREDIENTS MARKED AS UNMATCHED.\n\nGenerate report for this INCI list:\n{inci_str}\n\nEVERY SINGLE TABLE CELL MUST CONTAIN MEANINGFUL TEXT!\nINCLUDE ALL {ingredient_count} INGREDIENTS - DO NOT SKIP ANY!\nMARK SOME INGREDIENTS AS UNMATCHED - NOT ALL CAN BE MATCHED!\n\nExample of proper notes:\nAqua: Primary solvent, base ingredient\nGlycerin: Humectant, skin conditioning agent\nNiacinamide: Vitamin B3, brightening active\nProprietary Blend XYZ: Unknown proprietary ingredient, requires manufacturer clarification"
+            retry_prompt = f"{SYSTEM_PROMPT}\n\nCRITICAL: The previous response had empty table cells, missing notes, or missing ingredients. Regenerate with NO EMPTY CELLS, MEANINGFUL NOTES, ALL INGREDIENTS INCLUDED.\n\nGenerate report for this INCI list:\n{inci_str}{retry_categorization}\n\nEVERY SINGLE TABLE CELL MUST CONTAIN MEANINGFUL TEXT!\nINCLUDE ALL {ingredient_count} INGREDIENTS - DO NOT SKIP ANY!\n\nExample of proper notes:\nAqua: Primary solvent, base ingredient\nGlycerin: Humectant, skin conditioning agent\nNiacinamide: Vitamin B3, brightening active\nProprietary Blend XYZ: Unknown proprietary ingredient, requires manufacturer clarification"
             
             # Try to regenerate with the same service that worked
             if openai_client and "OpenAI" in str(report_text):
                 try:
-                    retry_completion = openai_client.completions.create(
+                    retry_completion = openai_client.chat.completions.create(
                         model="gpt-5",
-                        prompt=retry_prompt,
+                        messages=[
+                            {"role": "system", "content": SYSTEM_PROMPT},
+                            {"role": "user", "content": retry_prompt.split("\n\n")[-1] if "\n\n" in retry_prompt else retry_prompt}
+                        ],
                         temperature=0.0,
-                        max_tokens=2500
+                        max_completion_tokens=4000
                     )
-                    report_text = retry_completion.choices[0].text
+                    report_text = retry_completion.choices[0].message.content
                 except:
                     # If OpenAI fails on retry, try Claude
                     if claude_client:
                         retry_response = claude_client.messages.create(
-                            model="claude-3-5-sonnet-20241022",
+                            model="claude-3-opus-20240229",
                             max_tokens=4000,
                             temperature=0.0,
                             messages=[{"role": "user", "content": retry_prompt}]
@@ -421,7 +455,7 @@ async def generate_report(payload: FormulationReportRequest, request: Request):
             elif claude_client:
                 try:
                     retry_response = claude_client.messages.create(
-                        model="claude-3-5-sonnet-20241022",
+                        model="claude-3-opus-20240229",
                         max_tokens=4000,
                         temperature=0.0,
                         messages=[{"role": "user", "content": retry_prompt}]

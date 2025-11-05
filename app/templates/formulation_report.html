@@ -207,11 +207,13 @@
             font-weight: 600;
             text-transform: uppercase;
         }
-        .status-matched {
+        .status-matched,
+        .status-branded {
             background-color: #d4edda;
             color: #155724;
         }
-        .status-unmatched {
+        .status-unmatched,
+        .status-not-branded {
             background-color: #f8d7da;
             color: #721c24;
         }
@@ -366,9 +368,15 @@
                     cells.forEach(cell => {
                         if (cell) {
                             // Add status badges for certain columns
-                            if (cell.toLowerCase().includes('matched')) {
+                            if (cell.toLowerCase().includes('branded') && !cell.toLowerCase().includes('not branded')) {
+                                html += `<td><span class="status-badge status-branded">${cell}</span></td>`;
+                            } else if (cell.toLowerCase().includes('not branded') || (cell.toLowerCase().includes('unmatched') && !cell.toLowerCase().includes('matched'))) {
+                                html += `<td><span class="status-badge status-not-branded">${cell}</span></td>`;
+                            } else if (cell.toLowerCase().includes('matched')) {
+                                // Backward compatibility with old reports
                                 html += `<td><span class="status-badge status-matched">${cell}</span></td>`;
                             } else if (cell.toLowerCase().includes('unmatched')) {
+                                // Backward compatibility with old reports
                                 html += `<td><span class="status-badge status-unmatched">${cell}</span></td>`;
                             } else if (cell.toLowerCase().includes('high')) {
                                 html += `<td><span class="status-badge risk-high">${cell}</span></td>`;
