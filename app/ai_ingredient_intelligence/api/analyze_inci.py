@@ -5,6 +5,7 @@ from typing import List, Optional
 from collections import defaultdict
 
 from app.ai_ingredient_intelligence.logic.matcher import match_inci_names
+from app.ai_ingredient_intelligence.logic.bis_rag import get_bis_cautions_for_ingredients
 from app.ai_ingredient_intelligence.models.schemas import (
     AnalyzeInciRequest,
     AnalyzeInciResponse,
@@ -34,6 +35,10 @@ async def analyze_inci_form(
         
         # Match ingredients using existing logic
         matched_raw, unmatched = await match_inci_names(ingredients)
+        
+        # 🔹 Get BIS cautions for all ingredients (runs in parallel with matching)
+        print("🔍 Retrieving BIS cautions...")
+        bis_cautions = await get_bis_cautions_for_ingredients(ingredients)
         
     except HTTPException:
         raise
@@ -68,7 +73,8 @@ async def analyze_inci_form(
         overall_confidence=confidence,
         processing_time=round(time.time() - start, 3),
         extracted_text=extracted_text,
-        input_type="text"
+        input_type="text",
+        bis_cautions=bis_cautions if bis_cautions else None
     )
 
 
@@ -93,6 +99,10 @@ async def analyze_inci(payload: dict):
         
         # Match ingredients using existing logic
         matched_raw, unmatched = await match_inci_names(ingredients)
+        
+        # 🔹 Get BIS cautions for all ingredients (runs in parallel with matching)
+        print("🔍 Retrieving BIS cautions...")
+        bis_cautions = await get_bis_cautions_for_ingredients(ingredients)
         
     except HTTPException:
         raise
@@ -127,5 +137,6 @@ async def analyze_inci(payload: dict):
         overall_confidence=confidence,
         processing_time=round(time.time() - start, 3),
         extracted_text=extracted_text,
-        input_type="text"
+        input_type="text",
+        bis_cautions=bis_cautions if bis_cautions else None
     )

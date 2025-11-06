@@ -268,14 +268,30 @@
         function enhanceTables() {
             const content = document.getElementById('report-content');
             
-            // Find and format tables
-            const lines = content.innerHTML.split('\n');
+            // Get the raw HTML content and split by newlines
+            // Since report_text is plain text, innerHTML should contain the text with possible HTML entities
+            let rawContent = content.innerHTML;
+            
+            // Normalize line breaks (handle \r\n, \r, and \n)
+            rawContent = rawContent.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+            
+            // Split by newlines
+            const lines = rawContent.split('\n');
             let enhancedContent = '';
             let inTable = false;
             let tableData = [];
+            let inIngredientListSection = false; // Track if we're in the INCI list section
             
             for (let i = 0; i < lines.length; i++) {
                 const line = lines[i].trim();
+                
+                // Check if we're entering or leaving the INCI list section
+                if (line.match(/^1\)\s*Submitted\s+INCI\s+List/i)) {
+                    inIngredientListSection = true;
+                } else if (line.match(/^2\)\s+/)) {
+                    // We've moved to the next section, so we're no longer in the INCI list section
+                    inIngredientListSection = false;
+                }
                 
                 // Check if line contains table indicators
                 if (line.includes('|') && line.split('|').length > 2) {
@@ -291,12 +307,12 @@
                     }
                     inTable = false;
                     tableData = [];
-                    enhancedContent += line + '\n';
+                    enhancedContent += processLine(line, inIngredientListSection) + '\n';
                 } else if (inTable) {
                     tableData.push(line);
                 } else {
                     // Process non-table lines for section headers and ingredients
-                    enhancedContent += processLine(line) + '\n';
+                    enhancedContent += processLine(line, inIngredientListSection) + '\n';
                 }
             }
             
@@ -308,7 +324,7 @@
             content.innerHTML = enhancedContent;
         }
         
-        function processLine(line) {
+        function processLine(line, inIngredientListSection = false) {
             // Clean up the line - remove extra dashes and clean formatting
             line = line.replace(/^-+\s*/, '').replace(/^\s*-\s*/, '').trim();
             
@@ -329,33 +345,53 @@
                 line.toLowerCase().includes(word)
             );
             
-            // Check for ingredient lists - improved detection for long names
-            // Only apply to lines that are NOT descriptive text and look like actual ingredient names
+            // Check for ingredient lists
             if (line.length > 0 && line.length < 200 && !line.includes('|') && !line.match(/^\d+\)/) && !isDescriptiveText) {
-                // List of common cosmetic ingredient keywords (more specific)
-                const ingredientKeywords = [
-                    'Aqua', 'Water', 'Glycerin', 'Niacinamide', 'Hyaluronic', 'Salicylic', 'Benzoyl', 'Peroxide',
-                    'Tocopherol', 'Retinol', 'Oil', 'Extract', 'Butter', 'Wax', 'Alcohol', 'Ester',
-                    'Peptide', 'Vitamin', 'Sulfate', 'Chloride', 'Citrate', 'Lactate', 'Gluconate',
-                    'Dimethicone', 'Crosspolymer', 'Copolymer', 'Acrylate', 'Methacrylate', 'Polymer', 'Siloxane',
-                    'Taurate', 'VP', 'Ammonium', 'Sodium', 'Potassium', 'Calcium', 'Magnesium', 'Zinc'
-                ];
+                let shouldStyleAsIngredient = false;
                 
-                // More strict ingredient detection - must start with capital letter and be a single ingredient name
-                // Not a sentence or descriptive phrase
-                const isSingleIngredient = line.match(/^[A-Z][a-zA-Z\s\/\-]+$/) && 
-                    !line.includes(' and ') && 
-                    !line.includes(' of ') &&
-                    !line.includes(' for ') &&
-                    !line.includes(' with ') &&
-                    line.split(' ').length <= 5; // Max 5 words for ingredient names
+                // If we're in the INCI list section, be more lenient with ingredient detection
+                if (inIngredientListSection) {
+                    // In the INCI list section, style ALL lines that look like ingredient names
+                    // Be very inclusive - if it's not clearly descriptive text, style it as an ingredient
+                    const hasAlphanumeric = /[A-Za-z0-9]/.test(line); // Contains at least one alphanumeric character
+                    const isNotJustPunctuation = !/^[^\w]*$/.test(line); // Not just punctuation
+                    const isNotDescriptive = !line.toLowerCase().match(/^(ingredient|status|notes|category|function|the |this |that |these |those |ideal |range |ensures |provides |key )/); // Not a table header or sentence starter
+                    const isNotTooLong = line.length < 200; // Reasonable length limit
+                    const hasReasonableLength = line.length > 2; // At least 3 characters
+                    
+                    // Style as ingredient if it passes basic checks (very inclusive for INCI list section)
+                    shouldStyleAsIngredient = hasAlphanumeric && 
+                                             isNotJustPunctuation && 
+                                             isNotDescriptive && 
+                                             isNotTooLong && 
+                                             hasReasonableLength;
+                } else {
+                    // For other sections, use the more strict detection
+                    const ingredientKeywords = [
+                        'Aqua', 'Water', 'Glycerin', 'Niacinamide', 'Hyaluronic', 'Salicylic', 'Benzoyl', 'Peroxide',
+                        'Tocopherol', 'Retinol', 'Oil', 'Extract', 'Butter', 'Wax', 'Alcohol', 'Ester',
+                        'Peptide', 'Vitamin', 'Sulfate', 'Chloride', 'Citrate', 'Lactate', 'Gluconate',
+                        'Dimethicone', 'Crosspolymer', 'Copolymer', 'Acrylate', 'Methacrylate', 'Polymer', 'Siloxane',
+                        'Taurate', 'VP', 'Ammonium', 'Sodium', 'Potassium', 'Calcium', 'Magnesium', 'Zinc'
+                    ];
+                    
+                    // More strict ingredient detection - must start with capital letter and be a single ingredient name
+                    const isSingleIngredient = line.match(/^[A-Z][a-zA-Z\s\/\-]+$/) && 
+                        !line.includes(' and ') && 
+                        !line.includes(' of ') &&
+                        !line.includes(' for ') &&
+                        !line.includes(' with ') &&
+                        line.split(' ').length <= 5; // Max 5 words for ingredient names
+                    
+                    // Check if line contains ingredient keywords (but only if it's a single ingredient, not descriptive)
+                    const hasIngredientKeyword = ingredientKeywords.some(keyword => 
+                        line.toLowerCase().includes(keyword.toLowerCase()) && isSingleIngredient
+                    );
+                    
+                    shouldStyleAsIngredient = hasIngredientKeyword || isSingleIngredient;
+                }
                 
-                // Check if line contains ingredient keywords (but only if it's a single ingredient, not descriptive)
-                const hasIngredientKeyword = ingredientKeywords.some(keyword => 
-                    line.toLowerCase().includes(keyword.toLowerCase()) && isSingleIngredient
-                );
-                
-                if (hasIngredientKeyword || isSingleIngredient) {
+                if (shouldStyleAsIngredient) {
                     // Handle long ingredient names by allowing them to wrap
                     return `<span class="ingredient-item" style="display: inline-block; max-width: 300px; word-wrap: break-word; white-space: normal;">${line}</span>`;
                 }

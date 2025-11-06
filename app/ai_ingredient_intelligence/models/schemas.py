@@ -1,4 +1,4 @@
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Dict
 from pydantic import BaseModel, Field
 from fastapi import UploadFile
 
@@ -35,5 +35,6 @@ class AnalyzeInciResponse(BaseModel):
     processing_time: float
     extracted_text: Optional[str] = Field(None, description="Text extracted from input")
     input_type: str = Field(..., description="Type of input processed")
+    bis_cautions: Optional[Dict[str, List[str]]] = Field(None, description="BIS cautions for ingredients")
 
                         # how many branded ingredients matched

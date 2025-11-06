@@ -4,7 +4,7 @@ import datetime
 import os
 from fastapi import APIRouter, HTTPException, Response, Request
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict
 from openai import OpenAI
 import anthropic
 from reportlab.lib.pagesizes import letter, A4
@@ -21,6 +21,7 @@ class FormulationReportRequest(BaseModel):
     inciList: List[str]
     brandedIngredients: List[str] = []  # List of branded ingredient names from analyze_inci
     notBrandedIngredients: List[str] = []  # List of not branded ingredient names from analyze_inci
+    bisCautions: Optional[Dict[str, List[str]]] = None  # BIS cautions from analyze_inci
 
 # Initialize OpenAI and Claude clients
 openai_api_key = os.getenv("OPENAI_API_KEY")
@@ -104,6 +105,13 @@ Generate a clean, structured report with these exact sections:
 10) Recommended pH Range
     - Clear pH recommendations
 
+11) BIS Cautions & Regulatory Notes (if applicable)
+    - Include any cautions, warnings, or restrictions from Bureau of Indian Standards documents
+    - Format as: Ingredient | Caution/Warning | Source
+    - Use pipe (|) separators
+    - Only include if BIS cautions are provided in the context
+    - If no BIS cautions available, skip this section
+
 MANDATORY RULES:
 - Use pipe (|) for all table separators
 - Start each section with the exact header (e.g., "1) Submitted INCI List")
@@ -172,9 +180,6 @@ def validate_report_content(report_text: str, expected_ingredient_count: int = N
             return False
         
         # It's okay if all are one category - just check that we have notes
-        if ingredient_count > 0:
-            print(f"ℹ️ Found {branded_count} branded, {not_branded_count} not branded ingredients")
-        
         return has_notes
     
     return True
@@ -328,7 +333,12 @@ def create_table_from_data(table_data):
     
     return table
 
-async def generate_report_text(inci_str: str, branded_ingredients: Optional[List[str]] = None, not_branded_ingredients: Optional[List[str]] = None) -> str:
+async def generate_report_text(
+    inci_str: str, 
+    branded_ingredients: Optional[List[str]] = None, 
+    not_branded_ingredients: Optional[List[str]] = None,
+    bis_cautions: Optional[Dict[str, List[str]]] = None
+) -> str:
     """Generate report text using Claude first, fallback to OpenAI if Claude fails"""
     
     # Build categorization context if provided
@@ -341,7 +351,18 @@ async def generate_report_text(inci_str: str, branded_ingredients: Optional[List
             categorization_info += f"- NOT BRANDED Ingredients (not found in database): {', '.join(not_branded_ingredients)}\n"
         categorization_info += "\nUse this categorization information to accurately mark ingredients as BRANDED or NOT BRANDED in the report.\n"
     
-    user_prompt = f"Generate report for this INCI list:\n{inci_str}{categorization_info}\n\nREMEMBER: Every table cell must have content. NO EMPTY CELLS!"
+    # Build BIS cautions context if provided
+    bis_cautions_info = ""
+    if bis_cautions:
+        bis_cautions_info = "\n\nBUREAU OF INDIAN STANDARDS (BIS) CAUTIONS & REGULATORY NOTES:\n"
+        bis_cautions_info += "=" * 50 + "\n"
+        for ingredient, cautions in bis_cautions.items():
+            bis_cautions_info += f"\n{ingredient}:\n"
+            for i, caution in enumerate(cautions, 1):
+                bis_cautions_info += f"  {i}. {caution}\n"
+        bis_cautions_info += "\nIMPORTANT: Include these BIS cautions in section 11) BIS Cautions & Regulatory Notes of the report. Format as: Ingredient | Caution/Warning | Source (BIS)\n"
+    
+    user_prompt = f"Generate report for this INCI list:\n{inci_str}{categorization_info}{bis_cautions_info}\n\nREMEMBER: Every table cell must have content. NO EMPTY CELLS!"
     
     # Try Claude first
     if claude_client:
@@ -400,11 +421,12 @@ async def generate_report(payload: FormulationReportRequest, request: Request):
     try:
         inci_str = ", ".join(payload.inciList)
 
-        # 🔹 Generate report text using OpenAI or Claude fallback with categorization info
+        # 🔹 Generate report text using OpenAI or Claude fallback with categorization info and BIS cautions
         report_text = await generate_report_text(
             inci_str, 
             branded_ingredients=payload.brandedIngredients,
-            not_branded_ingredients=payload.notBrandedIngredients
+            not_branded_ingredients=payload.notBrandedIngredients,
+            bis_cautions=payload.bisCautions
         )
         
         # 🔹 Validate and fix empty notes if needed
@@ -426,8 +448,19 @@ async def generate_report(payload: FormulationReportRequest, request: Request):
                     retry_categorization += f"- NOT BRANDED Ingredients (not found in database): {', '.join(payload.notBrandedIngredients)}\n"
                 retry_categorization += "\nUse this categorization information to accurately mark ingredients as BRANDED or NOT BRANDED in the report.\n"
             
+            # Build BIS cautions info for retry
+            retry_bis_cautions = ""
+            if payload.bisCautions:
+                retry_bis_cautions = "\n\nBUREAU OF INDIAN STANDARDS (BIS) CAUTIONS & REGULATORY NOTES:\n"
+                retry_bis_cautions += "=" * 50 + "\n"
+                for ingredient, cautions in payload.bisCautions.items():
+                    retry_bis_cautions += f"\n{ingredient}:\n"
+                    for i, caution in enumerate(cautions, 1):
+                        retry_bis_cautions += f"  {i}. {caution}\n"
+                retry_bis_cautions += "\nIMPORTANT: Include these BIS cautions in section 11) BIS Cautions & Regulatory Notes of the report.\n"
+            
             # Regenerate with stronger prompt
-            retry_prompt = f"{SYSTEM_PROMPT}\n\nCRITICAL: The previous response had empty table cells, missing notes, or missing ingredients. Regenerate with NO EMPTY CELLS, MEANINGFUL NOTES, ALL INGREDIENTS INCLUDED.\n\nGenerate report for this INCI list:\n{inci_str}{retry_categorization}\n\nEVERY SINGLE TABLE CELL MUST CONTAIN MEANINGFUL TEXT!\nINCLUDE ALL {ingredient_count} INGREDIENTS - DO NOT SKIP ANY!\n\nExample of proper notes:\nAqua: Primary solvent, base ingredient\nGlycerin: Humectant, skin conditioning agent\nNiacinamide: Vitamin B3, brightening active\nProprietary Blend XYZ: Unknown proprietary ingredient, requires manufacturer clarification"
+            retry_prompt = f"{SYSTEM_PROMPT}\n\nCRITICAL: The previous response had empty table cells, missing notes, or missing ingredients. Regenerate with NO EMPTY CELLS, MEANINGFUL NOTES, ALL INGREDIENTS INCLUDED.\n\nGenerate report for this INCI list:\n{inci_str}{retry_categorization}{retry_bis_cautions}\n\nEVERY SINGLE TABLE CELL MUST CONTAIN MEANINGFUL TEXT!\nINCLUDE ALL {ingredient_count} INGREDIENTS - DO NOT SKIP ANY!\n\nExample of proper notes:\nAqua: Primary solvent, base ingredient\nGlycerin: Humectant, skin conditioning agent\nNiacinamide: Vitamin B3, brightening active\nProprietary Blend XYZ: Unknown proprietary ingredient, requires manufacturer clarification"
             
             # Try to regenerate with Claude first (same as initial generation)
             if claude_client:
