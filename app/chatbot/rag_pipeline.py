@@ -3,8 +3,19 @@
 from app.config import CHROMA_DB_PATH
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain.chains import RetrievalQA
-from langchain.prompts import PromptTemplate
+try:
+    from langchain.chains import RetrievalQA
+except ImportError:
+    try:
+        from langchain_community.chains import RetrievalQA
+    except ImportError:
+        # For newer langchain versions
+        from langchain_classic.chains import RetrievalQA
+
+try:
+    from langchain.prompts import PromptTemplate
+except ImportError:
+    from langchain_core.prompts import PromptTemplate
 from app.chatbot.llm_claude import get_claude_llm
 
 def get_rag_chain():

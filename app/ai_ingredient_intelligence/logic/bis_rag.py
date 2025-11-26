@@ -9,7 +9,10 @@ from typing import List, Dict, Optional
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.documents import Document
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+try:
+    from langchain.text_splitter import RecursiveCharacterTextSplitter
+except ImportError:
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
 import fitz  # PyMuPDF
 
 # BIS specific ChromaDB path

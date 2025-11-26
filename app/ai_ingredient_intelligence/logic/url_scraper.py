@@ -1,0 +1,491 @@
+"""
+URL Scraper for extracting ingredients from e-commerce product pages
+Supports: Amazon, Nykaa, Flipkart, and other e-commerce sites
+Uses Selenium WebDriver for JavaScript-enabled scraping
+"""
+import re
+import json
+import asyncio
+from typing import List, Optional, Dict
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, WebDriverException
+from webdriver_manager.chrome import ChromeDriverManager
+from bs4 import BeautifulSoup
+from anthropic import Anthropic
+import os
+
+
+class URLScraper:
+    def __init__(self):
+        """Initialize the URL scraper - Anthropic client is lazy-loaded only when needed"""
+        self.claude_client: Optional[Anthropic] = None
+        self.driver: Optional[webdriver.Chrome] = None
+    
+    def _get_claude_client(self):
+        """Lazy-load Claude client only when needed for ingredient extraction"""
+        if self.claude_client is None:
+            claude_key = os.getenv("CLAUDE_API_KEY")
+            if not claude_key:
+                raise Exception("CLAUDE_API_KEY environment variable is not set")
+            try:
+                self.claude_client = Anthropic(api_key=claude_key)
+            except Exception as e:
+                raise Exception(f"Failed to initialize Claude client: {str(e)}")
+        return self.claude_client
+        
+    async def _get_driver(self):
+        """Initialize Selenium Chrome driver (runs in executor for async compatibility)"""
+        if self.driver is None:
+            loop = asyncio.get_event_loop()
+            
+            def init_driver():
+                chrome_options = Options()
+                # Don't use headless for Nykaa - it needs full browser
+                # chrome_options.add_argument("--headless")  
+                chrome_options.add_argument("--start-maximized")
+                chrome_options.add_argument("--no-sandbox")
+                chrome_options.add_argument("--disable-dev-shm-usage")
+                chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+                chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+                chrome_options.add_experimental_option('useAutomationExtension', False)
+                chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                
+                # Use webdriver-manager to automatically download and manage ChromeDriver
+                try:
+                    service = Service(ChromeDriverManager().install())
+                    driver = webdriver.Chrome(service=service, options=chrome_options)
+                except Exception as e:
+                    # Fallback: try without service (if ChromeDriver is in PATH)
+                    print(f"Warning: ChromeDriverManager failed, trying direct: {e}")
+                    driver = webdriver.Chrome(options=chrome_options)
+                # Execute script to hide webdriver property
+                driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
+                    'source': '''
+                        Object.defineProperty(navigator, 'webdriver', {
+                            get: () => undefined
+                        })
+                    '''
+                })
+                return driver
+            
+            try:
+                self.driver = await loop.run_in_executor(None, init_driver)
+            except Exception as e:
+                error_msg = str(e)
+                if "chromedriver" in error_msg.lower() or "executable" in error_msg.lower():
+                    raise Exception(f"ChromeDriver error: {error_msg}. ChromeDriver is being downloaded automatically by webdriver-manager. If this persists, ensure Chrome browser is installed.")
+                else:
+                    raise Exception(f"Failed to initialize Chrome driver: {error_msg}")
+        
+        return self.driver
+    
+    async def _close_driver(self):
+        """Close the Selenium driver"""
+        if self.driver:
+            loop = asyncio.get_event_loop()
+            try:
+                await loop.run_in_executor(None, self.driver.quit)
+            except:
+                pass
+            self.driver = None
+    
+    def _detect_platform(self, url: str) -> str:
+        """Detect the e-commerce platform from URL"""
+        url_lower = url.lower()
+        if "amazon" in url_lower:
+            return "amazon"
+        elif "nykaa" in url_lower:
+            return "nykaa"
+        elif "flipkart" in url_lower:
+            return "flipkart"
+        else:
+            return "generic"
+    
+    async def _scrape_amazon(self, driver: webdriver.Chrome) -> str:
+        """Scrape ingredients from Amazon product page"""
+        try:
+            loop = asyncio.get_event_loop()
+            
+            def scrape():
+                wait = WebDriverWait(driver, 10)
+                
+                # Try multiple selectors for ingredients/description
+                selectors = [
+                    "#feature-bullets ul",
+                    "#productDescription",
+                    "#productDetails_techSpec_section_1",
+                    ".a-unordered-list",
+                    "[data-feature-name='productDescription']",
+                    "#productDescription_feature_div"
+                ]
+                
+                text_parts = []
+                for selector in selectors:
+                    try:
+                        elements = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, selector)))
+                        for element in elements:
+                            text = element.text.strip()
+                            if text and len(text) > 20:
+                                text_parts.append(text)
+                    except TimeoutException:
+                        continue
+                    except:
+                        continue
+                
+                if text_parts:
+                    return "\n".join(text_parts)
+                else:
+                    # Fallback: get all text content
+                    return driver.find_element(By.TAG_NAME, "body").text
+            
+            return await loop.run_in_executor(None, scrape)
+        except Exception as e:
+            print(f"Error scraping Amazon: {e}")
+            if self.driver:
+                loop = asyncio.get_event_loop()
+                return await loop.run_in_executor(None, lambda: driver.find_element(By.TAG_NAME, "body").text)
+            return ""
+    
+    async def _scrape_nykaa(self, driver: webdriver.Chrome) -> str:
+        """Scrape ingredients from Nykaa product page - matches working code"""
+        try:
+            loop = asyncio.get_event_loop()
+            
+            def scrape():
+                import time
+                from bs4 import BeautifulSoup
+                
+                # Wait for page to load
+                wait = WebDriverWait(driver, 10)
+                wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "#app")))
+                time.sleep(2)
+                
+                # Scroll down to load content
+                driver.execute_script("window.scrollBy(0, 1000);")
+                time.sleep(2)
+                
+                text_parts = []
+                
+                # Try to click on "Ingredients" tab and extract content
+                try:
+                    # Look for Ingredients tab
+                    ingredients_tab = driver.find_element(By.XPATH, "//h3[normalize-space()='Ingredients']")
+                    driver.execute_script("arguments[0].scrollIntoView(true);", ingredients_tab)
+                    time.sleep(0.5)
+                    driver.execute_script("arguments[0].click();", ingredients_tab)
+                    time.sleep(1.5)
+                    
+                    # Wait for content to appear
+                    wait.until(EC.presence_of_element_located((By.ID, "content-details")))
+                    
+                    # Get the content block
+                    block = driver.find_element(By.ID, "content-details")
+                    html = block.get_attribute("innerHTML")
+                    soup = BeautifulSoup(html, "html.parser")
+                    
+                    # Extract text from paragraphs and lists
+                    lines = []
+                    for p in soup.find_all("p"):
+                        lines.append(p.get_text(strip=True))
+                    for li in soup.find_all("li"):
+                        lines.append("• " + li.get_text(strip=True))
+                    if not lines:
+                        lines = [soup.get_text(separator="\n", strip=True)]
+                    
+                    ingredients_text = "\n".join(lines).strip()
+                    if ingredients_text:
+                        text_parts.append(f"Ingredients:\n{ingredients_text}")
+                except Exception as e:
+                    print(f"Could not extract Ingredients tab: {e}")
+                
+                # Also try Description tab
+                try:
+                    desc_tab = driver.find_element(By.XPATH, "//h3[normalize-space()='Description']")
+                    driver.execute_script("arguments[0].scrollIntoView(true);", desc_tab)
+                    time.sleep(0.5)
+                    driver.execute_script("arguments[0].click();", desc_tab)
+                    time.sleep(1.5)
+                    
+                    wait.until(EC.presence_of_element_located((By.ID, "content-details")))
+                    block = driver.find_element(By.ID, "content-details")
+                    html = block.get_attribute("innerHTML")
+                    soup = BeautifulSoup(html, "html.parser")
+                    
+                    lines = []
+                    for p in soup.find_all("p"):
+                        lines.append(p.get_text(strip=True))
+                    for li in soup.find_all("li"):
+                        lines.append("• " + li.get_text(strip=True))
+                    if not lines:
+                        lines = [soup.get_text(separator="\n", strip=True)]
+                    
+                    desc_text = "\n".join(lines).strip()
+                    if desc_text:
+                        text_parts.append(f"Description:\n{desc_text}")
+                except Exception as e:
+                    print(f"Could not extract Description tab: {e}")
+                
+                if text_parts:
+                    return "\n\n".join(text_parts)
+                else:
+                    # Fallback: get all text content
+                    return driver.find_element(By.TAG_NAME, "body").text
+            
+            return await loop.run_in_executor(None, scrape)
+        except Exception as e:
+            print(f"Error scraping Nykaa: {e}")
+            if self.driver:
+                loop = asyncio.get_event_loop()
+                return await loop.run_in_executor(None, lambda: driver.find_element(By.TAG_NAME, "body").text)
+            return ""
+    
+    async def _scrape_flipkart(self, driver: webdriver.Chrome) -> str:
+        """Scrape ingredients from Flipkart product page"""
+        try:
+            await asyncio.sleep(2)  # Give JS time to render
+            
+            loop = asyncio.get_event_loop()
+            
+            def scrape():
+                selectors = [
+                    ".product-description",
+                    "._2418kt",
+                    "[data-id='product-description']",
+                    "._1mXcCf",
+                    ".product-details"
+                ]
+                
+                text_parts = []
+                for selector in selectors:
+                    try:
+                        elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                        for element in elements:
+                            text = element.text.strip()
+                            if text and len(text) > 20:
+                                text_parts.append(text)
+                    except:
+                        continue
+                
+                if text_parts:
+                    return "\n".join(text_parts)
+                else:
+                    return driver.find_element(By.TAG_NAME, "body").text
+            
+            return await loop.run_in_executor(None, scrape)
+        except Exception as e:
+            print(f"Error scraping Flipkart: {e}")
+            if self.driver:
+                loop = asyncio.get_event_loop()
+                return await loop.run_in_executor(None, lambda: driver.find_element(By.TAG_NAME, "body").text)
+            return ""
+    
+    async def _scrape_generic(self, driver: webdriver.Chrome) -> str:
+        """Scrape ingredients from generic e-commerce page"""
+        try:
+            await asyncio.sleep(2)  # Give JS time to render
+            
+            loop = asyncio.get_event_loop()
+            
+            def scrape():
+                # Get all text content
+                body_text = driver.find_element(By.TAG_NAME, "body").text
+                
+                # Look for common ingredient-related keywords
+                keywords = ["ingredient", "composition", "formula", "contains", "inci"]
+                
+                # Try to find sections with ingredient keywords
+                lines = body_text.split("\n")
+                relevant_lines = []
+                in_ingredient_section = False
+                
+                for line in lines:
+                    line_lower = line.lower()
+                    if any(keyword in line_lower for keyword in keywords):
+                        in_ingredient_section = True
+                        relevant_lines.append(line)
+                    elif in_ingredient_section and line.strip():
+                        relevant_lines.append(line)
+                        if len(relevant_lines) > 50:  # Limit to prevent too much text
+                            break
+                
+                if relevant_lines:
+                    return "\n".join(relevant_lines)
+                else:
+                    # Fallback: return first 5000 characters of body text
+                    return body_text[:5000]
+            
+            return await loop.run_in_executor(None, scrape)
+        except Exception as e:
+            print(f"Error scraping generic page: {e}")
+            if self.driver:
+                loop = asyncio.get_event_loop()
+                return await loop.run_in_executor(None, lambda: driver.find_element(By.TAG_NAME, "body").text[:5000])
+            return ""
+    
+    async def scrape_url(self, url: str) -> Dict[str, any]:
+        """
+        Scrape a product URL and extract text content using Selenium
+        
+        Returns:
+            Dict with 'extracted_text' and 'platform' keys
+        """
+        driver = None
+        try:
+            # Initialize driver
+            driver = await self._get_driver()
+            
+            loop = asyncio.get_event_loop()
+            
+            # Load URL in executor (Selenium is synchronous)
+            print(f"📡 Loading URL with Selenium: {url}")
+            await loop.run_in_executor(None, driver.get, url)
+            
+            # Wait for page to load
+            await asyncio.sleep(3)  # Give JavaScript time to render
+            
+            # Detect platform and scrape accordingly
+            platform = self._detect_platform(url)
+            print(f"🔍 Detected platform: {platform}")
+            
+            if platform == "amazon":
+                extracted_text = await self._scrape_amazon(driver)
+            elif platform == "nykaa":
+                extracted_text = await self._scrape_nykaa(driver)
+            elif platform == "flipkart":
+                extracted_text = await self._scrape_flipkart(driver)
+            else:
+                extracted_text = await self._scrape_generic(driver)
+            
+            if not extracted_text or len(extracted_text.strip()) < 10:
+                raise Exception("No meaningful text extracted from the page")
+            
+            print(f"✅ Extracted {len(extracted_text)} characters of text")
+            
+            return {
+                "extracted_text": extracted_text,
+                "platform": platform,
+                "url": url
+            }
+            
+        except WebDriverException as e:
+            raise Exception(f"Selenium WebDriver error: {str(e)}. Make sure ChromeDriver is installed.")
+        except Exception as e:
+            raise Exception(f"Failed to scrape URL: {str(e)}")
+        finally:
+            # Don't close driver here - keep it for reuse
+            pass
+    
+    async def close(self):
+        """Close the Selenium driver"""
+        await self._close_driver()
+    
+    async def extract_ingredients_from_text(self, raw_text: str) -> List[str]:
+        """
+        Use Claude API to extract INCI ingredient names from scraped text
+        
+        Args:
+            raw_text: Raw text scraped from the product page
+            
+        Returns:
+            List of extracted INCI ingredient names
+        """
+        try:
+            prompt = f"""
+You are an expert cosmetic ingredient analyst. Your task is to extract INCI (International Nomenclature of Cosmetic Ingredients) names from the following text scraped from an e-commerce product page.
+
+Please analyze the text and return ONLY a JSON array of INCI names in the exact format shown below.
+
+Requirements:
+1. Extract only valid INCI ingredient names
+2. Remove any non-ingredient text, headers, descriptions, or marketing content
+3. Clean up formatting (remove extra spaces, punctuation, brand names)
+4. Return as a simple JSON array of strings
+5. If no valid ingredients found, return empty array []
+6. Focus on finding ingredient lists, composition sections, or INCI lists
+
+Example output format:
+["Water", "Glycerin", "Sodium Hyaluronate", "Hyaluronic Acid"]
+
+Text to analyze:
+{raw_text[:8000]}  # Limit to 8000 chars to avoid token limits
+
+Return only the JSON array:"""
+
+            # Get Claude client (lazy-loaded)
+            claude_client = self._get_claude_client()
+            
+            # Call Claude API - use config model (defaults to claude-3-opus-20240229)
+            from app.config import CLAUDE_MODEL
+            model_name = CLAUDE_MODEL if CLAUDE_MODEL else "claude-3-opus-20240229"
+            
+            response = claude_client.messages.create(
+                model=model_name,
+                max_tokens=2000,
+                temperature=0.1,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ]
+            )
+            
+            # Extract response content
+            claude_response = response.content[0].text.strip()
+            
+            # Try to parse JSON response
+            try:
+                # Clean up response to extract just the JSON part
+                if '[' in claude_response and ']' in claude_response:
+                    start = claude_response.find('[')
+                    end = claude_response.rfind(']') + 1
+                    json_str = claude_response[start:end]
+                    
+                    ingredients = json.loads(json_str)
+                    
+                    # Validate that we got a list of strings
+                    if isinstance(ingredients, list) and all(isinstance(item, str) for item in ingredients):
+                        return ingredients
+                    else:
+                        raise Exception("Invalid response format from Claude")
+                else:
+                    raise Exception("No JSON array found in Claude response")
+                    
+            except json.JSONDecodeError as e:
+                raise Exception(f"Failed to parse Claude response as JSON: {str(e)}")
+                
+        except Exception as e:
+            raise Exception(f"Failed to extract ingredients with Claude: {str(e)}")
+    
+    async def extract_ingredients_from_url(self, url: str) -> Dict[str, any]:
+        """
+        Complete workflow: Scrape URL and extract ingredients
+        
+        Args:
+            url: Product page URL
+            
+        Returns:
+            Dict with 'ingredients' (List[str]), 'extracted_text' (str), 'platform' (str)
+        """
+        try:
+            # Scrape the URL
+            scrape_result = await self.scrape_url(url)
+            extracted_text = scrape_result["extracted_text"]
+            
+            # Extract ingredients using Claude
+            ingredients = await self.extract_ingredients_from_text(extracted_text)
+            
+            return {
+                "ingredients": ingredients,
+                "extracted_text": extracted_text,
+                "platform": scrape_result["platform"],
+                "url": url
+            }
+        except Exception as e:
+            raise Exception(f"Failed to extract ingredients from URL: {str(e)}")
+

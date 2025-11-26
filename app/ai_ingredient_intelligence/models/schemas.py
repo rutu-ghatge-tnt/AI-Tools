@@ -38,3 +38,11 @@ class AnalyzeInciResponse(BaseModel):
     bis_cautions: Optional[Dict[str, List[str]]] = Field(None, description="BIS cautions for ingredients")
 
                         # how many branded ingredients matched
+
+class ExtractIngredientsResponse(BaseModel):
+    """Response schema for ingredient extraction from URL"""
+    ingredients: List[str] = Field(..., description="List of extracted INCI ingredient names")
+    extracted_text: str = Field(..., description="Full text scraped from the product page")
+    platform: str = Field(..., description="Detected e-commerce platform (amazon, nykaa, flipkart, generic)")
+    url: str = Field(..., description="The URL that was scraped")
+    processing_time: float = Field(..., description="Time taken to extract ingredients (in seconds)")

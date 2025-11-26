@@ -14,8 +14,12 @@ from app.chatbot.embedd_manifest import load_manifest, save_manifest
 os.environ["LANGCHAIN_ENDPOINT"] = "none"
 
 from langchain_chroma import Chroma
-from langchain.docstore.document import Document
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+try:
+    from langchain.docstore.document import Document
+    from langchain.text_splitter import RecursiveCharacterTextSplitter
+except ImportError:
+    from langchain_core.documents import Document
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 
 

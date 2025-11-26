@@ -9,6 +9,7 @@ from google.cloud import storage
 import tempfile
 import anthropic
 import json
+from app.config import CLAUDE_MODEL
 
 class OCRProcessor:
     def __init__(self):
@@ -112,7 +113,7 @@ Return only the JSON array:"""
 
             # Call Claude API
             response = self.claude_client.messages.create(
-                model="claude-3-5-sonnet-20241022",
+                model=CLAUDE_MODEL if CLAUDE_MODEL else "claude-3-opus-20240229",
                 max_tokens=1000,
                 temperature=0.1,
                 messages=[
