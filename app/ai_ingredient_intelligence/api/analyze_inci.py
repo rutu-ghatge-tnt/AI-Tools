@@ -1,6 +1,7 @@
 # app/api/analyze_inci.py
 from fastapi import APIRouter, HTTPException, Form
 import time
+import os
 from typing import List, Optional
 from collections import defaultdict
 
@@ -17,6 +18,86 @@ from app.ai_ingredient_intelligence.models.schemas import (
 
 router = APIRouter(tags=["INCI Analysis"])
 
+
+@router.get("/server-health")
+async def server_health():
+    """
+    Comprehensive server health check endpoint.
+    Tests: Chrome availability, Claude API, environment variables.
+    """
+    health_status = {
+        "status": "healthy",
+        "checks": {},
+        "errors": []
+    }
+    
+    # Check Chrome/Chromium
+    import subprocess
+    chrome_available = False
+    chrome_version = None
+    try:
+        result = subprocess.run(
+            ["google-chrome", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0:
+            chrome_available = True
+            chrome_version = result.stdout.strip()
+    except:
+        try:
+            result = subprocess.run(
+                ["chromium-browser", "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                chrome_available = True
+                chrome_version = result.stdout.strip()
+        except:
+            pass
+    
+    health_status["checks"]["chrome"] = {
+        "available": chrome_available,
+        "version": chrome_version
+    }
+    if not chrome_available:
+        health_status["errors"].append("Chrome/Chromium not found. Install with: sudo apt-get install -y google-chrome-stable")
+    
+    # Check environment variables
+    claude_key = os.getenv("CLAUDE_API_KEY")
+    headless_mode = os.getenv("HEADLESS_MODE", "true")
+    
+    health_status["checks"]["environment"] = {
+        "CLAUDE_API_KEY": "set" if claude_key else "missing",
+        "HEADLESS_MODE": headless_mode,
+        "MODEL_NAME": os.getenv("MODEL_NAME", "claude-3-opus-20240229")
+    }
+    if not claude_key:
+        health_status["errors"].append("CLAUDE_API_KEY not set in environment")
+        health_status["status"] = "unhealthy"
+    
+    # Check if Selenium can initialize (quick test)
+    selenium_ok = False
+    try:
+        from selenium import webdriver
+        from selenium.webdriver.chrome.options import Options
+        selenium_ok = True
+    except Exception as e:
+        health_status["errors"].append(f"Selenium import failed: {str(e)}")
+        health_status["status"] = "unhealthy"
+    
+    health_status["checks"]["selenium"] = {
+        "imported": selenium_ok
+    }
+    
+    # Overall status
+    if health_status["errors"]:
+        health_status["status"] = "unhealthy"
+    
+    return health_status
 
 @router.get("/test-selenium")
 async def test_selenium():

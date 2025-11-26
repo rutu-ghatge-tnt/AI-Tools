@@ -45,15 +45,38 @@ class URLScraper:
             
             def init_driver():
                 chrome_options = Options()
-                # Don't use headless for Nykaa - it needs full browser
-                # chrome_options.add_argument("--headless")  
-                chrome_options.add_argument("--start-maximized")
-                chrome_options.add_argument("--no-sandbox")
-                chrome_options.add_argument("--disable-dev-shm-usage")
+                
+                # Check if running on server (headless mode) or local (visible browser)
+                # Use environment variable HEADLESS_MODE or default to True for servers
+                headless_mode = os.getenv("HEADLESS_MODE", "true").lower() == "true"
+                
+                if headless_mode:
+                    # Server deployment - use headless mode
+                    chrome_options.add_argument("--headless=new")  # New headless mode
+                    chrome_options.add_argument("--disable-gpu")
+                    print("🌐 Running in headless mode (server deployment)")
+                else:
+                    # Local development - visible browser
+                    chrome_options.add_argument("--start-maximized")
+                    print("🖥️ Running in visible mode (local development)")
+                
+                # Essential options for both local and server
+                chrome_options.add_argument("--no-sandbox")  # Required for server/Linux
+                chrome_options.add_argument("--disable-dev-shm-usage")  # Overcome limited resource problems
                 chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+                chrome_options.add_argument("--window-size=1920,1080")  # Set window size for consistency
+                chrome_options.add_argument("--disable-extensions")
+                chrome_options.add_argument("--disable-software-rasterizer")
+                chrome_options.add_argument("--disable-background-timer-throttling")
+                chrome_options.add_argument("--disable-backgrounding-occluded-windows")
+                chrome_options.add_argument("--disable-renderer-backgrounding")
+                
+                # User agent
+                chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                
+                # Experimental options
                 chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
                 chrome_options.add_experimental_option('useAutomationExtension', False)
-                chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                 
                 # Use webdriver-manager to automatically download and manage ChromeDriver
                 try:
@@ -61,8 +84,18 @@ class URLScraper:
                     driver = webdriver.Chrome(service=service, options=chrome_options)
                 except Exception as e:
                     # Fallback: try without service (if ChromeDriver is in PATH)
-                    print(f"Warning: ChromeDriverManager failed, trying direct: {e}")
-                    driver = webdriver.Chrome(options=chrome_options)
+                    print(f"⚠️ Warning: ChromeDriverManager failed, trying direct: {e}")
+                    try:
+                        driver = webdriver.Chrome(options=chrome_options)
+                    except Exception as e2:
+                        raise Exception(
+                            f"Failed to initialize Chrome driver: {str(e2)}\n"
+                            f"Server deployment requires:\n"
+                            f"1. Chrome browser installed (sudo apt-get install google-chrome-stable)\n"
+                            f"2. ChromeDriver in PATH or managed by webdriver-manager\n"
+                            f"3. For Linux servers: sudo apt-get install -y chromium-browser chromium-chromedriver"
+                        )
+                
                 # Execute script to hide webdriver property
                 driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
                     'source': '''
@@ -78,7 +111,13 @@ class URLScraper:
             except Exception as e:
                 error_msg = str(e)
                 if "chromedriver" in error_msg.lower() or "executable" in error_msg.lower():
-                    raise Exception(f"ChromeDriver error: {error_msg}. ChromeDriver is being downloaded automatically by webdriver-manager. If this persists, ensure Chrome browser is installed.")
+                    raise Exception(
+                        f"ChromeDriver error: {error_msg}\n"
+                        f"For server deployment, ensure:\n"
+                        f"1. Chrome/Chromium is installed\n"
+                        f"2. Set HEADLESS_MODE=true in environment variables\n"
+                        f"3. ChromeDriver is available (webdriver-manager will download it)"
+                    )
                 else:
                     raise Exception(f"Failed to initialize Chrome driver: {error_msg}")
         

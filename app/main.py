@@ -72,4 +72,13 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "message": "Server is running"}
+    """Basic health check endpoint"""
+    return {
+        "status": "healthy", 
+        "message": "Server is running",
+        "endpoints": {
+            "api_docs": "/docs",
+            "server_health": "/api/server-health",
+            "test_selenium": "/api/test-selenium"
+        }
+    }

@@ -26,7 +26,7 @@ CHROMA_DB_PATH: str = str("chroma_db")
 if not CLAUDE_API_KEY:
     print("Warning: CLAUDE_API_KEY is not set in the .env file. Chatbot functionality will be limited.")
 else:
-    print(f"✅ Claude API key loaded successfully (model: {CLAUDE_MODEL})")
+    print(f"Claude API key loaded successfully (model: {CLAUDE_MODEL})")
 
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://skinbb_owner:SkinBB%4054321@93.127.194.42:27017/skin_bb?authSource=admin")
 DB_NAME = os.getenv("DB_NAME", "skin_bb")
