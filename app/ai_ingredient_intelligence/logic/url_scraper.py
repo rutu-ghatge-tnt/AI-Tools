@@ -44,6 +44,9 @@ class URLScraper:
             loop = asyncio.get_event_loop()
             
             def init_driver():
+                import subprocess
+                import platform
+                
                 chrome_options = Options()
                 
                 # Check if running on server (headless mode) or local (visible browser)
@@ -54,11 +57,11 @@ class URLScraper:
                     # Server deployment - use headless mode
                     chrome_options.add_argument("--headless=new")  # New headless mode
                     chrome_options.add_argument("--disable-gpu")
-                    print("🌐 Running in headless mode (server deployment)")
+                    print("Running in headless mode (server deployment)")
                 else:
                     # Local development - visible browser
                     chrome_options.add_argument("--start-maximized")
-                    print("🖥️ Running in visible mode (local development)")
+                    print("Running in visible mode (local development)")
                 
                 # Essential options for both local and server
                 chrome_options.add_argument("--no-sandbox")  # Required for server/Linux
@@ -71,12 +74,68 @@ class URLScraper:
                 chrome_options.add_argument("--disable-backgrounding-occluded-windows")
                 chrome_options.add_argument("--disable-renderer-backgrounding")
                 
+                # Additional Linux server options
+                chrome_options.add_argument("--disable-setuid-sandbox")
+                chrome_options.add_argument("--disable-web-security")
+                chrome_options.add_argument("--disable-features=IsolateOrigins,site-per-process")
+                chrome_options.add_argument("--single-process")  # Run in single process mode (helps on some servers)
+                
                 # User agent
-                chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                chrome_options.add_argument("user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                 
                 # Experimental options
                 chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
                 chrome_options.add_experimental_option('useAutomationExtension', False)
+                
+                # Try to find Chrome binary on Linux servers
+                chrome_binary = None
+                if platform.system() == "Linux":
+                    # Try common Chrome/Chromium paths
+                    possible_paths = [
+                        "/usr/bin/google-chrome",
+                        "/usr/bin/google-chrome-stable",
+                        "/usr/bin/chromium",
+                        "/usr/bin/chromium-browser",
+                        "/snap/bin/chromium"
+                    ]
+                    for path in possible_paths:
+                        if os.path.exists(path):
+                            chrome_binary = path
+                            print(f"Found Chrome binary at: {chrome_binary}")
+                            break
+                    
+                    if chrome_binary:
+                        chrome_options.binary_location = chrome_binary
+                    else:
+                        # Try to find via which command
+                        try:
+                            result = subprocess.run(
+                                ["which", "google-chrome"],
+                                capture_output=True,
+                                text=True,
+                                timeout=2
+                            )
+                            if result.returncode == 0 and result.stdout.strip():
+                                chrome_binary = result.stdout.strip()
+                                chrome_options.binary_location = chrome_binary
+                                print(f"Found Chrome via which: {chrome_binary}")
+                        except:
+                            pass
+                        
+                        if not chrome_binary:
+                            try:
+                                result = subprocess.run(
+                                    ["which", "chromium-browser"],
+                                    capture_output=True,
+                                    text=True,
+                                    timeout=2
+                                )
+                                if result.returncode == 0 and result.stdout.strip():
+                                    chrome_binary = result.stdout.strip()
+                                    chrome_options.binary_location = chrome_binary
+                                    print(f"Found Chromium via which: {chrome_binary}")
+                            except:
+                                pass
                 
                 # Use webdriver-manager to automatically download and manage ChromeDriver
                 try:
@@ -84,43 +143,63 @@ class URLScraper:
                     driver = webdriver.Chrome(service=service, options=chrome_options)
                 except Exception as e:
                     # Fallback: try without service (if ChromeDriver is in PATH)
-                    print(f"⚠️ Warning: ChromeDriverManager failed, trying direct: {e}")
+                    print(f"Warning: ChromeDriverManager failed, trying direct: {e}")
                     try:
                         driver = webdriver.Chrome(options=chrome_options)
                     except Exception as e2:
+                        error_msg = str(e2)
+                        install_instructions = ""
+                        if platform.system() == "Linux":
+                            install_instructions = (
+                                "\n\nTo fix on Linux server, run:\n"
+                                "sudo apt-get update\n"
+                                "sudo apt-get install -y google-chrome-stable\n"
+                                "OR\n"
+                                "sudo apt-get install -y chromium-browser chromium-chromedriver\n"
+                                "\nIf Chrome is installed but not found, check:\n"
+                                "1. Chrome binary location: which google-chrome\n"
+                                "2. Set CHROME_BIN environment variable if Chrome is in non-standard location\n"
+                                "3. Ensure all Chrome dependencies are installed:\n"
+                                "   sudo apt-get install -y libnss3 libatk-bridge2.0-0 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2"
+                            )
                         raise Exception(
-                            f"Failed to initialize Chrome driver: {str(e2)}\n"
+                            f"Failed to initialize Chrome driver: {error_msg}\n"
                             f"Server deployment requires:\n"
-                            f"1. Chrome browser installed (sudo apt-get install google-chrome-stable)\n"
-                            f"2. ChromeDriver in PATH or managed by webdriver-manager\n"
-                            f"3. For Linux servers: sudo apt-get install -y chromium-browser chromium-chromedriver"
+                            f"1. Chrome browser installed\n"
+                            f"2. ChromeDriver available (webdriver-manager will download it)\n"
+                            f"3. Set HEADLESS_MODE=true in environment variables{install_instructions}"
                         )
                 
                 # Execute script to hide webdriver property
-                driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
-                    'source': '''
-                        Object.defineProperty(navigator, 'webdriver', {
-                            get: () => undefined
-                        })
-                    '''
-                })
+                try:
+                    driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
+                        'source': '''
+                            Object.defineProperty(navigator, 'webdriver', {
+                                get: () => undefined
+                            })
+                        '''
+                    })
+                except:
+                    pass  # Non-critical, continue anyway
+                
                 return driver
             
             try:
                 self.driver = await loop.run_in_executor(None, init_driver)
             except Exception as e:
                 error_msg = str(e)
-                if "chromedriver" in error_msg.lower() or "executable" in error_msg.lower():
+                if "chromedriver" in error_msg.lower() or "executable" in error_msg.lower() or "session not created" in error_msg.lower():
                     raise Exception(
                         f"ChromeDriver error: {error_msg}\n"
                         f"For server deployment, ensure:\n"
-                        f"1. Chrome/Chromium is installed\n"
+                        f"1. Chrome/Chromium is installed and accessible\n"
                         f"2. Set HEADLESS_MODE=true in environment variables\n"
-                        f"3. ChromeDriver is available (webdriver-manager will download it)"
+                        f"3. ChromeDriver is available (webdriver-manager will download it)\n"
+                        f"4. On Linux: Install Chrome dependencies (see error message above)"
                     )
                 else:
                     raise Exception(f"Failed to initialize Chrome driver: {error_msg}")
-        
+            
         return self.driver
     
     async def _close_driver(self):
@@ -381,7 +460,7 @@ class URLScraper:
             loop = asyncio.get_event_loop()
             
             # Load URL in executor (Selenium is synchronous)
-            print(f"📡 Loading URL with Selenium: {url}")
+            print(f"Loading URL with Selenium: {url}")
             await loop.run_in_executor(None, driver.get, url)
             
             # Wait for page to load
@@ -389,7 +468,7 @@ class URLScraper:
             
             # Detect platform and scrape accordingly
             platform = self._detect_platform(url)
-            print(f"🔍 Detected platform: {platform}")
+            print(f"Detected platform: {platform}")
             
             if platform == "amazon":
                 extracted_text = await self._scrape_amazon(driver)
@@ -403,7 +482,7 @@ class URLScraper:
             if not extracted_text or len(extracted_text.strip()) < 10:
                 raise Exception("No meaningful text extracted from the page")
             
-            print(f"✅ Extracted {len(extracted_text)} characters of text")
+            print(f"Extracted {len(extracted_text)} characters of text")
             
             return {
                 "extracted_text": extracted_text,

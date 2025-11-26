@@ -163,7 +163,7 @@ async def analyze_inci_form(
         matched_raw, unmatched = await match_inci_names(ingredients)
         
         # 🔹 Get BIS cautions for all ingredients (runs in parallel with matching)
-        print("🔍 Retrieving BIS cautions...")
+        print("Retrieving BIS cautions...")
         bis_cautions = await get_bis_cautions_for_ingredients(ingredients)
         
     except HTTPException:
@@ -247,7 +247,7 @@ async def extract_ingredients_from_url(payload: dict):
         scraper = URLScraper()
         
         # Extract ingredients from URL
-        print(f"🔍 Scraping URL: {url}")
+        print(f"Scraping URL: {url}")
         extraction_result = await scraper.extract_ingredients_from_url(url)
         
         ingredients = extraction_result["ingredients"]
@@ -266,7 +266,7 @@ async def extract_ingredients_from_url(payload: dict):
                 detail="No ingredients found on the product page. Please ensure the page contains ingredient information."
             )
         
-        print(f"✅ Extracted {len(ingredients)} ingredients from {platform}")
+        print(f"Extracted {len(ingredients)} ingredients from {platform}")
         
         # Clean up scraper
         await scraper.close()
@@ -353,7 +353,7 @@ async def analyze_inci(payload: dict):
         matched_raw, unmatched = await match_inci_names(ingredients)
         
         # 🔹 Get BIS cautions for all ingredients (runs in parallel with matching)
-        print("🔍 Retrieving BIS cautions...")
+        print("Retrieving BIS cautions...")
         bis_cautions = await get_bis_cautions_for_ingredients(ingredients)
         
     except HTTPException:
@@ -431,7 +431,7 @@ async def analyze_url(payload: dict):
         scraper = URLScraper()
         
         # Extract ingredients from URL
-        print(f"🔍 Scraping URL: {url}")
+        print(f"Scraping URL: {url}")
         extraction_result = await scraper.extract_ingredients_from_url(url)
         
         ingredients = extraction_result["ingredients"]
@@ -444,13 +444,13 @@ async def analyze_url(payload: dict):
                 detail="No ingredients found on the product page. Please ensure the page contains ingredient information."
             )
         
-        print(f"✅ Extracted {len(ingredients)} ingredients from {platform}")
+        print(f"Extracted {len(ingredients)} ingredients from {platform}")
         
         # Match ingredients using existing logic
         matched_raw, unmatched = await match_inci_names(ingredients)
         
         # Get BIS cautions for all ingredients
-        print("🔍 Retrieving BIS cautions...")
+        print("Retrieving BIS cautions...")
         bis_cautions = await get_bis_cautions_for_ingredients(ingredients)
         
         # Clean up scraper
