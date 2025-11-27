@@ -46,3 +46,7 @@ class ExtractIngredientsResponse(BaseModel):
     platform: str = Field(..., description="Detected e-commerce platform (amazon, nykaa, flipkart, generic)")
     url: str = Field(..., description="The URL that was scraped")
     processing_time: float = Field(..., description="Time taken to extract ingredients (in seconds)")
+    is_estimated: bool = Field(False, description="Whether ingredients are estimated from AI search (true) or directly extracted (false)")
+    source: str = Field("url_extraction", description="Source of ingredients: 'url_extraction' or 'ai_search'")
+    product_name: Optional[str] = Field(None, description="Detected product name (used for AI search fallback)")
+    message: Optional[str] = Field(None, description="Optional message about the extraction method")

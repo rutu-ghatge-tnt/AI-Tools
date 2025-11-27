@@ -15,6 +15,8 @@ from app.ai_ingredient_intelligence.models.schemas import (
     InciGroup,   # ⬅️ new schema for grouping
     ExtractIngredientsResponse,  # ⬅️ new schema for URL extraction
 )
+from app.ai_ingredient_intelligence.db.mongodb import db
+from app.ai_ingredient_intelligence.db.collections import distributor_col
 
 router = APIRouter(tags=["INCI Analysis"])
 
@@ -253,6 +255,9 @@ async def extract_ingredients_from_url(payload: dict):
         ingredients = extraction_result["ingredients"]
         extracted_text = extraction_result["extracted_text"]
         platform = extraction_result.get("platform", "unknown")
+        is_estimated = extraction_result.get("is_estimated", False)
+        source = extraction_result.get("source", "url_extraction")
+        product_name = extraction_result.get("product_name")
         
         if not ingredients:
             # Check if it was an access denied issue
@@ -266,7 +271,12 @@ async def extract_ingredients_from_url(payload: dict):
                 detail="No ingredients found on the product page. Please ensure the page contains ingredient information."
             )
         
-        print(f"Extracted {len(ingredients)} ingredients from {platform}")
+        # Generate appropriate message based on source
+        message = None
+        if is_estimated and source == "ai_search":
+            message = f"Unable to extract ingredients directly from the URL. These are estimated ingredients found via AI search based on the product: {product_name or 'detected product'}. Please verify these ingredients match the actual product formulation."
+        
+        print(f"Extracted {len(ingredients)} ingredients from {platform} (estimated: {is_estimated})")
         
         # Clean up scraper
         await scraper.close()
@@ -276,7 +286,11 @@ async def extract_ingredients_from_url(payload: dict):
             extracted_text=extracted_text,
             platform=platform,
             url=url,
-            processing_time=round(time.time() - start, 3)
+            processing_time=round(time.time() - start, 3),
+            is_estimated=is_estimated,
+            source=source,
+            product_name=product_name,
+            message=message
         )
         
     except HTTPException:
@@ -503,3 +517,193 @@ async def analyze_url(payload: dict):
         input_type="url",
         bis_cautions=bis_cautions if bis_cautions else None
     )
+
+
+@router.get("/suppliers")
+async def get_suppliers():
+    """
+    Get all suppliers from ingre_suppliers collection
+    Returns list of supplier names
+    """
+    try:
+        suppliers_collection = db["ingre_suppliers"]
+        cursor = suppliers_collection.find({}, {"supplierName": 1, "_id": 0})
+        suppliers = await cursor.to_list(length=None)
+        
+        # Extract supplier names and sort alphabetically
+        supplier_names = sorted([s.get("supplierName", "") for s in suppliers if s.get("supplierName")])
+        
+        return {"suppliers": supplier_names}
+    except Exception as e:
+        print(f"Error fetching suppliers: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch suppliers: {str(e)}")
+
+
+@router.get("/suppliers/paginated")
+async def get_suppliers_paginated(skip: int = 0, limit: int = 50, search: Optional[str] = None):
+    """
+    Get suppliers with pagination and search
+    """
+    try:
+        suppliers_collection = db["ingre_suppliers"]
+        
+        # Build query
+        query = {}
+        if search:
+            query["supplierName"] = {"$regex": search, "$options": "i"}
+        
+        # Get total count
+        total = await suppliers_collection.count_documents(query)
+        
+        # Get paginated results
+        cursor = suppliers_collection.find(query, {"supplierName": 1, "_id": 0}).skip(skip).limit(limit)
+        suppliers = await cursor.to_list(length=None)
+        
+        # Extract supplier names
+        supplier_names = [s.get("supplierName", "") for s in suppliers if s.get("supplierName")]
+        
+        return {
+            "suppliers": supplier_names,
+            "total": total,
+            "skip": skip,
+            "limit": limit,
+            "hasMore": (skip + limit) < total
+        }
+    except Exception as e:
+        print(f"Error fetching suppliers: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch suppliers: {str(e)}")
+
+
+@router.post("/distributor/register")
+async def register_distributor(payload: dict):
+    """
+    Register a new distributor and save to distributor collection
+    
+    Request body:
+    {
+        "firmName": "ABC Distributors",
+        "category": "Pvt Ltd",
+        "registeredAddress": "123 Main St, City",
+        "contactPerson": {
+            "name": "John Doe",
+            "number": "+91-1234567890",
+            "email": "contact@abc.com",
+            "zone": "India"
+        },
+        "ingredientName": "Hyaluronic Acid",
+        "principlesSuppliers": ["Supplier 1", "Supplier 2"],
+        "yourInfo": {
+            "name": "John Doe",
+            "email": "john@abc.com",
+            "designation": "Director",
+            "contactNo": "+91-9876543210"
+        },
+        "acceptTerms": true
+    }
+    """
+    try:
+        # Validate required fields
+        required_fields = ["firmName", "category", "registeredAddress", "contactPersons", 
+                         "ingredientName", "principlesSuppliers", "yourInfo", "acceptTerms"]
+        for field in required_fields:
+            if field not in payload:
+                raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
+        
+        if not payload.get("acceptTerms"):
+            raise HTTPException(status_code=400, detail="Terms and conditions must be accepted")
+        
+        # Validate contact persons
+        contact_persons = payload.get("contactPersons", [])
+        if not isinstance(contact_persons, list) or len(contact_persons) == 0:
+            raise HTTPException(status_code=400, detail="At least one contact person is required")
+        
+        for idx, contact_person in enumerate(contact_persons):
+            if not isinstance(contact_person, dict):
+                raise HTTPException(status_code=400, detail=f"Contact Person {idx + 1}: Must be an object")
+            
+            contact_fields = ["name", "number", "email", "zones"]
+            for field in contact_fields:
+                if field not in contact_person:
+                    raise HTTPException(status_code=400, detail=f"Contact Person {idx + 1}: Missing required field: {field}")
+            
+            if field == "zones":
+                if not isinstance(contact_person["zones"], list) or len(contact_person["zones"]) == 0:
+                    raise HTTPException(status_code=400, detail=f"Contact Person {idx + 1}: At least one zone is required")
+            elif not contact_person[field]:
+                raise HTTPException(status_code=400, detail=f"Contact Person {idx + 1}: {field} cannot be empty")
+        
+        # Validate principles suppliers
+        principles_suppliers = payload.get("principlesSuppliers", [])
+        if not isinstance(principles_suppliers, list) or len(principles_suppliers) == 0:
+            raise HTTPException(status_code=400, detail="At least one supplier must be selected in Principles You Represent")
+        
+        # Validate your info
+        your_info = payload.get("yourInfo", {})
+        if not isinstance(your_info, dict):
+            raise HTTPException(status_code=400, detail="yourInfo must be an object")
+        
+        your_info_fields = ["name", "email", "designation", "contactNo"]
+        for field in your_info_fields:
+            if field not in your_info or not your_info[field]:
+                raise HTTPException(status_code=400, detail=f"Your Info: Missing required field: {field}")
+        
+        # Prepare distributor document
+        from datetime import datetime
+        
+        distributor_doc = {
+            "firmName": payload["firmName"],
+            "category": payload["category"],
+            "registeredAddress": payload["registeredAddress"],
+            "contactPersons": payload.get("contactPersons", []),  # Support multiple contact persons
+            "ingredientName": payload["ingredientName"],
+            "principlesSuppliers": payload["principlesSuppliers"],
+            "yourInfo": payload["yourInfo"],
+            "acceptTerms": payload["acceptTerms"],
+            "status": "under review",  # under review, approved, rejected
+            "createdAt": datetime.utcnow(),
+            "updatedAt": datetime.utcnow()
+        }
+        
+        # Insert into distributor collection
+        result = await distributor_col.insert_one(distributor_doc)
+        
+        if result.inserted_id:
+            return {
+                "success": True,
+                "message": "Distributor registration submitted successfully",
+                "distributorId": str(result.inserted_id)
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to save distributor registration")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error registering distributor: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to register distributor: {str(e)}")
+
+
+@router.get("/distributor/by-ingredient/{ingredient_name}")
+async def get_distributor_by_ingredient(ingredient_name: str):
+    """
+    Get all distributor information for a specific ingredient
+    
+    Returns list of all distributors for the ingredient, otherwise returns empty list
+    """
+    try:
+        # Find all distributors by ingredient name (case-insensitive)
+        distributors = await distributor_col.find(
+            {"ingredientName": {"$regex": f"^{ingredient_name}$", "$options": "i"}}
+        ).sort("createdAt", -1).to_list(length=None)
+        
+        # Convert ObjectId to string for each distributor
+        for distributor in distributors:
+            distributor["_id"] = str(distributor["_id"])
+        
+        return distributors if distributors else []
+            
+    except Exception as e:
+        print(f"Error fetching distributors: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch distributors: {str(e)}")

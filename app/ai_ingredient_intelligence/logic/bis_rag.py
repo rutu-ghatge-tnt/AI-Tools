@@ -4,6 +4,7 @@ RAG module for Bureau of Indian Standards (BIS) documents
 Retrieves caution information about ingredients from official BIS documents
 """
 import os
+import json
 from pathlib import Path
 from typing import List, Dict, Optional
 from langchain_chroma import Chroma
@@ -18,9 +19,47 @@ import fitz  # PyMuPDF
 # BIS specific ChromaDB path
 BIS_CHROMA_DB_PATH = os.path.join(Path(__file__).parent.parent.parent, "chroma_db_bis")
 BIS_DATA_PATH = Path(__file__).parent.parent / "db" / "data"
+BIS_MANIFEST_PATH = Path(BIS_CHROMA_DB_PATH) / "embed_manifest.json"
 
 # Ensure directories exist
 os.makedirs(BIS_CHROMA_DB_PATH, exist_ok=True)
+
+# Global cache for vectorstore instance (singleton pattern)
+_bis_vectorstore_cache: Optional[Chroma] = None
+_bis_vectorstore_initialized = False
+
+
+def load_bis_manifest() -> Dict[str, float]:
+    """
+    Load manifest file tracking embedded PDFs and their modification times.
+    Returns dict mapping PDF filename to modification timestamp.
+    """
+    if BIS_MANIFEST_PATH.exists():
+        try:
+            with open(BIS_MANIFEST_PATH, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"⚠️ Error loading BIS manifest: {e}")
+            return {}
+    return {}
+
+
+def save_bis_manifest(manifest: Dict[str, float]):
+    """Save manifest file with embedded PDFs and their modification times."""
+    try:
+        BIS_MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(BIS_MANIFEST_PATH, "w") as f:
+            json.dump(manifest, f, indent=2)
+    except Exception as e:
+        print(f"⚠️ Error saving BIS manifest: {e}")
+
+
+def get_pdf_modification_time(pdf_path: Path) -> float:
+    """Get modification time of PDF file."""
+    try:
+        return pdf_path.stat().st_mtime
+    except Exception:
+        return 0.0
 
 
 def extract_text_from_pdf(pdf_path: Path) -> str:
@@ -37,73 +76,135 @@ def extract_text_from_pdf(pdf_path: Path) -> str:
         return ""
 
 
-def initialize_bis_vectorstore() -> Optional[Chroma]:
-    """Initialize or load BIS vectorstore"""
+def initialize_bis_vectorstore(force_reload: bool = False) -> Optional[Chroma]:
+    """
+    Initialize or load BIS vectorstore with caching and incremental embedding.
+    
+    Automatically detects new or modified PDFs and only embeds those,
+    preserving existing embeddings for unchanged PDFs.
+    
+    Args:
+        force_reload: If True, force re-initialization even if cached instance exists.
+                      Useful for refreshing after adding new PDFs.
+    
+    Returns:
+        Chroma vectorstore instance or None if initialization fails.
+    """
+    global _bis_vectorstore_cache, _bis_vectorstore_initialized
+    
+    # Return cached instance if available and not forcing reload
+    if _bis_vectorstore_cache is not None and not force_reload:
+        return _bis_vectorstore_cache
+    
     try:
-        # Check if vectorstore already exists
-        if os.path.exists(BIS_CHROMA_DB_PATH) and os.listdir(BIS_CHROMA_DB_PATH):
-            print("📚 Loading existing BIS vectorstore...")
-            vectorstore = Chroma(
-                persist_directory=BIS_CHROMA_DB_PATH,
-                embedding_function=HuggingFaceEmbeddings(
-                    model_name="sentence-transformers/all-mpnet-base-v2"
-                )
-            )
-            return vectorstore
-        
-        # If not exists, create from PDFs
-        print("📚 Creating BIS vectorstore from PDFs...")
-        pdf_files = list(BIS_DATA_PATH.glob("*.pdf"))
-        
-        if not pdf_files:
-            print(f"⚠️ No PDF files found in {BIS_DATA_PATH}")
-            return None
-        
-        documents = []
-        for pdf_file in pdf_files:
-            print(f"📄 Processing {pdf_file.name}...")
-            text = extract_text_from_pdf(pdf_file)
-            if text.strip():
-                # Split text into chunks
-                splitter = RecursiveCharacterTextSplitter(
-                    chunk_size=1000,
-                    chunk_overlap=200,
-                    separators=["\n\n", "\n", ". ", " "]
-                )
-                chunks = splitter.split_text(text)
-                
-                for i, chunk in enumerate(chunks):
-                    documents.append(Document(
-                        page_content=chunk,
-                        metadata={
-                            "source": pdf_file.name,
-                            "chunk_index": i,
-                            "document_type": "BIS_Standard"
-                        }
-                    ))
-        
-        if not documents:
-            print("⚠️ No documents extracted from PDFs")
-            return None
-        
-        # Create vectorstore
         embedding_model = HuggingFaceEmbeddings(
             model_name="sentence-transformers/all-mpnet-base-v2"
         )
         
-        # Create empty vectorstore first, then add documents
-        vectorstore = Chroma(
-            embedding_function=embedding_model,
-            persist_directory=BIS_CHROMA_DB_PATH
-        )
+        # Load manifest to track embedded PDFs
+        manifest = load_bis_manifest()
+        vectorstore_exists = os.path.exists(BIS_CHROMA_DB_PATH) and os.listdir(BIS_CHROMA_DB_PATH)
         
-        # Add documents in batches to avoid memory issues
-        batch_size = 50
-        for i in range(0, len(documents), batch_size):
-            batch = documents[i:i + batch_size]
-            vectorstore.add_documents(documents=batch)
+        # Get all PDF files
+        pdf_files = list(BIS_DATA_PATH.glob("*.pdf"))
         
-        print(f"✅ Created BIS vectorstore with {len(documents)} chunks")
+        if not pdf_files:
+            print(f"⚠️ No PDF files found in {BIS_DATA_PATH}")
+            if not vectorstore_exists:
+                return None
+            # If vectorstore exists but no PDFs, just load it
+            print("📚 Loading existing BIS vectorstore...")
+            vectorstore = Chroma(
+                persist_directory=BIS_CHROMA_DB_PATH,
+                embedding_function=embedding_model
+            )
+            _bis_vectorstore_cache = vectorstore
+            _bis_vectorstore_initialized = True
+            return vectorstore
+        
+        # Detect new or modified PDFs
+        new_or_modified_pdfs = []
+        for pdf_file in pdf_files:
+            pdf_name = pdf_file.name
+            current_mtime = get_pdf_modification_time(pdf_file)
+            
+            # Check if PDF is new or modified
+            if pdf_name not in manifest:
+                new_or_modified_pdfs.append((pdf_file, current_mtime))
+                print(f"📄 New PDF detected: {pdf_name}")
+            elif manifest[pdf_name] != current_mtime:
+                new_or_modified_pdfs.append((pdf_file, current_mtime))
+                print(f"📄 Modified PDF detected: {pdf_name}")
+        
+        # If vectorstore exists, load it; otherwise create new one
+        if vectorstore_exists:
+            print("📚 Loading existing BIS vectorstore...")
+            vectorstore = Chroma(
+                persist_directory=BIS_CHROMA_DB_PATH,
+                embedding_function=embedding_model
+            )
+        else:
+            print("📚 Creating new BIS vectorstore...")
+            vectorstore = Chroma(
+                embedding_function=embedding_model,
+                persist_directory=BIS_CHROMA_DB_PATH
+            )
+            # Mark all PDFs as needing embedding for first-time creation
+            new_or_modified_pdfs = [(pdf_file, get_pdf_modification_time(pdf_file)) for pdf_file in pdf_files]
+        
+        # Process and embed new/modified PDFs
+        if new_or_modified_pdfs:
+            print(f"🔄 Processing {len(new_or_modified_pdfs)} new/modified PDF(s)...")
+            documents = []
+            
+            for pdf_file, mtime in new_or_modified_pdfs:
+                print(f"📄 Processing {pdf_file.name}...")
+                text = extract_text_from_pdf(pdf_file)
+                if text.strip():
+                    # Split text into chunks
+                    splitter = RecursiveCharacterTextSplitter(
+                        chunk_size=1000,
+                        chunk_overlap=200,
+                        separators=["\n\n", "\n", ". ", " "]
+                    )
+                    chunks = splitter.split_text(text)
+                    
+                    for i, chunk in enumerate(chunks):
+                        documents.append(Document(
+                            page_content=chunk,
+                            metadata={
+                                "source": pdf_file.name,
+                                "chunk_index": i,
+                                "document_type": "BIS_Standard"
+                            }
+                        ))
+                    
+                    # Update manifest with new modification time
+                    manifest[pdf_file.name] = mtime
+                else:
+                    print(f"⚠️ Skipping {pdf_file.name} — empty or unreadable")
+            
+            if documents:
+                # Add new documents to existing vectorstore in batches
+                batch_size = 50
+                for i in range(0, len(documents), batch_size):
+                    batch = documents[i:i + batch_size]
+                    vectorstore.add_documents(documents=batch)
+                
+                # Save updated manifest
+                save_bis_manifest(manifest)
+                print(f"✅ Added {len(documents)} new chunks from {len(new_or_modified_pdfs)} PDF(s)")
+            else:
+                print("⚠️ No documents extracted from new/modified PDFs")
+        else:
+            if not vectorstore_exists:
+                print("⚠️ No PDFs to process and vectorstore doesn't exist")
+                return None
+            print("✅ All PDFs are up to date, no new embeddings needed")
+        
+        # Cache the instance
+        _bis_vectorstore_cache = vectorstore
+        _bis_vectorstore_initialized = True
         return vectorstore
         
     except Exception as e:
@@ -114,12 +215,30 @@ def initialize_bis_vectorstore() -> Optional[Chroma]:
         return None
 
 
+def clear_bis_vectorstore_cache():
+    """
+    Clear the cached BIS vectorstore instance.
+    Useful when you've added new PDFs and want to force re-initialization.
+    Next call to get_bis_retriever() will reload the vectorstore.
+    """
+    global _bis_vectorstore_cache, _bis_vectorstore_initialized
+    _bis_vectorstore_cache = None
+    _bis_vectorstore_initialized = False
+    print("🔄 BIS vectorstore cache cleared")
+
+
 def get_bis_retriever():
-    """Get BIS document retriever"""
+    """
+    Get BIS document retriever.
+    Uses cached vectorstore instance for efficiency.
+    Creates a new retriever from the cached vectorstore (lightweight operation).
+    """
     vectorstore = initialize_bis_vectorstore()
     if vectorstore is None:
         return None
     
+    # Creating a retriever is lightweight - it's just a wrapper around the vectorstore
+    # The vectorstore itself is cached, so this is efficient
     retriever = vectorstore.as_retriever(
         search_type="mmr",
         search_kwargs={"k": 5, "fetch_k": 10}

@@ -502,6 +502,132 @@ class URLScraper:
         """Close the Selenium driver"""
         await self._close_driver()
     
+    async def detect_product_name(self, raw_text: str, url: str) -> Optional[str]:
+        """
+        Detect product name from scraped text or URL using Claude
+        
+        Args:
+            raw_text: Raw text scraped from the product page
+            url: The product URL
+            
+        Returns:
+            Product name string or None if not detected
+        """
+        try:
+            prompt = f"""
+You are analyzing an e-commerce product page. Your task is to identify the product name from the following information.
+
+URL: {url}
+
+Scraped text (first 2000 characters):
+{raw_text[:2000]}
+
+Please extract the product name. This should be:
+1. The main product name (e.g., "The Ordinary Glycolic Acid 7% Exfoliating Solution")
+2. Not the brand name alone
+3. Not the category
+4. The specific product name that would help identify it on other platforms
+
+Return ONLY the product name as a plain text string. If you cannot identify a clear product name, return "null".
+
+Product name:"""
+
+            claude_client = self._get_claude_client()
+            from app.config import CLAUDE_MODEL
+            model_name = CLAUDE_MODEL if CLAUDE_MODEL else "claude-3-opus-20240229"
+            
+            response = claude_client.messages.create(
+                model=model_name,
+                max_tokens=200,
+                temperature=0.1,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            product_name = response.content[0].text.strip()
+            
+            # Clean up response
+            if product_name.lower() in ["null", "none", "n/a", ""]:
+                return None
+            
+            # Remove quotes if present
+            product_name = product_name.strip('"\'')
+            
+            return product_name if product_name else None
+            
+        except Exception as e:
+            print(f"Error detecting product name: {e}")
+            return None
+    
+    async def search_ingredients_by_product_name(self, product_name: str) -> List[str]:
+        """
+        Use Claude to search for INCI ingredients based on product name
+        This is a fallback when direct extraction from URL fails
+        
+        Args:
+            product_name: The detected product name
+            
+        Returns:
+            List of estimated INCI ingredient names
+        """
+        try:
+            prompt = f"""
+You are a cosmetic ingredient expert. A user is trying to find the INCI (International Nomenclature of Cosmetic Ingredients) list for this product:
+
+Product Name: {product_name}
+
+Since we were unable to extract the ingredients directly from the product URL, please help by providing an estimated INCI ingredient list based on:
+1. Your knowledge of this specific product
+2. Similar products from the same brand/line
+3. Common ingredients in products of this type
+4. Information available from various e-commerce platforms and cosmetic databases
+
+IMPORTANT:
+- Return ONLY a JSON array of INCI names
+- Include only ingredients that are likely to be in this product
+- Be as accurate as possible based on product knowledge
+- If this is a well-known product, use your knowledge of its actual formulation
+- If uncertain, include common ingredients for this product type
+
+Example output format:
+["Water", "Glycerin", "Sodium Hyaluronate", "Hyaluronic Acid"]
+
+Return only the JSON array of INCI names:"""
+
+            claude_client = self._get_claude_client()
+            from app.config import CLAUDE_MODEL
+            model_name = CLAUDE_MODEL if CLAUDE_MODEL else "claude-3-opus-20240229"
+            
+            response = claude_client.messages.create(
+                model=model_name,
+                max_tokens=2000,
+                temperature=0.2,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            claude_response = response.content[0].text.strip()
+            
+            # Parse JSON response
+            try:
+                if '[' in claude_response and ']' in claude_response:
+                    start = claude_response.find('[')
+                    end = claude_response.rfind(']') + 1
+                    json_str = claude_response[start:end]
+                    
+                    ingredients = json.loads(json_str)
+                    
+                    if isinstance(ingredients, list) and all(isinstance(item, str) for item in ingredients):
+                        return ingredients
+                    else:
+                        return []
+                else:
+                    return []
+            except json.JSONDecodeError:
+                return []
+                
+        except Exception as e:
+            print(f"Error searching ingredients by product name: {e}")
+            return []
+    
     async def extract_ingredients_from_text(self, raw_text: str) -> List[str]:
         """
         Use Claude API to extract INCI ingredient names from scraped text
@@ -583,27 +709,85 @@ Return only the JSON array:"""
     async def extract_ingredients_from_url(self, url: str) -> Dict[str, any]:
         """
         Complete workflow: Scrape URL and extract ingredients
+        Falls back to AI search if direct extraction fails
         
         Args:
             url: Product page URL
             
         Returns:
-            Dict with 'ingredients' (List[str]), 'extracted_text' (str), 'platform' (str)
+            Dict with 'ingredients' (List[str]), 'extracted_text' (str), 'platform' (str),
+            'is_estimated' (bool), 'source' (str), 'product_name' (str)
         """
         try:
             # Scrape the URL
             scrape_result = await self.scrape_url(url)
             extracted_text = scrape_result["extracted_text"]
             
-            # Extract ingredients using Claude
+            # Try to extract ingredients using Claude
             ingredients = await self.extract_ingredients_from_text(extracted_text)
             
+            # If extraction succeeded, return direct results
+            if ingredients and len(ingredients) > 0:
+                return {
+                    "ingredients": ingredients,
+                    "extracted_text": extracted_text,
+                    "platform": scrape_result["platform"],
+                    "url": url,
+                    "is_estimated": False,
+                    "source": "url_extraction",
+                    "product_name": None
+                }
+            
+            # If extraction failed, try fallback: detect product name and search
+            print("Direct extraction failed, attempting fallback: detecting product name...")
+            product_name = await self.detect_product_name(extracted_text, url)
+            
+            if product_name:
+                print(f"Detected product name: {product_name}")
+                print("Searching for ingredients using AI...")
+                estimated_ingredients = await self.search_ingredients_by_product_name(product_name)
+                
+                if estimated_ingredients and len(estimated_ingredients) > 0:
+                    return {
+                        "ingredients": estimated_ingredients,
+                        "extracted_text": extracted_text,
+                        "platform": scrape_result["platform"],
+                        "url": url,
+                        "is_estimated": True,
+                        "source": "ai_search",
+                        "product_name": product_name
+                    }
+            
+            # If fallback also failed, return empty
             return {
-                "ingredients": ingredients,
+                "ingredients": [],
                 "extracted_text": extracted_text,
                 "platform": scrape_result["platform"],
-                "url": url
+                "url": url,
+                "is_estimated": False,
+                "source": "url_extraction",
+                "product_name": product_name
             }
+            
         except Exception as e:
+            # If scraping failed, try to detect product from URL only
+            print(f"Scraping failed: {e}, attempting product name detection from URL...")
+            try:
+                product_name = await self.detect_product_name("", url)
+                if product_name:
+                    estimated_ingredients = await self.search_ingredients_by_product_name(product_name)
+                    if estimated_ingredients and len(estimated_ingredients) > 0:
+                        return {
+                            "ingredients": estimated_ingredients,
+                            "extracted_text": f"Unable to scrape URL: {str(e)}",
+                            "platform": self._detect_platform(url),
+                            "url": url,
+                            "is_estimated": True,
+                            "source": "ai_search",
+                            "product_name": product_name
+                        }
+            except:
+                pass
+            
             raise Exception(f"Failed to extract ingredients from URL: {str(e)}")
 

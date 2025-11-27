@@ -26,6 +26,7 @@ sys.path.insert(0, str(face_analysis_path))
 # Import Face Analysis router
 from face_analysis.backend.api.main import router as face_analysis_router
 from fastapi.middleware.cors import CORSMiddleware
+from app.ai_ingredient_intelligence.db.collections import distributor_col
 
 app = FastAPI(
     title="SkinBB AI Skincare Chatbot",
@@ -65,6 +66,19 @@ app.include_router(formulation_report_router, prefix="/api")
 
 # ✅ Face Analysis API - Include router instead of mounting
 app.include_router(face_analysis_router, prefix="/api/face-analysis", tags=["Face Analysis"])
+
+@app.on_event("startup")
+async def create_indexes():
+    """Create indexes for MongoDB collections on startup"""
+    try:
+        # Create indexes for distributor collection
+        await distributor_col.create_index("ingredientName")
+        await distributor_col.create_index("createdAt")
+        await distributor_col.create_index([("ingredientName", 1), ("createdAt", -1)])
+        print("✅ Distributor collection indexes created successfully")
+    except Exception as e:
+        print(f"⚠️ Warning: Could not create distributor indexes: {e}")
+        # Don't fail startup if indexes already exist
 
 @app.get("/")
 async def root():
