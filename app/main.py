@@ -24,8 +24,13 @@ from pathlib import Path
 face_analysis_path = Path(__file__).parent / "faceAnalysis"
 sys.path.insert(0, str(face_analysis_path))
 
-# Import Face Analysis router
-from face_analysis.backend.api.main import router as face_analysis_router
+# Import Face Analysis router (with error handling for missing module)
+try:
+    from face_analysis.backend.api.main import router as face_analysis_router  # type: ignore
+except ImportError as e:
+    print(f"⚠️ Warning: Could not import face_analysis router: {e}")
+    print("   Face Analysis API will not be available. This is not critical.")
+    face_analysis_router = None
 from fastapi.middleware.cors import CORSMiddleware
 from app.ai_ingredient_intelligence.db.collections import distributor_col
 
@@ -66,7 +71,10 @@ app.include_router(formulation_report_router, prefix="/api")
 # app.include_router(image_extractor_router, prefix="/api")
 
 # ✅ Face Analysis API - Include router instead of mounting
-app.include_router(face_analysis_router, prefix="/api/face-analysis", tags=["Face Analysis"])
+if face_analysis_router is not None:
+    app.include_router(face_analysis_router, prefix="/api/face-analysis", tags=["Face Analysis"])
+else:
+    print("⚠️ Face Analysis router not available, skipping registration")
 
 @app.on_event("startup")
 async def create_indexes():
