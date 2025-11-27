@@ -159,3 +159,13 @@ vision_key.json
 # Special directories
 AV_Skinbb_Web_Industry/
 SkinBB_Web_Industry/
+
+# Database folder
+chroma_db/
+chroma_db/chroma.sqlite3
+
+# Add these missing entries:
+app/chroma_db/
+app/chroma_db_bis/
+app/chroma_db_bis/*.bin
+app/chroma_db_bis/*.sqlite3

@@ -4,6 +4,7 @@ import sys
 import warnings
 import logging
 
+
 # Suppress TensorFlow/MediaPipe warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 os.environ['ABSL_MIN_LOG_LEVEL'] = '2'
