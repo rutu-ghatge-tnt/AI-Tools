@@ -270,7 +270,7 @@ class URLScraper:
             return ""
     
     async def _scrape_nykaa(self, driver: webdriver.Chrome) -> str:
-        """Scrape ingredients from Nykaa product page - matches working code"""
+        """Scrape ingredients and product details from Nykaa product page"""
         try:
             loop = asyncio.get_event_loop()
             
@@ -283,13 +283,134 @@ class URLScraper:
                 wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "#app")))
                 time.sleep(2)
                 
-                # Scroll down to load content
-                driver.execute_script("window.scrollBy(0, 1000);")
-                time.sleep(2)
-                
                 text_parts = []
                 
-                # Try to click on "Ingredients" tab and extract content
+                # FIRST: Extract main product information (name, price, ratings, brand) from the page header
+                try:
+                    # Get the main product section - try multiple selectors
+                    product_selectors = [
+                        "[class*='product-detail']",
+                        "[class*='ProductDetail']",
+                        "[class*='product-info']",
+                        "h1",
+                        "[data-testid='product-name']",
+                        ".css-1geu4rv",  # Common Nykaa product name class
+                    ]
+                    
+                    product_info = []
+                    
+                    # Try to get product name
+                    for selector in product_selectors:
+                        try:
+                            elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                            for elem in elements:
+                                text = elem.text.strip()
+                                if text and len(text) > 5 and len(text) < 200:
+                                    product_info.append(f"Product Name: {text}")
+                                    break
+                            if product_info:
+                                break
+                        except:
+                            continue
+                    
+                    # Try to get price - look for ₹ symbol or price patterns
+                    price_selectors = [
+                        "[class*='price']",
+                        "[class*='Price']",
+                        "[data-testid='price']",
+                        "[class*='selling']",
+                    ]
+                    
+                    for selector in price_selectors:
+                        try:
+                            elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                            for elem in elements:
+                                text = elem.text.strip()
+                                if '₹' in text or 'Rs.' in text or 'INR' in text or ('price' in text.lower() and any(c.isdigit() for c in text)):
+                                    # Extract price with context
+                                    price_text = text
+                                    if len(price_text) < 100:  # Reasonable price length
+                                        product_info.append(f"Price: {price_text}")
+                                        break
+                            if any('Price:' in p for p in product_info):
+                                break
+                        except:
+                            continue
+                    
+                    # Also try XPath to find elements containing ₹
+                    try:
+                        price_elements = driver.find_elements(By.XPATH, "//*[contains(text(), '₹')]")
+                        for elem in price_elements[:5]:  # Limit to first 5 matches
+                            text = elem.text.strip()
+                            if '₹' in text and len(text) < 50:
+                                product_info.append(f"Price: {text}")
+                                break
+                    except:
+                        pass
+                    
+                    # Try to get ratings
+                    rating_selectors = [
+                        "[class*='rating']",
+                        "[class*='Rating']",
+                        "[data-testid='rating']",
+                        "[class*='star']",
+                    ]
+                    
+                    for selector in rating_selectors:
+                        try:
+                            elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                            for elem in elements:
+                                text = elem.text.strip()
+                                if '/' in text and ('5' in text or 'star' in text.lower() or 'rating' in text.lower()):
+                                    product_info.append(f"Ratings: {text}")
+                                    break
+                            if any('Ratings:' in p for p in product_info):
+                                break
+                        except:
+                            continue
+                    
+                    # Also try XPath for ratings
+                    try:
+                        rating_elements = driver.find_elements(By.XPATH, "//*[contains(text(), '/5') or contains(text(), 'rating')]")
+                        for elem in rating_elements[:5]:
+                            text = elem.text.strip()
+                            if ('/5' in text or 'rating' in text.lower()) and len(text) < 100:
+                                product_info.append(f"Ratings: {text}")
+                                break
+                    except:
+                        pass
+                    
+                    # Get brand name - usually before product name or in breadcrumbs
+                    try:
+                        brand_elements = driver.find_elements(By.CSS_SELECTOR, "[class*='brand'], [class*='Brand'], a[href*='/brand/']")
+                        for elem in brand_elements:
+                            text = elem.text.strip()
+                            if text and len(text) > 2 and len(text) < 50:
+                                product_info.append(f"Brand: {text}")
+                                break
+                    except:
+                        pass
+                    
+                    if product_info:
+                        text_parts.append("Product Information:\n" + "\n".join(product_info))
+                    
+                    # Also get visible text from product header area
+                    try:
+                        # Get page title
+                        page_title = driver.title
+                        if page_title and len(page_title) > 10:
+                            text_parts.append(f"Page Title: {page_title}")
+                    except:
+                        pass
+                    
+                except Exception as e:
+                    print(f"Could not extract main product info: {e}")
+                
+                # Scroll down to load content
+                driver.execute_script("window.scrollBy(0, 500);")
+                time.sleep(1)
+                
+                # SECOND: Extract from Ingredients tab
                 try:
                     # Look for Ingredients tab
                     ingredients_tab = driver.find_element(By.XPATH, "//h3[normalize-space()='Ingredients']")
@@ -321,7 +442,7 @@ class URLScraper:
                 except Exception as e:
                     print(f"Could not extract Ingredients tab: {e}")
                 
-                # Also try Description tab
+                # THIRD: Extract from Description tab
                 try:
                     desc_tab = driver.find_element(By.XPATH, "//h3[normalize-space()='Description']")
                     driver.execute_script("arguments[0].scrollIntoView(true);", desc_tab)
@@ -348,11 +469,23 @@ class URLScraper:
                 except Exception as e:
                     print(f"Could not extract Description tab: {e}")
                 
-                if text_parts:
-                    return "\n\n".join(text_parts)
-                else:
-                    # Fallback: get all text content
-                    return driver.find_element(By.TAG_NAME, "body").text
+                # FOURTH: Always get additional visible text from page for comprehensive extraction
+                try:
+                    # Get visible text from the page (more content for better extraction)
+                    body_text = driver.find_element(By.TAG_NAME, "body").text
+                    # Extract first 5000 chars which usually contains product info, price, ratings
+                    visible_text = body_text[:5000]
+                    if visible_text and visible_text not in "\n".join(text_parts):
+                        # Only add if it's not already included
+                        text_parts.append(f"Additional Page Content:\n{visible_text}")
+                except:
+                    pass
+                
+                result = "\n\n".join(text_parts) if text_parts else driver.find_element(By.TAG_NAME, "body").text
+                print(f"Nykaa extraction summary: {len(text_parts)} sections, {len(result)} total characters")
+                if product_info:
+                    print(f"Extracted product info: {product_info}")
+                return result
             
             return await loop.run_in_executor(None, scrape)
         except Exception as e:

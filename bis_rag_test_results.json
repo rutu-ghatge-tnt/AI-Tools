@@ -1,0 +1,178 @@
+{
+  "test_timestamp": "2025-12-02T14:32:00.121261",
+  "test_results": {
+    "pdf_files": [
+      "C:\\Projects\\SkinBB\\SkinBB_AI_Tools\\app\\ai_ingredient_intelligence\\db\\data\\IS4707_Part1_2020.pdf",
+      "C:\\Projects\\SkinBB\\SkinBB_AI_Tools\\app\\ai_ingredient_intelligence\\db\\data\\IS4707_Part2_2017.pdf",
+      "C:\\Projects\\SkinBB\\SkinBB_AI_Tools\\app\\ai_ingredient_intelligence\\db\\data\\IS4707_Part4_2022.pdf"
+    ],
+    "pdf_files_test": {
+      "success": true,
+      "count": 3
+    },
+    "text_extraction_test": {
+      "IS4707_Part1_2020.pdf": {
+        "success": true,
+        "text_length": 40111,
+        "word_count": 5143,
+        "line_count": 2846,
+        "extraction_time": 0.3153088092803955
+      },
+      "IS4707_Part2_2017.pdf": {
+        "success": true,
+        "text_length": 287835,
+        "word_count": 40483,
+        "line_count": 12292,
+        "extraction_time": 0.354259729385376
+      },
+      "IS4707_Part4_2022.pdf": {
+        "success": true,
+        "text_length": 20444,
+        "word_count": 2913,
+        "line_count": 703,
+        "extraction_time": 0.19560027122497559
+      }
+    },
+    "vectorstore_test": {
+      "success": true,
+      "init_time": 4.770233631134033,
+      "doc_count": 872,
+      "manifest_files": 3
+    },
+    "retriever_test": {
+      "success": true,
+      "creation_time": 0.0
+    },
+    "retrieval_test": {
+      "salicylic acid caution warning": {
+        "success": true,
+        "doc_count": 5,
+        "retrieval_time": 0.7367961406707764,
+        "sources": [
+          "IS4707_Part2_2017.pdf",
+          "IS4707_Part4_2022.pdf"
+        ],
+        "total_content_length": 4928
+      },
+      "benzoyl peroxide restriction": {
+        "success": true,
+        "doc_count": 5,
+        "retrieval_time": 0.12479591369628906,
+        "sources": [
+          "IS4707_Part2_2017.pdf"
+        ],
+        "total_content_length": 4948
+      },
+      "hydroquinone limit": {
+        "success": true,
+        "doc_count": 5,
+        "retrieval_time": 0.06892108917236328,
+        "sources": [
+          "IS4707_Part2_2017.pdf",
+          "IS4707_Part1_2020.pdf"
+        ],
+        "total_content_length": 4927
+      },
+      "formaldehyde prohibited": {
+        "success": true,
+        "doc_count": 5,
+        "retrieval_time": 0.07123303413391113,
+        "sources": [
+          "IS4707_Part2_2017.pdf"
+        ],
+        "total_content_length": 4921
+      },
+      "parabens regulation": {
+        "success": true,
+        "doc_count": 5,
+        "retrieval_time": 0.07004499435424805,
+        "sources": [
+          "IS4707_Part2_2017.pdf"
+        ],
+        "total_content_length": 4904
+      }
+    },
+    "caution_extraction_test": {
+      "Salicylic Acid": {
+        "success": false,
+        "caution_count": 0,
+        "extraction_time": 0.3488640785217285
+      },
+      "Benzoyl Peroxide": {
+        "success": false,
+        "caution_count": 0,
+        "extraction_time": 0.30614256858825684
+      },
+      "Hydroquinone": {
+        "success": false,
+        "caution_count": 0,
+        "extraction_time": 0.26345133781433105
+      },
+      "Retinol": {
+        "success": false,
+        "caution_count": 0,
+        "extraction_time": 0.24933719635009766
+      },
+      "Alpha Hydroxy Acid": {
+        "success": false,
+        "caution_count": 0,
+        "extraction_time": 0.24820780754089355
+      },
+      "Beta Hydroxy Acid": {
+        "success": false,
+        "caution_count": 0,
+        "extraction_time": 0.2559683322906494
+      },
+      "Formaldehyde": {
+        "success": true,
+        "caution_count": 2,
+        "extraction_time": 0.309589147567749,
+        "cautions_preview": [
+          "All finished products containing formaldehyde or substances in this Annex and which release formaldehyde must be labelled with the warning \u2018contains \nformaldehyde\u2019 where the concentration of formaldeh",
+          "5. All finished products containing formaldehyde or substances in this Annex and which release formaldehyde must be labelled with the warning \u2018contains"
+        ]
+      },
+      "Parabens": {
+        "success": false,
+        "caution_count": 0,
+        "extraction_time": 0.2596859931945801
+      },
+      "Triclosan": {
+        "success": false,
+        "caution_count": 0,
+        "extraction_time": 0.24933600425720215
+      },
+      "Lead": {
+        "success": false,
+        "caution_count": 0,
+        "extraction_time": 0.26036953926086426
+      },
+      "Mercury": {
+        "success": false,
+        "caution_count": 0,
+        "extraction_time": 0.27538108825683594
+      },
+      "Zinc Oxide": {
+        "success": false,
+        "caution_count": 0,
+        "extraction_time": 0.2616727352142334
+      },
+      "Titanium Dioxide": {
+        "success": false,
+        "caution_count": 0,
+        "extraction_time": 0.25507569313049316
+      },
+      "Glycerin": {
+        "success": false,
+        "caution_count": 0,
+        "extraction_time": 0.25478172302246094
+      },
+      "Aqua": {
+        "success": false,
+        "caution_count": 0,
+        "extraction_time": 0.26462292671203613
+      }
+    }
+  },
+  "ai_report": "AI analysis skipped - OPENAI_API_KEY not set"
+}

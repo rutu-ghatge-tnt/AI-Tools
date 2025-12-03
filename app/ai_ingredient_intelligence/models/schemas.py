@@ -22,6 +22,8 @@ class AnalyzeInciItem(BaseModel):
     matched_inci: List[str]
     matched_count: int
     total_brand_inci: int
+    tag: Optional[str] = Field(None, description="Tag: 'B' for branded, 'G' for general INCI")
+    match_method: Optional[str] = Field(None, description="Match method: 'exact', 'fuzzy', or 'synonym'")
 
 class InciGroup(BaseModel):
     inci_list: List[str]                  # the set of INCI names matched
@@ -29,13 +31,18 @@ class InciGroup(BaseModel):
     count: int    
     
 class AnalyzeInciResponse(BaseModel):
-    grouped: List[InciGroup]  
-    unmatched: List[str]
+    grouped: List[InciGroup] = Field(default_factory=list, description="All matched ingredients (branded + general) - for backward compatibility")
+    branded_ingredients: List[AnalyzeInciItem] = Field(default_factory=list, description="Branded ingredients only (tag='B') - flat list")
+    branded_grouped: List[InciGroup] = Field(default_factory=list, description="Branded ingredients grouped by INCI - shows all branded options for each INCI")
+    general_ingredients_list: List[AnalyzeInciItem] = Field(default_factory=list, description="General INCI ingredients only (tag='G') - shown at end in Matched Ingredients tab")
+    unable_to_decode: List[str] = Field(default_factory=list, description="Ingredients that couldn't be decoded - for 'Unable to Decode' tab")
+    unmatched: List[str] = Field(default_factory=list, description="DEPRECATED: Use unable_to_decode instead")
     overall_confidence: float
     processing_time: float
     extracted_text: Optional[str] = Field(None, description="Text extracted from input")
     input_type: str = Field(..., description="Type of input processed")
     bis_cautions: Optional[Dict[str, List[str]]] = Field(None, description="BIS cautions for ingredients")
+    ingredient_tags: Optional[Dict[str, str]] = Field(None, description="Mapping of ingredient names to tags: 'B' for branded, 'G' for general")
 
                         # how many branded ingredients matched
 
@@ -50,3 +57,97 @@ class ExtractIngredientsResponse(BaseModel):
     source: str = Field("url_extraction", description="Source of ingredients: 'url_extraction' or 'ai_search'")
     product_name: Optional[str] = Field(None, description="Detected product name (used for AI search fallback)")
     message: Optional[str] = Field(None, description="Optional message about the extraction method")
+
+
+class ProductComparisonItem(BaseModel):
+    """Schema for a single product in comparison"""
+    product_name: Optional[str] = Field(None, description="Product name")
+    brand_name: Optional[str] = Field(None, description="Brand name")
+    inci: List[str] = Field(default_factory=list, description="List of INCI ingredients")
+    benefits: List[str] = Field(default_factory=list, description="List of product benefits")
+    claims: List[str] = Field(default_factory=list, description="List of product claims")
+    price: Optional[str] = Field(None, description="Product price")
+    cruelty_free: Optional[bool] = Field(None, description="Whether product is cruelty-free")
+    sulphate_free: Optional[bool] = Field(None, description="Whether product is sulphate-free")
+    paraben_free: Optional[bool] = Field(None, description="Whether product is paraben-free")
+    vegan: Optional[bool] = Field(None, description="Whether product is vegan")
+    organic: Optional[bool] = Field(None, description="Whether product is organic")
+    fragrance_free: Optional[bool] = Field(None, description="Whether product is fragrance-free")
+    non_comedogenic: Optional[bool] = Field(None, description="Whether product is non-comedogenic")
+    hypoallergenic: Optional[bool] = Field(None, description="Whether product is hypoallergenic")
+    extracted_text: Optional[str] = Field(None, description="Raw extracted text from URL or INCI input")
+
+
+class CompareProductsRequest(BaseModel):
+    """Request schema for product comparison"""
+    input1: str = Field(..., description="First input: URL or INCI string")
+    input2: str = Field(..., description="Second input: URL or INCI string")
+    input1_type: str = Field(..., description="Type of input1: 'url' or 'inci'")
+    input2_type: str = Field(..., description="Type of input2: 'url' or 'inci'")
+
+
+class CompareProductsResponse(BaseModel):
+    """Response schema for product comparison"""
+    product1: ProductComparisonItem = Field(..., description="First product data")
+    product2: ProductComparisonItem = Field(..., description="Second product data")
+    processing_time: float = Field(..., description="Time taken for comparison (in seconds)")
+
+
+class DecodeHistoryItem(BaseModel):
+    """Schema for decode history item"""
+    id: Optional[str] = Field(None, description="History item ID")
+    user_id: Optional[str] = Field(None, description="User ID who created this history")
+    name: str = Field(..., description="Name for this decode")
+    tag: Optional[str] = Field(None, description="Tag for categorization")
+    input_type: str = Field(..., description="Input type: 'inci' or 'url'")
+    input_data: str = Field(..., description="Input data (INCI list or URL)")
+    analysis_result: Dict = Field(..., description="Full analysis result")
+    report_data: Optional[str] = Field(None, description="Generated report HTML (if available)")
+    created_at: Optional[str] = Field(None, description="Creation timestamp")
+
+
+class SaveDecodeHistoryRequest(BaseModel):
+    """Request schema for saving decode history"""
+    name: str = Field(..., description="Name for this decode")
+    tag: Optional[str] = Field(None, description="Tag for categorization")
+    input_type: str = Field(..., description="Input type: 'inci' or 'url'")
+    input_data: str = Field(..., description="Input data (INCI list or URL)")
+    analysis_result: Dict = Field(..., description="Full analysis result")
+    report_data: Optional[str] = Field(None, description="Generated report HTML (optional)")
+
+
+class GetDecodeHistoryResponse(BaseModel):
+    """Response schema for getting decode history"""
+    items: List[DecodeHistoryItem] = Field(..., description="List of history items")
+    total: int = Field(..., description="Total number of items")
+
+
+class CompareHistoryItem(BaseModel):
+    """Schema for compare history item"""
+    id: Optional[str] = Field(None, description="History item ID")
+    user_id: Optional[str] = Field(None, description="User ID who created this history")
+    name: str = Field(..., description="Name for this comparison")
+    tag: Optional[str] = Field(None, description="Tag for categorization")
+    input1: str = Field(..., description="First input (URL or INCI)")
+    input2: str = Field(..., description="Second input (URL or INCI)")
+    input1_type: str = Field(..., description="Type of input1: 'url' or 'inci'")
+    input2_type: str = Field(..., description="Type of input2: 'url' or 'inci'")
+    comparison_result: Dict = Field(..., description="Full comparison result")
+    created_at: Optional[str] = Field(None, description="Creation timestamp")
+
+
+class SaveCompareHistoryRequest(BaseModel):
+    """Request schema for saving compare history"""
+    name: str = Field(..., description="Name for this comparison")
+    tag: Optional[str] = Field(None, description="Tag for categorization")
+    input1: str = Field(..., description="First input (URL or INCI)")
+    input2: str = Field(..., description="Second input (URL or INCI)")
+    input1_type: str = Field(..., description="Type of input1: 'url' or 'inci'")
+    input2_type: str = Field(..., description="Type of input2: 'url' or 'inci'")
+    comparison_result: Dict = Field(..., description="Full comparison result")
+
+
+class GetCompareHistoryResponse(BaseModel):
+    """Response schema for getting compare history"""
+    items: List[CompareHistoryItem] = Field(..., description="List of history items")
+    total: int = Field(..., description="Total number of items")

@@ -48,69 +48,58 @@ Generate a clean, structured report with these exact sections:
    - Include ALL ingredients provided - do not skip any
    - Keep it simple and clean
 
-2) Branded vs Not Branded Ingredients
-   - Create a table with: Ingredient | Status | Notes
+2) Analysis
+   - Create a table with: Ingredient | Status | Category | Functions/Notes | BIS Cautions
    - Use pipe (|) separators
    - Status: "BRANDED" or "NOT BRANDED"
-   - BRANDED: Ingredients that are part of proprietary branded ingredient systems or trade name products
-   - NOT BRANDED: Standard, non-proprietary cosmetic ingredients (INCI names)
-   - Examples of BRANDED: Proprietary blends, trade names, branded actives, supplier-specific formulations
-   - Examples of NOT BRANDED: Standard INCI names like Aqua, Glycerin, Niacinamide, Hyaluronic Acid
-   - Notes: REQUIRED for every ingredient. Examples:
+     * BRANDED: Ingredients that are part of proprietary branded ingredient systems or trade name products
+     * NOT BRANDED: Standard, non-proprietary cosmetic ingredients (INCI names)
+     * Examples of BRANDED: Proprietary blends, trade names, branded actives, supplier-specific formulations
+     * Examples of NOT BRANDED: Standard INCI names like Aqua, Glycerin, Niacinamide, Hyaluronic Acid
+   - Category: "ACTIVE" or "INACTIVE"
+     * ACTIVE: Ingredients with therapeutic, functional, or active properties (e.g., Niacinamide, Salicylic Acid, Retinol)
+     * INACTIVE: Excipients, carriers, solvents, and supporting ingredients (e.g., Aqua, Glycerin, Emulsifiers)
+   - Functions/Notes: REQUIRED for every ingredient. Combine function and notes in one column. Examples:
      * Aqua: "Primary solvent, base ingredient"
      * Glycerin: "Humectant, skin conditioning agent"
-     * Niacinamide: "Vitamin B3, brightening active"
+     * Niacinamide: "Vitamin B3, brightening active, anti-inflammatory"
      * Hyaluronic Acid: "Hydrating polymer, moisture retention"
-     * Salicylic Acid: "Beta hydroxy acid, exfoliant"
+     * Salicylic Acid: "Beta hydroxy acid, exfoliant, pore-clearing"
      * Benzoyl Peroxide: "Antimicrobial, acne treatment"
      * Proprietary Blend XYZ: "Unknown proprietary ingredient, requires manufacturer clarification"
-   - FAILURE TO PROVIDE NOTES WILL RESULT IN INCOMPLETE REPORT
+   - BIS Cautions: For each ingredient, if BIS cautions are provided in the context, list them here. If no BIS cautions are provided for an ingredient, write "no bis cautions"
+   - FAILURE TO PROVIDE ALL COLUMNS WILL RESULT IN INCOMPLETE REPORT
    - INCLUDE ALL INGREDIENTS FROM THE INCI LIST - DO NOT SKIP ANY
    - IMPORTANT: Mark ingredients as BRANDED if they are proprietary/trade name products, otherwise mark as NOT BRANDED
+   - IMPORTANT: Categorize each ingredient as ACTIVE or INACTIVE appropriately
 
-3) Actives & Excipients Table
-   - Create a table with: Ingredient | Category | Function | Concentration Range
-   - Use pipe (|) separators
-   - Fill ALL columns with relevant information
-   - INCLUDE ALL INGREDIENTS - categorize each one appropriately
-
-4) Actives % vs Inactives %
-   - Simple percentage breakdown
-
-5) Compliance Panel
+3) Compliance Panel
    - Create a table with: Regulation | Status | Requirements
    - Use pipe (|) separators
    - Fill ALL columns with relevant information
 
-6) Preservative Efficacy Check
+4) Preservative Efficacy Check
    - Create a table with: Preservative | Efficacy | pH Range | Stability
    - Use pipe (|) separators
    - Fill ALL columns with relevant information
 
-7) Risk Panel
+5) Risk Panel
    - Create a table with: Risk Factor | Level | Mitigation
    - Use pipe (|) separators
    - Fill ALL columns with relevant information
 
-8) Cumulative Benefit Panel
+6) Cumulative Benefit Panel
    - Create a table with: Benefit | Mechanism | Evidence Level
    - Use pipe (|) separators
    - Fill ALL columns with relevant information
 
-9) Claim Panel
+7) Claim Panel
    - Create a table with: Claim | Support Level | Evidence
    - Use pipe (|) separators
    - Fill ALL columns with relevant information
 
-10) Recommended pH Range
+8) Recommended pH Range
     - Clear pH recommendations
-
-11) BIS Cautions & Regulatory Notes (if applicable)
-    - Include any cautions, warnings, or restrictions from Bureau of Indian Standards documents
-    - Format as: Ingredient | Caution/Warning | Source
-    - Use pipe (|) separators
-    - Only include if BIS cautions are provided in the context
-    - If no BIS cautions available, skip this section
 
 MANDATORY RULES:
 - Use pipe (|) for all table separators
@@ -120,7 +109,8 @@ MANDATORY RULES:
 - Keep tables consistent with same number of columns
 - Use clear, concise language
 - NEVER leave any table cell empty - always provide relevant information
-- For the Notes column, provide brief but meaningful descriptions
+- For the Functions/Notes column, provide brief but meaningful descriptions combining function and notes
+- For the BIS Cautions column, if cautions are provided, list them; if not, write "no bis cautions"
 - If you leave any cell empty, the report is incomplete and unusable
 - DO NOT include any introductory phrases like "I'll analyze", "Let me analyze", "I will analyze" - start directly with "1) Submitted INCI List"
 - MOST IMPORTANT: INCLUDE ALL INGREDIENTS PROVIDED - DO NOT SKIP ANY INGREDIENT FROM THE INCI LIST
@@ -135,8 +125,8 @@ def validate_report_content(report_text: str, expected_ingredient_count: int = N
     if "| |" in report_text or "||" in report_text:
         return False
     
-    # Check if the branded vs not branded table has notes
-    if "2) Branded vs Not Branded Ingredients" in report_text or "2) Matched vs Unmatched Ingredients" in report_text:
+    # Check if the Analysis table has all required columns
+    if "2) Analysis" in report_text or "2) Branded vs Not Branded Ingredients" in report_text or "2) Matched vs Unmatched Ingredients" in report_text:
         # Look for the table structure
         lines = report_text.split('\n')
         in_table = False
@@ -146,17 +136,25 @@ def validate_report_content(report_text: str, expected_ingredient_count: int = N
         not_branded_count = 0
         
         for line in lines:
-            if "2) Branded vs Not Branded Ingredients" in line or "2) Matched vs Unmatched Ingredients" in line:
+            if "2) Analysis" in line or "2) Branded vs Not Branded Ingredients" in line or "2) Matched vs Unmatched Ingredients" in line:
                 in_table = True
                 continue
             
             if in_table and line.strip() and "|" in line:
                 cells = line.split('|')
-                if len(cells) >= 3:  # Should have Ingredient | Status | Notes
-                    notes_cell = cells[2].strip()
+                # New format: Ingredient | Status | Category | Functions/Notes | BIS Cautions (5 columns)
+                # Old format: Ingredient | Status | Notes (3 columns) - for backward compatibility
+                if len(cells) >= 3:  # Should have at least Ingredient | Status | Notes or more
+                    # Check for Functions/Notes column (could be 4th column in new format or 3rd in old)
+                    notes_cell = ""
+                    if len(cells) >= 4:
+                        notes_cell = cells[3].strip()  # Functions/Notes in new format
+                    else:
+                        notes_cell = cells[2].strip()  # Notes in old format
+                    
                     status_cell = cells[1].strip().upper() if len(cells) > 1 else ""
                     
-                    if notes_cell and notes_cell not in ['Notes', '']:
+                    if notes_cell and notes_cell not in ['Notes', 'Functions/Notes', '']:
                         has_notes = True
                         ingredient_count += 1
                         
@@ -360,7 +358,7 @@ async def generate_report_text(
             bis_cautions_info += f"\n{ingredient}:\n"
             for i, caution in enumerate(cautions, 1):
                 bis_cautions_info += f"  {i}. {caution}\n"
-        bis_cautions_info += "\nIMPORTANT: Include these BIS cautions in section 11) BIS Cautions & Regulatory Notes of the report. Format as: Ingredient | Caution/Warning | Source (BIS)\n"
+        bis_cautions_info += "\nIMPORTANT: Include these BIS cautions in section 2) Analysis table, in the 'BIS Cautions' column. For each ingredient that has BIS cautions, list them in that column. For ingredients without BIS cautions, write 'no bis cautions'.\n"
     
     user_prompt = f"Generate report for this INCI list:\n{inci_str}{categorization_info}{bis_cautions_info}\n\nREMEMBER: Every table cell must have content. NO EMPTY CELLS!"
     
@@ -457,7 +455,7 @@ async def generate_report(payload: FormulationReportRequest, request: Request):
                     retry_bis_cautions += f"\n{ingredient}:\n"
                     for i, caution in enumerate(cautions, 1):
                         retry_bis_cautions += f"  {i}. {caution}\n"
-                retry_bis_cautions += "\nIMPORTANT: Include these BIS cautions in section 11) BIS Cautions & Regulatory Notes of the report.\n"
+                retry_bis_cautions += "\nIMPORTANT: Include these BIS cautions in section 2) Analysis table, in the 'BIS Cautions' column. For each ingredient that has BIS cautions, list them in that column. For ingredients without BIS cautions, write 'no bis cautions'.\n"
             
             # Regenerate with stronger prompt
             retry_prompt = f"{SYSTEM_PROMPT}\n\nCRITICAL: The previous response had empty table cells, missing notes, or missing ingredients. Regenerate with NO EMPTY CELLS, MEANINGFUL NOTES, ALL INGREDIENTS INCLUDED.\n\nGenerate report for this INCI list:\n{inci_str}{retry_categorization}{retry_bis_cautions}\n\nEVERY SINGLE TABLE CELL MUST CONTAIN MEANINGFUL TEXT!\nINCLUDE ALL {ingredient_count} INGREDIENTS - DO NOT SKIP ANY!\n\nExample of proper notes:\nAqua: Primary solvent, base ingredient\nGlycerin: Humectant, skin conditioning agent\nNiacinamide: Vitamin B3, brightening active\nProprietary Blend XYZ: Unknown proprietary ingredient, requires manufacturer clarification"

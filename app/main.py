@@ -54,8 +54,9 @@ app.add_middleware(
         "https://metaverse.skinbb.com"
     ],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # ✅ Existing chatbot API
@@ -85,8 +86,23 @@ async def create_indexes():
         await distributor_col.create_index("createdAt")
         await distributor_col.create_index([("ingredientName", 1), ("createdAt", -1)])
         print("✅ Distributor collection indexes created successfully")
+        
+        # Create indexes for decode history collection
+        from app.ai_ingredient_intelligence.db.collections import decode_history_col, compare_history_col
+        await decode_history_col.create_index("user_id")
+        await decode_history_col.create_index("created_at")
+        await decode_history_col.create_index([("user_id", 1), ("created_at", -1)])
+        await decode_history_col.create_index([("user_id", 1), ("name", "text")])
+        print("✅ Decode history collection indexes created successfully")
+        
+        # Create indexes for compare history collection
+        await compare_history_col.create_index("user_id")
+        await compare_history_col.create_index("created_at")
+        await compare_history_col.create_index([("user_id", 1), ("created_at", -1)])
+        await compare_history_col.create_index([("user_id", 1), ("name", "text")])
+        print("✅ Compare history collection indexes created successfully")
     except Exception as e:
-        print(f"⚠️ Warning: Could not create distributor indexes: {e}")
+        print(f"⚠️ Warning: Could not create indexes: {e}")
         # Don't fail startup if indexes already exist
 
 @app.get("/")

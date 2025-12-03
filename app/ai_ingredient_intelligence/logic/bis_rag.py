@@ -5,8 +5,10 @@ Retrieves caution information about ingredients from official BIS documents
 """
 import os
 import json
+import re
+import unicodedata
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.documents import Document
@@ -15,6 +17,15 @@ try:
 except ImportError:
     from langchain_text_splitters import RecursiveCharacterTextSplitter
 import fitz  # PyMuPDF
+
+# Try to import rapidfuzz for fuzzy matching, fallback to basic matching if not available
+try:
+    from rapidfuzz import fuzz, process
+    RAPIDFUZZ_AVAILABLE = True
+except ImportError:
+    RAPIDFUZZ_AVAILABLE = False
+    print("⚠️ rapidfuzz not available. Install with: pip install rapidfuzz")
+    print("   Falling back to basic string matching.")
 
 # BIS specific ChromaDB path
 BIS_CHROMA_DB_PATH = os.path.join(Path(__file__).parent.parent.parent, "chroma_db_bis")
@@ -227,6 +238,184 @@ def clear_bis_vectorstore_cache():
     print("🔄 BIS vectorstore cache cleared")
 
 
+def normalize_ingredient_name(name: str) -> str:
+    """
+    Normalize ingredient name for better matching.
+    - Removes accents and special characters
+    - Converts to lowercase
+    - Removes extra whitespace
+    - Removes common prefixes/suffixes that might vary
+    """
+    if not name:
+        return ""
+    
+    # Remove accents and normalize unicode
+    normalized = unicodedata.normalize("NFKD", name)
+    # Convert to ASCII, ignoring non-ASCII characters
+    normalized = normalized.encode("ascii", "ignore").decode("ascii")
+    
+    # Convert to lowercase
+    normalized = normalized.lower()
+    
+    # Remove extra whitespace
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    
+    # Remove common punctuation that might cause mismatches
+    normalized = re.sub(r"[^\w\s]", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    
+    return normalized
+
+
+def extract_ingredient_variations(text: str, base_ingredient: str) -> List[str]:
+    """
+    Extract potential ingredient name variations from text.
+    Looks for words/phrases that might be variations of the ingredient name.
+    """
+    variations = [base_ingredient]
+    normalized_base = normalize_ingredient_name(base_ingredient)
+    
+    # Split base ingredient into words
+    base_words = normalized_base.split()
+    
+    # Look for potential variations in text (case-insensitive)
+    text_lower = text.lower()
+    
+    # Strategy 1: Look for exact word matches
+    for word in base_words:
+        if len(word) > 3:  # Only for meaningful words
+            # Find all occurrences of this word in context
+            pattern = rf'\b{re.escape(word)}\w*\b'
+            matches = re.findall(pattern, text_lower, re.IGNORECASE)
+            for match in matches:
+                if match not in variations:
+                    variations.append(match)
+    
+    # Strategy 2: Look for chemical compound patterns (e.g., "salicylic acid" might appear as "salicylate")
+    if "acid" in normalized_base:
+        base_without_acid = normalized_base.replace(" acid", "").strip()
+        if base_without_acid:
+            # Look for variations like "salicylate" for "salicylic acid"
+            pattern = rf'\b{re.escape(base_without_acid[:6])}\w*\b'
+            matches = re.findall(pattern, text_lower, re.IGNORECASE)
+            for match in matches:
+                if len(match) > 4 and match not in variations:
+                    variations.append(match)
+    
+    return variations
+
+
+def fuzzy_match_ingredient(ingredient: str, text: str, threshold: float = 0.75) -> Tuple[bool, float, Optional[str]]:
+    """
+    Use fuzzy matching to find ingredient mentions in text.
+    Returns: (found, confidence_score, matched_text)
+    """
+    normalized_ingredient = normalize_ingredient_name(ingredient)
+    
+    if not normalized_ingredient:
+        return False, 0.0, None
+    
+    # Extract potential ingredient mentions from text (words/phrases of similar length)
+    # Look for sequences of 2-5 words that might match
+    words = re.findall(r'\b\w+\b', text.lower())
+    
+    if not words:
+        return False, 0.0, None
+    
+    # Try exact substring match first (fastest)
+    if normalized_ingredient in text.lower():
+        return True, 1.0, normalized_ingredient
+    
+    # Try word-by-word matching
+    ingredient_words = normalized_ingredient.split()
+    if len(ingredient_words) == 1:
+        # Single word - check if it appears in text
+        if ingredient_words[0] in words:
+            return True, 0.9, ingredient_words[0]
+    else:
+        # Multi-word ingredient - look for consecutive word matches
+        for i in range(len(words) - len(ingredient_words) + 1):
+            candidate = " ".join(words[i:i + len(ingredient_words)])
+            if candidate == normalized_ingredient:
+                return True, 1.0, candidate
+    
+    # Use rapidfuzz for fuzzy matching if available
+    if RAPIDFUZZ_AVAILABLE:
+        # Extract all potential phrases from text (2-4 word sequences)
+        candidates = []
+        for i in range(len(words) - 1):
+            for j in range(i + 1, min(i + 5, len(words) + 1)):
+                candidate = " ".join(words[i:j])
+                if len(candidate) > 3:  # Only meaningful phrases
+                    candidates.append(candidate)
+        
+        if candidates:
+            # Find best match using rapidfuzz
+            best_match = process.extractOne(
+                normalized_ingredient,
+                candidates,
+                scorer=fuzz.token_sort_ratio,
+                score_cutoff=int(threshold * 100)
+            )
+            
+            if best_match:
+                matched_text, score, _ = best_match
+                confidence = score / 100.0
+                if confidence >= threshold:
+                    return True, confidence, matched_text
+    
+    return False, 0.0, None
+
+
+def check_ingredient_mention(ingredient: str, text: str, use_fuzzy: bool = True) -> bool:
+    """
+    Check if ingredient is mentioned in text, using fuzzy matching if enabled.
+    """
+    normalized_ingredient = normalize_ingredient_name(ingredient)
+    
+    if not normalized_ingredient:
+        return False
+    
+    text_lower = text.lower()
+    
+    # Exact match (fastest)
+    if normalized_ingredient in text_lower:
+        return True
+    
+    # Word-by-word match
+    ingredient_words = normalized_ingredient.split()
+    if len(ingredient_words) == 1:
+        # Single word - check if it appears as a whole word
+        pattern = rf'\b{re.escape(ingredient_words[0])}\b'
+        if re.search(pattern, text_lower):
+            return True
+    else:
+        # Multi-word - check if all words appear (in any order, but close together)
+        words_in_text = set(re.findall(r'\b\w+\b', text_lower))
+        ingredient_words_set = set(ingredient_words)
+        
+        # Check if all ingredient words appear in text
+        if ingredient_words_set.issubset(words_in_text):
+            # Check if they appear close together (within 50 characters)
+            for i, word in enumerate(ingredient_words):
+                if word in text_lower:
+                    # Find position of this word
+                    pos = text_lower.find(word)
+                    # Check if other words appear nearby
+                    nearby_text = text_lower[max(0, pos - 50):pos + len(word) + 50]
+                    other_words_found = sum(1 for w in ingredient_words if w in nearby_text and w != word)
+                    if other_words_found >= len(ingredient_words) - 1:
+                        return True
+    
+    # Use fuzzy matching if enabled and rapidfuzz is available
+    if use_fuzzy and RAPIDFUZZ_AVAILABLE:
+        found, confidence, _ = fuzzy_match_ingredient(ingredient, text, threshold=0.7)
+        if found and confidence >= 0.7:
+            return True
+    
+    return False
+
+
 def get_bis_retriever():
     """
     Get BIS document retriever.
@@ -272,13 +461,24 @@ async def get_bis_cautions_for_ingredients(ingredient_names: List[str]) -> Dict[
     
     for ingredient in ingredient_names:
         try:
+            # Normalize ingredient name for better search
+            normalized_ingredient = normalize_ingredient_name(ingredient)
+            
             # Use multiple search queries for better coverage
+            # Include both original and normalized versions
             queries = [
                 f"{ingredient} caution warning restriction",
+                f"{normalized_ingredient} caution warning restriction",
                 f"{ingredient} limit concentration maximum",
+                f"{normalized_ingredient} limit concentration maximum",
                 f"{ingredient} instruction requirement",
-                f"{ingredient} regulation compliance"
+                f"{normalized_ingredient} instruction requirement",
+                f"{ingredient} regulation compliance",
+                f"{normalized_ingredient} regulation compliance"
             ]
+            
+            # Remove duplicate queries
+            queries = list(dict.fromkeys(queries))  # Preserves order while removing duplicates
             
             all_docs = []
             seen_doc_ids = set()
@@ -295,7 +495,10 @@ async def get_bis_cautions_for_ingredients(ingredient_names: List[str]) -> Dict[
             
             # Extract relevant information from all documents
             cautions = []
-            ingredient_lower = ingredient.lower()
+            
+            # Get ingredient variations for better matching
+            all_docs_text = " ".join([doc.page_content for doc in all_docs])
+            ingredient_variations = extract_ingredient_variations(all_docs_text, ingredient)
             
             for doc in all_docs:
                 content = doc.page_content
@@ -303,42 +506,68 @@ async def get_bis_cautions_for_ingredients(ingredient_names: List[str]) -> Dict[
                 
                 # Check if document contains caution-related information
                 if any(keyword in content_lower for keyword in caution_keywords):
+                    # Check if ingredient (or any variation) is mentioned in this document
+                    ingredient_mentioned = False
+                    matched_variation = None
+                    
+                    # Try exact match first
+                    for variation in ingredient_variations:
+                        if check_ingredient_mention(variation, content, use_fuzzy=False):
+                            ingredient_mentioned = True
+                            matched_variation = variation
+                            break
+                    
+                    # If exact match failed, try fuzzy matching
+                    if not ingredient_mentioned:
+                        found, confidence, matched_text = fuzzy_match_ingredient(ingredient, content, threshold=0.7)
+                        if found:
+                            ingredient_mentioned = True
+                            matched_variation = matched_text or normalized_ingredient
+                    
+                    if not ingredient_mentioned:
+                        continue
+                    
                     # Multiple extraction strategies to catch all cautions
                     
                     # Strategy 1: Split by sentences (period)
                     sentences = content.split('.')
                     for sentence in sentences:
                         sentence_clean = sentence.strip()
-                        if sentence_clean and ingredient_lower in sentence_clean.lower():
-                            # Check if sentence contains caution keywords
-                            if any(keyword in sentence_clean.lower() for keyword in caution_keywords):
-                                cautions.append(sentence_clean)
+                        if sentence_clean:
+                            # Check if sentence mentions ingredient (using fuzzy matching)
+                            if check_ingredient_mention(ingredient, sentence_clean, use_fuzzy=True):
+                                # Check if sentence contains caution keywords
+                                if any(keyword in sentence_clean.lower() for keyword in caution_keywords):
+                                    cautions.append(sentence_clean)
                     
                     # Strategy 2: Split by newlines (for structured documents)
                     lines = content.split('\n')
                     for line in lines:
                         line_clean = line.strip()
-                        if line_clean and ingredient_lower in line_clean.lower():
-                            if any(keyword in line_clean.lower() for keyword in caution_keywords):
-                                cautions.append(line_clean)
+                        if line_clean:
+                            if check_ingredient_mention(ingredient, line_clean, use_fuzzy=True):
+                                if any(keyword in line_clean.lower() for keyword in caution_keywords):
+                                    cautions.append(line_clean)
                     
                     # Strategy 3: Extract paragraphs that mention ingredient and contain caution keywords
                     paragraphs = content.split('\n\n')
                     for para in paragraphs:
                         para_clean = para.strip()
-                        if para_clean and ingredient_lower in para_clean.lower():
-                            if any(keyword in para_clean.lower() for keyword in caution_keywords):
-                                # If paragraph is short, add as-is; if long, split further
-                                if len(para_clean) < 300:
-                                    cautions.append(para_clean)
-                                else:
-                                    # Split long paragraphs into sentences
-                                    para_sentences = para_clean.split('.')
-                                    for sent in para_sentences:
-                                        sent_clean = sent.strip()
-                                        if sent_clean and ingredient_lower in sent_clean.lower():
-                                            if any(keyword in sent_clean.lower() for keyword in caution_keywords):
-                                                cautions.append(sent_clean)
+                        if para_clean:
+                            if check_ingredient_mention(ingredient, para_clean, use_fuzzy=True):
+                                if any(keyword in para_clean.lower() for keyword in caution_keywords):
+                                    # If paragraph is short, add as-is; if long, split further
+                                    if len(para_clean) < 300:
+                                        cautions.append(para_clean)
+                                    else:
+                                        # Split long paragraphs into sentences
+                                        para_sentences = para_clean.split('.')
+                                        for sent in para_sentences:
+                                            sent_clean = sent.strip()
+                                            if sent_clean:
+                                                if check_ingredient_mention(ingredient, sent_clean, use_fuzzy=True):
+                                                    if any(keyword in sent_clean.lower() for keyword in caution_keywords):
+                                                        cautions.append(sent_clean)
             
             if cautions:
                 # Remove duplicates while preserving order, but keep ALL unique cautions (no limit)
