@@ -167,5 +167,7 @@ chroma_db/chroma.sqlite3
 # Add these missing entries:
 app/chroma_db/
 app/chroma_db_bis/
+app/chroma_db_bis/**/*.bin
+app/chroma_db_bis/**/*.sqlite3
 app/chroma_db_bis/*.bin
 app/chroma_db_bis/*.sqlite3
