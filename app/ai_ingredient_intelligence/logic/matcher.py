@@ -80,16 +80,160 @@ async def match_inci_names(
     # Normalize product INCI list (keep original for reference)
     product_inci_original = {name: name.strip().lower() for name in inci_names}
     product_inci_set = set(product_inci_original.values())
-
+    
+    # Identify INCI combinations (ingredients with "(and)", "&", or "and" when other separators exist)
+    # These should be searched as combinations in MongoDB
+    from app.ai_ingredient_intelligence.utils.inci_parser import parse_inci_string
+    import re
+    
+    # Parse to identify combinations
+    parsed_ingredients = parse_inci_string(inci_names)
+    
+    # Separate combinations from single ingredients
+    combinations = []  # List of tuples: (original_combination_string, list_of_inci_names_in_combination)
+    single_ingredients = []  # Regular single ingredients
+    
+    for ingredient in parsed_ingredients:
+        # Check if this is a combination (contains "(and)", "&", or multiple "and" when other separators exist)
+        normalized_ing = ingredient.lower()
+        has_and_paren = bool(re.search(r'\(and\)', normalized_ing, re.IGNORECASE))
+        has_ampersand = '&' in normalized_ing
+        has_multiple_and = len(re.findall(r'\s+and\s+', normalized_ing, re.IGNORECASE)) > 0
+        
+        # Check if there are other separators in the original input
+        original_has_separators = any(sep in ', '.join(inci_names) for sep in [',', ';', '|', '\n'])
+        
+        if (has_and_paren or has_ampersand or (has_multiple_and and original_has_separators)):
+            # This is a combination - extract individual INCI names
+            # Split by "(and)", "&", or "and" while preserving the ingredient names
+            combo_text = ingredient  # Keep original case for better matching
+            
+            # Split by combination separators
+            if has_and_paren:
+                # Split by "(and)" or "(And)" etc.
+                combo_parts = re.split(r'\s*\(and\)\s*', combo_text, flags=re.IGNORECASE)
+            elif has_ampersand:
+                # Split by "&"
+                combo_parts = re.split(r'\s+&\s+', combo_text)
+            else:
+                # Split by "and"
+                combo_parts = re.split(r'\s+and\s+', combo_text, flags=re.IGNORECASE)
+            
+            # Clean and filter parts
+            combo_inci_list = [part.strip() for part in combo_parts if part.strip() and len(part.strip()) > 2]
+            
+            if len(combo_inci_list) > 1:
+                combinations.append((ingredient, combo_inci_list))
+                print(f"[INFO] Detected INCI combination: '{ingredient}' -> {combo_inci_list}")
+            else:
+                single_ingredients.append(ingredient)
+        else:
+            single_ingredients.append(ingredient)
+    
     matched_results = []
     ingredient_tags = {}  # Maps ingredient name to 'B' (branded) or 'G' (general)
     matched_inci_all: Set[str] = set()  # All INCI names that have been matched
     matched_original_names: Set[str] = set()  # Original ingredient names that have been matched
+    matched_combinations: Set[str] = set()  # Track which combinations have been matched
 
+    # ============================================
+    # STEP 0: Search for INCI combinations in branded ingredients
+    # ============================================
+    # Build pipeline for combination matching (same as Step 1)
+    pipeline_combos = [
+        {
+            "$lookup": {
+                "from": "ingre_inci",
+                "localField": "inci_ids",
+                "foreignField": "_id",
+                "as": "inci_docs"
+            }
+        },
+        {
+            "$lookup": {
+                "from": "ingre_suppliers",
+                "localField": "supplier_id",
+                "foreignField": "_id",
+                "as": "supplier_docs"
+            }
+        },
+        {
+            "$project": {
+                "_id": 1,
+                "ingredient_name": 1,
+                "supplier_name": {"$arrayElemAt": ["$supplier_docs.supplierName", 0]},
+                "description": 1,
+                "category_decided": 1,  # Include category_decided field
+                "functional_category_ids": 1,
+                "chemical_class_ids": 1,
+                "inci_list": "$inci_docs.inciName_normalized"
+            }
+        }
+    ]
+    
+    if combinations:
+        print(f"[INFO] Step 0: Searching for {len(combinations)} INCI combination(s) in branded ingredients...")
+        
+        for combo_string, combo_inci_list in combinations:
+            if combo_string.lower() in matched_combinations:
+                continue
+            
+            # Normalize combo INCI list
+            combo_inci_set = {inci.strip().lower() for inci in combo_inci_list}
+            
+            # Search for branded ingredients where ALL INCI in the combination are present
+            async for doc in branded_ingredients_col.aggregate(pipeline_combos):
+                brand_inci_list = [i.strip().lower() for i in doc.get("inci_list", [])]
+                brand_inci_set = set(brand_inci_list)
+                
+                # Check if this branded ingredient's INCI list contains ALL INCI from the combination
+                if combo_inci_set.issubset(brand_inci_set) and len(combo_inci_set) > 0:
+                    # Also check that the combination matches a significant portion (at least 2 INCI or 50% match)
+                    match_ratio = len(combo_inci_set) / len(brand_inci_set) if brand_inci_set else 0
+                    if len(combo_inci_set) >= 2 or match_ratio >= 0.5:
+                        func_tree = await build_category_tree(
+                            func_cat_col,
+                            doc.get("functional_category_ids", []),
+                            "functionalName"
+                        )
+                        chem_tree = await build_category_tree(
+                            chem_class_col,
+                            doc.get("chemical_class_ids", []),
+                            "chemicalClassName"
+                        )
+                        
+                        matched_results.append({
+                            "ingredient_name": doc["ingredient_name"],
+                            "ingredient_id": str(doc["_id"]),
+                            "supplier_name": doc.get("supplier_name"),
+                            "description": doc.get("description"),
+                            "category_decided": doc.get("category_decided"),  # Include category_decided from MongoDB
+                            "functionality_category_tree": func_tree,
+                            "chemical_class_category_tree": chem_tree,
+                            "match_score": 1.0,
+                            "matched_inci": list(combo_inci_set),  # The INCI that matched from the combination
+                            "matched_count": len(combo_inci_set),
+                            "total_brand_inci": len(brand_inci_set),
+                            "tag": "B",  # Branded
+                            "match_method": "combination"
+                        })
+                        
+                        # Mark combination as matched
+                        matched_combinations.add(combo_string.lower())
+                        matched_original_names.add(combo_string)
+                        
+                        # Mark all matched INCI as branded
+                        for inci in combo_inci_set:
+                            matched_inci_all.add(inci)
+                            ingredient_tags[inci] = "B"
+                        
+                        print(f"[OK] Matched combination '{combo_string}' to branded ingredient '{doc['ingredient_name']}'")
+                        break  # Found a match for this combination, move to next
+    
     # ============================================
     # STEP 1: Direct MongoDB query for exact branded matches (original logic)
     # ============================================
-    print("🔍 Step 1: Direct MongoDB query for exact branded matches...")
+    print("[INFO] Step 1: Direct MongoDB query for exact branded matches...")
     
     pipeline = [
         {
@@ -114,6 +258,7 @@ async def match_inci_names(
                 "ingredient_name": 1,
                 "supplier_name": {"$arrayElemAt": ["$supplier_docs.supplierName", 0]},
                 "description": 1,
+                "category_decided": 1,  # Include category_decided field
                 "functional_category_ids": 1,
                 "chemical_class_ids": 1,
                 "inci_list": "$inci_docs.inciName_normalized"
@@ -140,8 +285,10 @@ async def match_inci_names(
 
             matched_results.append({
                 "ingredient_name": doc["ingredient_name"],
+                "ingredient_id": str(doc["_id"]),  # Add ingredient ID for distributor mapping
                 "supplier_name": doc.get("supplier_name"),
                 "description": doc.get("description"),
+                "category_decided": doc.get("category_decided"),  # Include category_decided from MongoDB
                 "functionality_category_tree": func_tree,
                 "chemical_class_category_tree": chem_tree,
                 "match_score": 1.0,
@@ -164,9 +311,16 @@ async def match_inci_names(
     # ============================================
     # STEP 2: Fuzzy/NLP matching for branded ingredients (spelling mistakes)
     # ============================================
-    print("🔍 Step 2: Fuzzy matching for branded ingredients...")
+    print("[INFO] Step 2: Fuzzy matching for branded ingredients...")
     
+    # For matching, use single ingredients and unmatched combinations
     remaining_original = [name for name in inci_names if name not in matched_original_names]
+    # Also check parsed ingredients for unmatched combinations
+    for ingredient in parsed_ingredients:
+        if ingredient not in matched_original_names and ingredient.lower() not in matched_combinations:
+            if ingredient not in remaining_original:
+                remaining_original.append(ingredient)
+    
     remaining_normalized = {normalize_ingredient_name(name) for name in remaining_original}
     remaining_normalized = remaining_normalized - matched_inci_all
     
@@ -217,8 +371,10 @@ async def match_inci_names(
                                 
                                 matched_results.append({
                                     "ingredient_name": doc["ingredient_name"],
+                                    "ingredient_id": str(doc["_id"]),  # Add ingredient ID for distributor mapping
                                     "supplier_name": doc.get("supplier_name"),
                                     "description": doc.get("description"),
+                                    "category_decided": doc.get("category_decided"),  # Include category_decided from MongoDB
                                     "functionality_category_tree": func_tree,
                                     "chemical_class_category_tree": chem_tree,
                                     "match_score": confidence,
@@ -240,7 +396,7 @@ async def match_inci_names(
     # ============================================
     # STEP 3: CAS API synonyms lookup for unmatched → check if synonyms match branded
     # ============================================
-    print("🔍 Step 3: Checking CAS API synonyms for unmatched ingredients...")
+    print("[INFO] Step 3: Checking CAS API synonyms for unmatched ingredients...")
     
     remaining_after_fuzzy = [name for name in inci_names if name not in matched_original_names]
     
@@ -279,8 +435,10 @@ async def match_inci_names(
                     
                     matched_results.append({
                         "ingredient_name": doc["ingredient_name"],
+                        "ingredient_id": str(doc["_id"]),  # Add ingredient ID for distributor mapping
                         "supplier_name": doc.get("supplier_name"),
                         "description": doc.get("description"),
+                        "category_decided": doc.get("category_decided"),  # Include category_decided from MongoDB
                         "functionality_category_tree": func_tree,
                         "chemical_class_category_tree": chem_tree,
                         "match_score": 0.9,  # Slightly lower score for synonym match
@@ -301,7 +459,7 @@ async def match_inci_names(
     # ============================================
     # STEP 4: Check general INCI collection for remaining
     # ============================================
-    print("🔍 Step 4: Checking general INCI collection...")
+    print("[INFO] Step 4: Checking general INCI collection...")
     
     remaining_for_general = product_inci_set - matched_inci_all
     
@@ -320,6 +478,7 @@ async def match_inci_names(
                 # This is a general INCI (not branded)
                 matched_results.append({
                     "ingredient_name": inci_name_original,
+                    "ingredient_id": None,  # General INCI ingredients don't have ingredient_id
                     "supplier_name": None,
                     "description": None,
                     "functionality_category_tree": [],
@@ -344,7 +503,7 @@ async def match_inci_names(
     # ============================================
     # STEP 5: Remaining unmatched → "Unable to Decode"
     # ============================================
-    print("🔍 Step 5: Identifying unable to decode ingredients...")
+    print("[INFO] Step 5: Identifying unable to decode ingredients...")
     
     unable_to_decode = []
     for orig_name in inci_names:

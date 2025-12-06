@@ -4,13 +4,22 @@ from fastapi.responses import Response
 import time
 import os
 import json
+import re
 from typing import List, Optional, Dict
 from collections import defaultdict
 
 from app.ai_ingredient_intelligence.logic.matcher import match_inci_names
-from app.ai_ingredient_intelligence.logic.bis_rag import get_bis_cautions_for_ingredients
+from app.ai_ingredient_intelligence.logic.bis_rag import (
+    get_bis_cautions_for_ingredients,
+    initialize_bis_vectorstore,
+    get_bis_retriever,
+    check_bis_rag_health,
+    BIS_DATA_PATH,
+    BIS_CHROMA_DB_PATH
+)
 from app.ai_ingredient_intelligence.logic.url_scraper import URLScraper
 from app.ai_ingredient_intelligence.logic.cas_api import get_synonyms_batch
+from app.ai_ingredient_intelligence.utils.inci_parser import parse_inci_string
 from app.ai_ingredient_intelligence.models.schemas import (
     AnalyzeInciRequest,
     AnalyzeInciResponse,
@@ -28,7 +37,7 @@ from app.ai_ingredient_intelligence.models.schemas import (
     GetCompareHistoryResponse,  # ⬅️ new schema for getting compare history
 )
 from app.ai_ingredient_intelligence.db.mongodb import db
-from app.ai_ingredient_intelligence.db.collections import distributor_col, decode_history_col, compare_history_col
+from app.ai_ingredient_intelligence.db.collections import distributor_col, decode_history_col, compare_history_col, branded_ingredients_col, inci_col
 from datetime import datetime, timezone, timedelta
 from bson import ObjectId
 
@@ -115,6 +124,111 @@ async def server_health():
     
     return health_status
 
+@router.get("/bis-rag/health")
+async def bis_rag_health():
+    """
+    Health check endpoint for BIS RAG functionality.
+    Uses the comprehensive health check function from bis_rag module.
+    """
+    from pathlib import Path
+    import os
+    
+    # Get comprehensive health check
+    health = check_bis_rag_health()
+    
+    # Format response with additional details
+    health_status = {
+        "status": health.get("status", "unknown"),
+        "checks": {
+            "pdf_files": {
+                "status": "ok" if health.get("pdf_files_found", 0) > 0 else "warning",
+                "count": health.get("pdf_files_found", 0),
+                "path": str(BIS_DATA_PATH),
+                "files": [f.name for f in list(BIS_DATA_PATH.glob("*.pdf"))[:5]] if BIS_DATA_PATH.exists() else []
+            },
+            "vectorstore_directory": {
+                "status": "ok" if health.get("vectorstore_path_exists", False) else "warning",
+                "exists": health.get("vectorstore_path_exists", False),
+                "path": str(BIS_CHROMA_DB_PATH)
+            },
+            "vectorstore_initialization": {
+                "status": "ok" if health.get("vectorstore_initialized", False) else "error",
+                "initialized": health.get("vectorstore_initialized", False)
+            },
+            "retriever_creation": {
+                "status": "ok" if health.get("retriever_created", False) else "error",
+                "created": health.get("retriever_created", False),
+                "test_query_results": health.get("retriever_test_query", 0)
+            }
+        },
+        "errors": health.get("errors", []),
+        "warnings": []
+    }
+    
+    # Add warnings based on status
+    if health.get("pdf_files_found", 0) == 0:
+        health_status["warnings"].append("No PDF files found in data directory")
+    if not health.get("vectorstore_path_exists", False):
+        health_status["warnings"].append("Vectorstore directory does not exist or is empty")
+    if health.get("status") != "healthy":
+        health_status["warnings"].append(f"BIS RAG status: {health.get('status')}")
+    
+    # Set overall status based on errors
+    if health_status["errors"]:
+        health_status["status"] = "unhealthy"
+    elif health_status["warnings"] and health_status["status"] == "healthy":
+        health_status["status"] = "degraded"
+        retriever = None
+    
+    # Check 5: Test retrieval (if retriever is available)
+    if retriever is not None:
+        try:
+            # Test with a common ingredient
+            test_query = "salicylic acid"
+            test_docs = retriever.invoke(test_query)
+            health_status["checks"]["test_retrieval"] = {
+                "status": "ok",
+                "query": test_query,
+                "documents_retrieved": len(test_docs),
+                "sample_doc_length": len(test_docs[0].page_content) if test_docs else 0
+            }
+        except Exception as e:
+            health_status["checks"]["test_retrieval"] = {
+                "status": "error",
+                "error": str(e)
+            }
+            health_status["errors"].append(f"Test retrieval failed: {e}")
+    else:
+        health_status["checks"]["test_retrieval"] = {
+            "status": "skipped",
+            "reason": "Retriever not available"
+        }
+    
+    # Check 6: Test full BIS cautions function
+    try:
+        test_ingredients = ["Salicylic Acid"]
+        test_cautions = await get_bis_cautions_for_ingredients(test_ingredients)
+        health_status["checks"]["bis_cautions_function"] = {
+            "status": "ok",
+            "test_ingredients": test_ingredients,
+            "ingredients_with_cautions": len(test_cautions),
+            "total_cautions": sum(len(c) for c in test_cautions.values())
+        }
+    except Exception as e:
+        health_status["checks"]["bis_cautions_function"] = {
+            "status": "error",
+            "error": str(e)
+        }
+        health_status["errors"].append(f"BIS cautions function test failed: {e}")
+    
+    # Overall status
+    if health_status["errors"]:
+        health_status["status"] = "unhealthy"
+    elif health_status["warnings"]:
+        health_status["status"] = "degraded"
+    
+    return health_status
+
 @router.get("/test-selenium")
 async def test_selenium():
     """Test endpoint to check if Selenium is working"""
@@ -168,8 +282,12 @@ async def analyze_inci_form(
         if not inci_names:
             raise HTTPException(status_code=400, detail="inci_names is required")
         
-        # Process text input
-        ingredients = inci_names
+        # Parse INCI names - handles separators within each item (comma, pipe, hyphen, "and", etc.)
+        ingredients = parse_inci_string(inci_names)
+        
+        if not ingredients:
+            raise HTTPException(status_code=400, detail="No valid ingredients found after parsing. Please check your input format.")
+        
         extracted_text = ", ".join(ingredients)
         
         if not ingredients:
@@ -191,6 +309,10 @@ async def analyze_inci_form(
         # 🔹 Get BIS cautions for all ingredients (runs in parallel with matching)
         print("Retrieving BIS cautions...")
         bis_cautions = await get_bis_cautions_for_ingredients(ingredients)
+        if bis_cautions:
+            print(f"[OK] Retrieved BIS cautions for {len(bis_cautions)} ingredients: {list(bis_cautions.keys())}")
+        else:
+            print("[WARNING] No BIS cautions retrieved - this may indicate an issue with the BIS retriever")
         
     except HTTPException:
         raise
@@ -398,14 +520,17 @@ async def analyze_inci(payload: dict):
     start = time.time()
     
     try:
-        # Validate payload format: { inci_names: ["ingredient1", "ingredient2", ...] }
+        # Validate payload format: { inci_names: ["ingredient1", "ingredient2", ...] or "ingredient1, ingredient2" }
         if "inci_names" not in payload:
             raise HTTPException(status_code=400, detail="Missing required field: inci_names")
         
-        if not isinstance(payload["inci_names"], list):
-            raise HTTPException(status_code=400, detail="inci_names must be a list of strings")
+        # Parse INCI names - handles both string and list, with all separators
+        inci_input = payload["inci_names"]
+        ingredients = parse_inci_string(inci_input)
         
-        ingredients = payload["inci_names"]
+        if not ingredients:
+            raise HTTPException(status_code=400, detail="No valid ingredients found after parsing. Please check your input format.")
+        
         extracted_text = ", ".join(ingredients)
         
         if not ingredients:
@@ -422,6 +547,10 @@ async def analyze_inci(payload: dict):
         # 🔹 Get BIS cautions for all ingredients (runs in parallel with matching)
         print("Retrieving BIS cautions...")
         bis_cautions = await get_bis_cautions_for_ingredients(ingredients)
+        if bis_cautions:
+            print(f"[OK] Retrieved BIS cautions for {len(bis_cautions)} ingredients: {list(bis_cautions.keys())}")
+        else:
+            print("[WARNING] No BIS cautions retrieved - this may indicate an issue with the BIS retriever")
         
     except HTTPException:
         raise
@@ -731,12 +860,14 @@ async def register_distributor(payload: dict):
             for field in contact_fields:
                 if field not in contact_person:
                     raise HTTPException(status_code=400, detail=f"Contact Person {idx + 1}: Missing required field: {field}")
-            
-            if field == "zones":
-                if not isinstance(contact_person["zones"], list) or len(contact_person["zones"]) == 0:
-                    raise HTTPException(status_code=400, detail=f"Contact Person {idx + 1}: At least one zone is required")
-            elif not contact_person[field]:
-                raise HTTPException(status_code=400, detail=f"Contact Person {idx + 1}: {field} cannot be empty")
+                
+                # Validate zones field specifically
+                if field == "zones":
+                    if not isinstance(contact_person["zones"], list) or len(contact_person["zones"]) == 0:
+                        raise HTTPException(status_code=400, detail=f"Contact Person {idx + 1}: At least one zone is required")
+                # Validate other fields are not empty
+                elif not contact_person[field] or (isinstance(contact_person[field], str) and not contact_person[field].strip()):
+                    raise HTTPException(status_code=400, detail=f"Contact Person {idx + 1}: {field} cannot be empty")
         
         # Validate principles suppliers
         principles_suppliers = payload.get("principlesSuppliers", [])
@@ -756,12 +887,203 @@ async def register_distributor(payload: dict):
         # Prepare distributor document
         from datetime import datetime
         
+        # Lookup ingredient IDs from branded ingredients collection by name
+        ingredient_name = payload["ingredientName"]
+        ingredient_id_provided = payload.get("ingredientId")  # Optional ingredient ID from frontend
+        ingredient_ids = []
+        
+        # Clean ingredient name (remove trailing commas, extra spaces)
+        ingredient_name_clean = ingredient_name.strip().rstrip(',').strip()
+        
+        print(f"🔍 Looking up ingredient IDs for: '{ingredient_name_clean}'")
+        
+        # CRITICAL: If ingredientId is provided from frontend, use it directly (most reliable)
+        if ingredient_id_provided:
+            try:
+                ing_id_obj = ObjectId(ingredient_id_provided)
+                # Verify the ID exists in the collection
+                verify_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
+                if verify_doc:
+                    ingredient_ids.append(str(ing_id_obj))
+                    print(f"✅✅✅ Using provided ingredient ID: {ingredient_id_provided}")
+                    print(f"   Verified: Ingredient '{verify_doc.get('ingredient_name', 'N/A')}' exists with this ID")
+                else:
+                    print(f"❌ WARNING: Provided ingredient ID {ingredient_id_provided} not found! Will lookup by name instead.")
+                    ingredient_id_provided = None  # Fall back to name lookup
+            except Exception as e:
+                print(f"❌ WARNING: Invalid ingredient ID format {ingredient_id_provided}: {e}. Will lookup by name instead.")
+                ingredient_id_provided = None  # Fall back to name lookup
+        
+        # If no valid ID provided, lookup by name
+        if not ingredient_ids:
+            print(f"🔍 No ingredient ID provided, looking up by name: '{ingredient_name_clean}'")
+            
+            # Strategy 1: Try exact match on ingredient_name field (case-insensitive)
+            print(f"🔍 Strategy 1: Exact match search for '{ingredient_name_clean}'")
+            count_found = 0
+            async for branded_ingredient in branded_ingredients_col.find(
+                {"ingredient_name": {"$regex": f"^{ingredient_name_clean}$", "$options": "i"}}
+            ):
+                count_found += 1
+                ing_id_obj = branded_ingredient["_id"]
+                ing_id_str = str(ing_id_obj)
+                
+                # CRITICAL: Verify the ID exists by querying it directly
+                verify_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
+                if verify_doc:
+                    if ing_id_str not in ingredient_ids:
+                        ingredient_ids.append(ing_id_str)
+                        print(f"✅ Found ingredient ID (exact match): {ing_id_str}")
+                        print(f"   Ingredient Name: '{branded_ingredient.get('ingredient_name', 'N/A')}'")
+                        print(f"   ObjectId Type: {type(ing_id_obj)}")
+                        print(f"   String ID: {ing_id_str}")
+                        print(f"   ✅ VERIFIED: Can query back with ObjectId({ing_id_str})")
+                        
+                        # Double verification: Try querying with string
+                        try:
+                            verify_doc2 = await branded_ingredients_col.find_one({"_id": ObjectId(ing_id_str)})
+                            if verify_doc2:
+                                print(f"   ✅ DOUBLE VERIFIED: Can also query with ObjectId(string)")
+                            else:
+                                print(f"   ❌ WARNING: Cannot query with ObjectId(string)")
+                        except Exception as e:
+                            print(f"   ❌ ERROR converting to ObjectId: {e}")
+                else:
+                    print(f"❌ CRITICAL: ID {ing_id_str} verification FAILED - document not found!")
+            
+            if count_found == 0:
+                print(f"   No exact matches found")
+            
+            # Strategy 2: If no exact match, try normalized match (remove special chars, normalize spaces)
+            if len(ingredient_ids) == 0:
+                import re
+                normalized_search = re.sub(r'[^\w\s]', '', ingredient_name_clean).strip()
+                normalized_search = re.sub(r'\s+', ' ', normalized_search)
+                print(f"🔍 Trying normalized match: '{normalized_search}'")
+                
+                async for branded_ingredient in branded_ingredients_col.find(
+                    {"ingredient_name": {"$regex": f"^{re.escape(normalized_search)}$", "$options": "i"}}
+                ):
+                    ing_id = str(branded_ingredient["_id"])
+                    if ing_id not in ingredient_ids:
+                        ingredient_ids.append(ing_id)
+                        print(f"✅ Found ingredient ID (normalized): {ing_id} for '{branded_ingredient.get('ingredient_name', 'N/A')}'")
+            
+            # Strategy 3: Try partial match (contains) on ingredient_name
+            if len(ingredient_ids) == 0:
+                print(f"🔍 Trying partial match (contains)...")
+                async for branded_ingredient in branded_ingredients_col.find(
+                    {"ingredient_name": {"$regex": re.escape(ingredient_name_clean), "$options": "i"}}
+                ):
+                    ing_id = str(branded_ingredient["_id"])
+                    if ing_id not in ingredient_ids:
+                        ingredient_ids.append(ing_id)
+                        print(f"✅ Found ingredient ID (partial): {ing_id} for '{branded_ingredient.get('ingredient_name', 'N/A')}'")
+            
+            # Strategy 4: Try matching against INCI names in the ingredient's inci_ids
+            if len(ingredient_ids) == 0:
+                print(f"🔍 Trying INCI name match...")
+                # First, get the INCI document that matches the name
+                inci_doc = await inci_col.find_one(
+                    {"inciName": {"$regex": f"^{ingredient_name_clean}$", "$options": "i"}}
+                )
+                if inci_doc:
+                    inci_id = inci_doc["_id"]
+                    # Now find branded ingredients that have this INCI in their inci_ids
+                    async for branded_ingredient in branded_ingredients_col.find(
+                        {"inci_ids": inci_id}
+                    ):
+                        ing_id = str(branded_ingredient["_id"])
+                        if ing_id not in ingredient_ids:
+                            ingredient_ids.append(ing_id)
+                            print(f"✅ Found ingredient ID (via INCI): {ing_id} for '{branded_ingredient.get('ingredient_name', 'N/A')}'")
+        
+        # Final verification: Check all found IDs actually exist in the collection
+        # This is CRITICAL - we must verify each ID can be queried
+        verified_ids = []
+        print(f"\n🔍 FINAL VERIFICATION: Testing {len(ingredient_ids)} ID(s)...")
+        for ing_id_str in ingredient_ids:
+            try:
+                print(f"\n   Testing ID: {ing_id_str}")
+                print(f"   ID Type: {type(ing_id_str)}")
+                
+                # Convert to ObjectId
+                ing_id_obj = ObjectId(ing_id_str)
+                print(f"   Converted to ObjectId: {ing_id_obj}")
+                print(f"   ObjectId Type: {type(ing_id_obj)}")
+                
+                # Query 1: Direct ObjectId query
+                verify_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
+                if verify_doc:
+                    print(f"   ✅ Query 1 PASSED: Found with ObjectId")
+                    print(f"      Ingredient: '{verify_doc.get('ingredient_name', 'N/A')}'")
+                    
+                    # Query 2: String to ObjectId conversion
+                    verify_doc2 = await branded_ingredients_col.find_one({"_id": ObjectId(ing_id_str)})
+                    if verify_doc2:
+                        print(f"   ✅ Query 2 PASSED: Found with ObjectId(string)")
+                        verified_ids.append(ing_id_str)
+                        print(f"   ✅✅✅ ID {ing_id_str} is VALID and VERIFIED")
+                    else:
+                        print(f"   ❌ Query 2 FAILED: Cannot find with ObjectId(string)")
+                else:
+                    print(f"   ❌ Query 1 FAILED: ID {ing_id_str} does NOT exist!")
+                    print(f"   🔍 Debug: Checking if ID exists in any form...")
+                    
+                    # Try to find by string match in _id field (shouldn't work but let's check)
+                    all_docs = await branded_ingredients_col.find({}).limit(5).to_list(length=5)
+                    print(f"   Sample _id types from collection:")
+                    for doc in all_docs:
+                        print(f"      - {doc.get('ingredient_name', 'N/A')}: _id={doc['_id']} (type: {type(doc['_id'])}, str: {str(doc['_id'])})")
+                    
+            except Exception as e:
+                print(f"   ❌ ERROR: Invalid ID format {ing_id_str}: {type(e).__name__}: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        print(f"\n📊 Verification Summary:")
+        print(f"   Original IDs: {len(ingredient_ids)}")
+        print(f"   Verified IDs: {len(verified_ids)}")
+        print(f"   Verified ID List: {verified_ids}")
+        
+        ingredient_ids = verified_ids  # Use only verified IDs
+        
+        if len(ingredient_ids) == 0:
+            print(f"❌ ERROR: No valid ingredient IDs found for '{ingredient_name_clean}'. Please check if the ingredient exists in the database.")
+            print(f"   Searched in: ingredient_name field and INCI names")
+            # Let's also show what ingredients exist with similar names for debugging
+            print(f"   Debug: Searching for similar ingredient names...")
+            async for similar in branded_ingredients_col.find(
+                {"ingredient_name": {"$regex": ingredient_name_clean[:5] if len(ingredient_name_clean) > 5 else ingredient_name_clean, "$options": "i"}}
+            ).limit(5):
+                print(f"   Similar: '{similar.get('ingredient_name', 'N/A')}' (ID: {similar['_id']})")
+        else:
+            print(f"✅ Successfully found and verified {len(ingredient_ids)} ingredient ID(s): {ingredient_ids}")
+        
+        # Validate and prepare contact persons data
+        contact_persons_data = []
+        for idx, cp in enumerate(contact_persons):
+            contact_person_data = {
+                "name": cp.get("name", "").strip(),
+                "number": cp.get("number", "").strip(),
+                "email": cp.get("email", "").strip(),
+                "zones": cp.get("zones", []) if isinstance(cp.get("zones"), list) else []
+            }
+            # Ensure zones is a list of strings
+            if contact_person_data["zones"]:
+                contact_person_data["zones"] = [str(zone).strip() for zone in contact_person_data["zones"] if zone]
+            contact_persons_data.append(contact_person_data)
+            print(f"📝 Contact Person {idx + 1}: {contact_person_data['name']} - {contact_person_data['email']} - Zones: {contact_person_data['zones']}")
+        
+        # Store only ingredientIds (list) - names will be fetched from IDs when needed
+        # Do NOT store ingredientName - it will be fetched from IDs when querying
+        # IMPORTANT: Store IDs as strings (MongoDB will handle conversion when needed)
         distributor_doc = {
             "firmName": payload["firmName"],
             "category": payload["category"],
             "registeredAddress": payload["registeredAddress"],
-            "contactPersons": payload.get("contactPersons", []),  # Support multiple contact persons
-            "ingredientName": payload["ingredientName"],
+            "contactPersons": contact_persons_data,  # Use validated and cleaned contact persons
+            "ingredientIds": ingredient_ids,  # Store ONLY list of ingredient IDs (as strings) - names fetched from IDs
             "principlesSuppliers": payload["principlesSuppliers"],
             "yourInfo": payload["yourInfo"],
             "acceptTerms": payload["acceptTerms"],
@@ -769,6 +1091,72 @@ async def register_distributor(payload: dict):
             "createdAt": datetime.utcnow(),
             "updatedAt": datetime.utcnow()
         }
+        
+        print(f"💾 Saving distributor document:")
+        print(f"   - Firm: {payload['firmName']}")
+        print(f"   - Ingredient Name: {ingredient_name_clean}")
+        print(f"   - Ingredient IDs: {ingredient_ids}")
+        print(f"   - Contact Persons: {len(contact_persons_data)}")
+        
+        # CRITICAL: Final verification before saving - test EXACTLY how we'll query them later
+        final_verified_ids = []
+        if ingredient_ids:
+            print(f"\n🔍 CRITICAL FINAL VERIFICATION: Testing {len(ingredient_ids)} ID(s) can be queried...")
+            for ing_id_str in ingredient_ids:
+                print(f"\n   Testing ID: '{ing_id_str}'")
+                print(f"   ID length: {len(ing_id_str)}")
+                print(f"   ID format check: {ing_id_str.isalnum() if isinstance(ing_id_str, str) else 'not string'}")
+                
+                try:
+                    # Test 1: Convert to ObjectId
+                    ing_id_obj = ObjectId(ing_id_str)
+                    print(f"   ✅ Can convert to ObjectId: {ing_id_obj}")
+                    
+                    # Test 2: Query with ObjectId (this is how we'll use it)
+                    test_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
+                    if test_doc:
+                        print(f"   ✅✅✅ ID {ing_id_str} EXISTS in collection!")
+                        print(f"      Ingredient Name: '{test_doc.get('ingredient_name', 'N/A')}'")
+                        print(f"      Document _id: {test_doc['_id']}")
+                        print(f"      Document _id type: {type(test_doc['_id'])}")
+                        print(f"      Document _id as string: {str(test_doc['_id'])}")
+                        
+                        # Test 3: Verify the string matches
+                        if str(test_doc['_id']) == ing_id_str:
+                            print(f"   ✅ String ID matches document _id")
+                            final_verified_ids.append(ing_id_str)
+                        else:
+                            print(f"   ⚠️ WARNING: String mismatch! Document has: {str(test_doc['_id'])}, we have: {ing_id_str}")
+                            # Use the actual document ID instead
+                            final_verified_ids.append(str(test_doc['_id']))
+                            print(f"   ✅ Using actual document ID: {str(test_doc['_id'])}")
+                    else:
+                        print(f"   ❌❌❌ CRITICAL: ID {ing_id_str} CANNOT be found in collection!")
+                        print(f"   🔍 Debug: Checking collection stats...")
+                        total_count = await branded_ingredients_col.count_documents({})
+                        print(f"   Total documents in collection: {total_count}")
+                        
+                        # Try to find ANY document to see ID format
+                        sample_doc = await branded_ingredients_col.find_one({})
+                        if sample_doc:
+                            print(f"   Sample document _id: {sample_doc['_id']} (type: {type(sample_doc['_id'])}, str: {str(sample_doc['_id'])})")
+                        
+                except Exception as e:
+                    print(f"   ❌❌❌ CRITICAL ERROR with ID {ing_id_str}: {type(e).__name__}: {e}")
+                    import traceback
+                    traceback.print_exc()
+            
+            print(f"\n📊 Final Verification Summary:")
+            print(f"   Original IDs: {ingredient_ids}")
+            print(f"   Verified IDs: {final_verified_ids}")
+            print(f"   Verified Count: {len(final_verified_ids)}")
+            
+            # Update the doc with ONLY verified IDs
+            ingredient_ids = final_verified_ids
+            distributor_doc["ingredientIds"] = ingredient_ids
+            
+            if len(ingredient_ids) == 0:
+                print(f"\n⚠️⚠️⚠️ WARNING: No valid ingredient IDs to save! Distributor will be saved with empty ingredientIds array.")
         
         # Insert into distributor collection
         result = await distributor_col.insert_one(distributor_doc)
@@ -791,22 +1179,166 @@ async def register_distributor(payload: dict):
         raise HTTPException(status_code=500, detail=f"Failed to register distributor: {str(e)}")
 
 
+@router.get("/distributor/verify-ingredient-id/{ingredient_id}")
+async def verify_ingredient_id(ingredient_id: str):
+    """
+    Debug endpoint to verify if an ingredient ID exists in the branded ingredients collection
+    """
+    try:
+        print(f"🔍 Verifying ingredient ID: {ingredient_id}")
+        
+        # Try to find the ingredient
+        try:
+            ing_id_obj = ObjectId(ingredient_id)
+        except Exception as e:
+            return {
+                "valid_format": False,
+                "error": f"Invalid ObjectId format: {e}",
+                "ingredient_id": ingredient_id
+            }
+        
+        # Query the collection
+        ingredient_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
+        
+        if ingredient_doc:
+            return {
+                "valid_format": True,
+                "exists": True,
+                "ingredient_id": ingredient_id,
+                "ingredient_name": ingredient_doc.get("ingredient_name", "N/A"),
+                "document_id": str(ingredient_doc["_id"]),
+                "document_id_type": str(type(ingredient_doc["_id"])),
+                "match": str(ingredient_doc["_id"]) == ingredient_id
+            }
+        else:
+            # Show sample documents to help debug
+            sample_docs = await branded_ingredients_col.find({}).limit(3).to_list(length=3)
+            sample_info = []
+            for doc in sample_docs:
+                sample_info.append({
+                    "ingredient_name": doc.get("ingredient_name", "N/A"),
+                    "_id": str(doc["_id"]),
+                    "_id_type": str(type(doc["_id"]))
+                })
+            
+            return {
+                "valid_format": True,
+                "exists": False,
+                "ingredient_id": ingredient_id,
+                "error": "Ingredient ID not found in branded_ingredients collection",
+                "sample_documents": sample_info,
+                "total_documents": await branded_ingredients_col.count_documents({})
+            }
+            
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {
+            "error": str(e),
+            "ingredient_id": ingredient_id
+        }
+
+
 @router.get("/distributor/by-ingredient/{ingredient_name}")
-async def get_distributor_by_ingredient(ingredient_name: str):
+async def get_distributor_by_ingredient(ingredient_name: str, ingredient_id: Optional[str] = None):
     """
     Get all distributor information for a specific ingredient
     
+    Searches by ingredientIds array (primary) and ingredient name (backward compatibility).
     Returns list of all distributors for the ingredient, otherwise returns empty list
+    
+    Query params:
+    - ingredient_name: Name of the ingredient (required, from path)
+    - ingredient_id: ID of the ingredient (optional, from query string)
     """
     try:
-        # Find all distributors by ingredient name (case-insensitive)
-        distributors = await distributor_col.find(
-            {"ingredientName": {"$regex": f"^{ingredient_name}$", "$options": "i"}}
-        ).sort("createdAt", -1).to_list(length=None)
+        # Build query to search by ingredientIds array (primary) and name (backward compatibility)
+        query_conditions = []
+        ingredient_ids_to_search = []
         
-        # Convert ObjectId to string for each distributor
+        # If ingredient_id is provided, use it
+        if ingredient_id:
+            try:
+                # Validate that ingredient_id is a valid ObjectId format
+                ObjectId(ingredient_id)
+                ingredient_ids_to_search.append(ingredient_id)
+            except:
+                # If ingredient_id is not a valid ObjectId, ignore it
+                pass
+        else:
+            # If ingredient_id not provided, lookup IDs from ingredient name
+            async for branded_ingredient in branded_ingredients_col.find(
+                {"ingredient_name": {"$regex": f"^{ingredient_name}$", "$options": "i"}}
+            ):
+                ingredient_ids_to_search.append(str(branded_ingredient["_id"]))
+        
+        # Primary: Search by ingredientIds array using $in operator
+        # Convert string IDs to ObjectIds for proper MongoDB querying
+        if ingredient_ids_to_search:
+            ingredient_ids_as_objectids = []
+            for ing_id_str in ingredient_ids_to_search:
+                try:
+                    ingredient_ids_as_objectids.append(ObjectId(ing_id_str))
+                except:
+                    print(f"⚠️ Invalid ObjectId format: {ing_id_str}")
+            
+            if ingredient_ids_as_objectids:
+                # Also search with string IDs (in case they're stored as strings)
+                query_conditions.append({
+                    "$or": [
+                        {"ingredientIds": {"$in": ingredient_ids_as_objectids}},  # ObjectId format
+                        {"ingredientIds": {"$in": ingredient_ids_to_search}}  # String format
+                    ]
+                })
+        
+        # Backward compatibility: Also search by ingredient name (case-insensitive)
+        # This handles old records that may only have ingredientName
+        query_conditions.append({"ingredientName": {"$regex": f"^{ingredient_name}$", "$options": "i"}})
+        
+        # Use $or to search by either ingredientIds or name
+        query = {"$or": query_conditions} if len(query_conditions) > 1 else query_conditions[0]
+        
+        # Find all distributors matching the query
+        distributors = await distributor_col.find(query).sort("createdAt", -1).to_list(length=None)
+        
+        # Convert ObjectId to string and fetch ingredientName from IDs for response
         for distributor in distributors:
             distributor["_id"] = str(distributor["_id"])
+            
+            # Always fetch ingredientName from ingredientIds (primary source)
+            if "ingredientIds" in distributor and distributor.get("ingredientIds"):
+                ingredient_names = []
+                for ing_id in distributor["ingredientIds"]:
+                    try:
+                        # Try as ObjectId first, then as string
+                        if isinstance(ing_id, str):
+                            try:
+                                ing_id_obj = ObjectId(ing_id)
+                            except:
+                                print(f"⚠️ Invalid ObjectId format in distributor: {ing_id}")
+                                continue
+                        else:
+                            ing_id_obj = ing_id
+                        
+                        ing_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
+                        if ing_doc:
+                            ingredient_names.append(ing_doc.get("ingredient_name", ""))
+                            print(f"✅ Found ingredient name for ID {ing_id}: {ing_doc.get('ingredient_name', 'N/A')}")
+                        else:
+                            print(f"❌ ERROR: Ingredient ID {ing_id} not found in branded_ingredients collection!")
+                    except Exception as e:
+                        print(f"⚠️ Error looking up ingredient ID {ing_id}: {e}")
+                        pass
+                # Use first name found, or join if multiple
+                if ingredient_names:
+                    distributor["ingredientName"] = ingredient_names[0] if len(ingredient_names) == 1 else ", ".join(ingredient_names)
+                else:
+                    # If IDs don't resolve, fallback to stored name or query parameter
+                    distributor["ingredientName"] = distributor.get("ingredientName", ingredient_name)
+            else:
+                # Backward compatibility: if no ingredientIds, use stored ingredientName or query parameter
+                if "ingredientName" not in distributor:
+                    distributor["ingredientName"] = ingredient_name
         
         return distributors if distributors else []
             
@@ -857,20 +1389,8 @@ async def compare_products(payload: dict):
         if input1_type == "url" or input2_type == "url":
             scraper = URLScraper()
         
-        # Helper function to parse INCI string
-        def parse_inci_string(inci_str: str) -> List[str]:
-            """Parse INCI string into list of ingredients"""
-            # Split by common delimiters and clean
-            ingredients = []
-            for delimiter in [',', ';', '\n', '|']:
-                if delimiter in inci_str:
-                    ingredients = [ing.strip() for ing in inci_str.split(delimiter)]
-                    break
-            if not ingredients:
-                ingredients = [inci_str.strip()]
-            # Filter out empty strings
-            ingredients = [ing for ing in ingredients if ing]
-            return ingredients
+        # Use the shared INCI parser utility
+        from app.ai_ingredient_intelligence.utils.inci_parser import parse_inci_string
         
         # Store URLs for Claude context
         url1_context = None

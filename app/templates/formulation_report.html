@@ -98,8 +98,17 @@
             margin: 25px 0 15px 0;
             padding: 10px 15px;
             background: linear-gradient(90deg, #e3f2fd 0%, #bbdefb 100%);
-            border-radius: 8px;
+            border-radius: 8px;            border: 2px solid #1976d2;
             border-left: 4px solid #1976d2;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .section-content {
+            margin-bottom: 30px;
+            padding: 20px;
+            background-color: #ffffff;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
         }
         .ingredient-item {
             display: inline-block;
@@ -130,6 +139,7 @@
             border-radius: 8px;
             overflow: hidden;
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            border: 2px solid #007bff;
         }
         th {
             background-color: #007bff;
@@ -138,11 +148,16 @@
             text-align: left;
             font-weight: 600;
             font-size: 0.95em;
+            border: 1px solid #0056b3;
         }
         td {
             padding: 10px 15px;
             border-bottom: 1px solid #e9ecef;
+            border-right: 1px solid #e9ecef;
             vertical-align: top;
+        }
+        td:last-child {
+            border-right: none;
         }
         tr:nth-child(even) {
             background-color: #f8f9fa;
@@ -208,14 +223,12 @@
             text-transform: uppercase;
         }
         .status-matched,
-        .status-branded {
-            background-color: #d4edda;
-            color: #155724;
-        }
+        .status-branded,
         .status-unmatched,
         .status-not-branded {
-            background-color: #f8d7da;
-            color: #721c24;
+            background-color: #e3f2fd;
+            color: #1976d2;
+            border: 1px solid #bbdefb;
         }
         .risk-high {
             background-color: #f8d7da;
@@ -282,6 +295,9 @@
             let tableData = [];
             let inIngredientListSection = false; // Track if we're in the INCI list section
             
+            let currentSection = null;
+            let sectionContent = [];
+            
             for (let i = 0; i < lines.length; i++) {
                 const line = lines[i].trim();
                 
@@ -291,6 +307,21 @@
                 } else if (line.match(/^2\)\s+/)) {
                     // We've moved to the next section, so we're no longer in the INCI list section
                     inIngredientListSection = false;
+                }
+                
+                // Check for section headers (e.g., "1) Submitted INCI List", "2) Analysis", etc.)
+                const sectionMatch = line.match(/^(\d+\)\s+.+)/);
+                if (sectionMatch) {
+                    // Close previous section if exists
+                    if (currentSection !== null) {
+                        if (sectionContent.length > 0) {
+                            enhancedContent += `<div class="section-content">${sectionContent.join('\n')}</div>`;
+                        }
+                        sectionContent = [];
+                    }
+                    currentSection = sectionMatch[1];
+                    enhancedContent += `<div class="section-header">${currentSection}</div>`;
+                    continue;
                 }
                 
                 // Check if line contains table indicators
@@ -303,17 +334,35 @@
                 } else if (inTable && (line === '' || !line.includes('|'))) {
                     // End of table
                     if (tableData.length > 0) {
-                        enhancedContent += createTableHTML(tableData);
+                        sectionContent.push(createTableHTML(tableData));
                     }
                     inTable = false;
                     tableData = [];
-                    enhancedContent += processLine(line, inIngredientListSection) + '\n';
+                    if (line) {
+                        sectionContent.push(processLine(line, inIngredientListSection));
+                    }
                 } else if (inTable) {
                     tableData.push(line);
                 } else {
                     // Process non-table lines for section headers and ingredients
-                    enhancedContent += processLine(line, inIngredientListSection) + '\n';
+                    const processed = processLine(line, inIngredientListSection);
+                    if (processed) {
+                        sectionContent.push(processed);
+                    }
                 }
+            }
+            
+            // Handle any remaining table
+            if (inTable && tableData.length > 0) {
+                sectionContent.push(createTableHTML(tableData));
+            }
+            
+            // Close last section if exists
+            if (currentSection !== null && sectionContent.length > 0) {
+                enhancedContent += `<div class="section-content">${sectionContent.join('\n')}</div>`;
+            } else if (sectionContent.length > 0) {
+                // If no section header but we have content, wrap it
+                enhancedContent += `<div class="section-content">${sectionContent.join('\n')}</div>`;
             }
             
             // Handle case where table is at the end
@@ -358,37 +407,66 @@
                     const isNotDescriptive = !line.toLowerCase().match(/^(ingredient|status|notes|category|function|the |this |that |these |those |ideal |range |ensures |provides |key )/); // Not a table header or sentence starter
                     const isNotTooLong = line.length < 200; // Reasonable length limit
                     const hasReasonableLength = line.length > 2; // At least 3 characters
+                    const isNotJustNumber = !/^\d+$/.test(line); // Not just a number
                     
                     // Style as ingredient if it passes basic checks (very inclusive for INCI list section)
                     shouldStyleAsIngredient = hasAlphanumeric && 
                                              isNotJustPunctuation && 
                                              isNotDescriptive && 
                                              isNotTooLong && 
-                                             hasReasonableLength;
+                                             hasReasonableLength &&
+                                             isNotJustNumber;
                 } else {
                     // For other sections, use the more strict detection
                     const ingredientKeywords = [
                         'Aqua', 'Water', 'Glycerin', 'Niacinamide', 'Hyaluronic', 'Salicylic', 'Benzoyl', 'Peroxide',
-                        'Tocopherol', 'Retinol', 'Oil', 'Extract', 'Butter', 'Wax', 'Alcohol', 'Ester',
+                        'Tocopherol', 'Retinol', 'Oil', 'Extract', 'Extracts', 'Butter', 'Wax', 'Alcohol', 'Ester',
                         'Peptide', 'Vitamin', 'Sulfate', 'Chloride', 'Citrate', 'Lactate', 'Gluconate',
                         'Dimethicone', 'Crosspolymer', 'Copolymer', 'Acrylate', 'Methacrylate', 'Polymer', 'Siloxane',
-                        'Taurate', 'VP', 'Ammonium', 'Sodium', 'Potassium', 'Calcium', 'Magnesium', 'Zinc'
+                        'Taurate', 'VP', 'Ammonium', 'Sodium', 'Potassium', 'Calcium', 'Magnesium', 'Zinc',
+                        'Fruit', 'Seed', 'Flower', 'Leaf', 'Root', 'Bark', 'Stem', 'Berry', 'Citrus', 'Sinensis'
                     ];
                     
-                    // More strict ingredient detection - must start with capital letter and be a single ingredient name
-                    const isSingleIngredient = line.match(/^[A-Z][a-zA-Z\s\/\-]+$/) && 
-                        !line.includes(' and ') && 
-                        !line.includes(' of ') &&
-                        !line.includes(' for ') &&
-                        !line.includes(' with ') &&
-                        line.split(' ').length <= 5; // Max 5 words for ingredient names
-                    
-                    // Check if line contains ingredient keywords (but only if it's a single ingredient, not descriptive)
+                    // Check if line contains ingredient keywords first (this is more reliable)
                     const hasIngredientKeyword = ingredientKeywords.some(keyword => 
-                        line.toLowerCase().includes(keyword.toLowerCase()) && isSingleIngredient
+                        line.toLowerCase().includes(keyword.toLowerCase())
                     );
                     
-                    shouldStyleAsIngredient = hasIngredientKeyword || isSingleIngredient;
+                    // More lenient ingredient detection - must start with capital letter
+                    // Allow parentheses, numbers, hyphens, and slashes in ingredient names
+                    // Examples: "Citrus Sinensis (Blood Orange) Fruit Extracts", "Polyacrylate Crosspolymer-6", "Acrylates/C10-30"
+                    const startsWithCapital = /^[A-Z]/.test(line);
+                    const hasValidChars = /^[A-Z][a-zA-Z0-9\s\/\-\(\)]+$/.test(line); // Added parentheses
+                    const isNotJustNumber = !/^\d+$/.test(line);
+                    const hasReasonableLength = line.length > 2 && line.length < 150;
+                    
+                    // Count words excluding parenthetical content for length check
+                    const lineWithoutParens = line.replace(/\([^)]*\)/g, ''); // Remove parenthetical content
+                    const wordCount = lineWithoutParens.trim().split(/\s+/).filter(w => w.length > 0).length;
+                    const reasonableWordCount = wordCount <= 8; // Increased from 5 to 8 for longer ingredient names
+                    
+                    // Check for descriptive phrases that should NOT be styled as ingredients
+                    const isDescriptive = line.toLowerCase().match(/^(ingredient|status|notes|category|function|the |this |that |these |those |ideal |range |ensures |provides |key |contains |used |for |with |and |of )/);
+                    const hasDescriptivePhrases = line.includes(' and ') || 
+                                                   line.includes(' of ') ||
+                                                   line.includes(' for ') ||
+                                                   line.includes(' with ') ||
+                                                   line.includes(' used ') ||
+                                                   line.includes(' contains ');
+                    
+                    // Style as ingredient if:
+                    // 1. Has ingredient keyword AND passes basic checks, OR
+                    // 2. Matches pattern AND not descriptive
+                    const isSingleIngredient = startsWithCapital && 
+                                               hasValidChars && 
+                                               isNotJustNumber && 
+                                               hasReasonableLength && 
+                                               reasonableWordCount &&
+                                               !isDescriptive &&
+                                               !hasDescriptivePhrases;
+                    
+                    shouldStyleAsIngredient = (hasIngredientKeyword && isSingleIngredient) || 
+                                             (isSingleIngredient && !hasDescriptivePhrases);
                 }
                 
                 if (shouldStyleAsIngredient) {
@@ -409,42 +487,47 @@
             if (tableData.length === 0) return '';
             
             let html = '<div class="table-container"><table>';
+            let bisCautionsColumnIndex = -1;
             
             for (let i = 0; i < tableData.length; i++) {
                 const cells = tableData[i].split('|').map(cell => cell.trim());
                 
                 if (i === 0) {
-                    // Header row
+                    // Header row - find BIS Cautions column index
                     html += '<thead><tr>';
-                    cells.forEach(cell => {
-                        if (cell) html += `<th>${cell}</th>`;
+                    cells.forEach((cell, index) => {
+                        if (cell) {
+                            html += `<th>${cell}</th>`;
+                            // Check if this is the BIS Cautions column
+                            if (cell.toLowerCase().includes('bis') && cell.toLowerCase().includes('caution')) {
+                                bisCautionsColumnIndex = index;
+                            }
+                        }
                     });
                     html += '</tr></thead><tbody>';
                 } else {
                     // Data row
                     html += '<tr>';
-                    cells.forEach(cell => {
+                    cells.forEach((cell, cellIndex) => {
                         if (cell) {
-                            // Add status badges for certain columns
-                            if (cell.toLowerCase().includes('branded') && !cell.toLowerCase().includes('not branded')) {
-                                html += `<td><span class="status-badge status-branded">${cell}</span></td>`;
-                            } else if (cell.toLowerCase().includes('not branded') || (cell.toLowerCase().includes('unmatched') && !cell.toLowerCase().includes('matched'))) {
-                                html += `<td><span class="status-badge status-not-branded">${cell}</span></td>`;
-                            } else if (cell.toLowerCase().includes('matched')) {
-                                // Backward compatibility with old reports
-                                html += `<td><span class="status-badge status-matched">${cell}</span></td>`;
-                            } else if (cell.toLowerCase().includes('unmatched')) {
-                                // Backward compatibility with old reports
-                                html += `<td><span class="status-badge status-unmatched">${cell}</span></td>`;
-                            } else if (cell.toLowerCase().includes('high')) {
-                                html += `<td><span class="status-badge risk-high">${cell}</span></td>`;
-                            } else if (cell.toLowerCase().includes('medium')) {
-                                html += `<td><span class="status-badge risk-medium">${cell}</span></td>`;
-                            } else if (cell.toLowerCase().includes('low')) {
-                                html += `<td><span class="status-badge risk-low">${cell}</span></td>`;
-                            } else {
-                                html += `<td>${cell}</td>`;
+                            // Format cell content - no status badges, just plain text
+                            // For BIS Cautions column, preserve line breaks and formatting
+                            let cellContent = cell;
+                            
+                            // Check if this is the BIS Cautions column
+                            if (bisCautionsColumnIndex >= 0 && cellIndex === bisCautionsColumnIndex && cell.toLowerCase() !== 'no bis cautions') {
+                                // Format BIS cautions with proper line breaks
+                                // Replace numbered lists with line breaks
+                                cellContent = cell.replace(/(\d+\.)\s*/g, '<br>$1 ');
+                                // Replace newlines with <br>
+                                cellContent = cellContent.replace(/\n/g, '<br>');
+                                // Remove leading <br> if present
+                                if (cellContent.startsWith('<br>')) {
+                                    cellContent = cellContent.substring(4);
+                                }
                             }
+                            
+                            html += `<td>${cellContent}</td>`;
                         }
                     });
                     html += '</tr>';

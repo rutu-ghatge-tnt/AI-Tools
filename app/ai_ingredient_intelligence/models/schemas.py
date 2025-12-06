@@ -12,6 +12,7 @@ class AnalyzeInciRequest(BaseModel):
 
 class AnalyzeInciItem(BaseModel):
     ingredient_name: str
+    ingredient_id: Optional[str] = Field(None, description="Ingredient ID from branded ingredients collection (for distributor mapping)")
     supplier_name: Optional[str] = None
     description: Optional[str] = None
     rephrased_description: Optional[str] = None   # ✅ new
@@ -105,6 +106,29 @@ class DecodeHistoryItem(BaseModel):
     report_data: Optional[str] = Field(None, description="Generated report HTML (if available)")
     created_at: Optional[str] = Field(None, description="Creation timestamp")
 
+
+class ReportTableRow(BaseModel):
+    """Schema for a single table row"""
+    cells: List[str] = Field(..., description="Array of cell values for this row")
+
+class ReportSection(BaseModel):
+    """Schema for a report section"""
+    title: str = Field(..., description="Section title (e.g., '1) Submitted INCI List')")
+    type: str = Field(..., description="Section type: 'list', 'table', or 'text'")
+    content: Union[List[str], List[ReportTableRow], str] = Field(..., description="Section content - list of strings for lists, list of rows for tables, or string for text")
+
+class FormulationReportResponse(BaseModel):
+    """Response schema for formulation report as JSON"""
+    inci_list: List[str] = Field(..., description="List of submitted INCI ingredients")
+    analysis_table: List[ReportTableRow] = Field(..., description="Analysis table with columns: Ingredient | Category | Functions/Notes | BIS Cautions")
+    compliance_panel: List[ReportTableRow] = Field(default_factory=list, description="Compliance panel table")
+    preservative_efficacy: List[ReportTableRow] = Field(default_factory=list, description="Preservative efficacy check table")
+    risk_panel: List[ReportTableRow] = Field(default_factory=list, description="Risk panel table")
+    cumulative_benefit: List[ReportTableRow] = Field(default_factory=list, description="Cumulative benefit panel table")
+    claim_panel: List[ReportTableRow] = Field(default_factory=list, description="Claim panel table")
+    recommended_ph_range: Optional[str] = Field(None, description="Recommended pH range text")
+    expected_benefits_analysis: List[ReportTableRow] = Field(default_factory=list, description="Expected benefits analysis table (if provided)")
+    raw_text: Optional[str] = Field(None, description="Raw report text for reference")
 
 class SaveDecodeHistoryRequest(BaseModel):
     """Request schema for saving decode history"""

@@ -24,7 +24,7 @@ try:
     RAPIDFUZZ_AVAILABLE = True
 except ImportError:
     RAPIDFUZZ_AVAILABLE = False
-    print("⚠️ rapidfuzz not available. Install with: pip install rapidfuzz")
+    print("WARNING: rapidfuzz not available. Install with: pip install rapidfuzz")
     print("   Falling back to basic string matching.")
 
 # BIS specific ChromaDB path
@@ -50,7 +50,7 @@ def load_bis_manifest() -> Dict[str, float]:
             with open(BIS_MANIFEST_PATH, "r") as f:
                 return json.load(f)
         except Exception as e:
-            print(f"⚠️ Error loading BIS manifest: {e}")
+            print(f"WARNING: Error loading BIS manifest: {e}")
             return {}
     return {}
 
@@ -62,7 +62,7 @@ def save_bis_manifest(manifest: Dict[str, float]):
         with open(BIS_MANIFEST_PATH, "w") as f:
             json.dump(manifest, f, indent=2)
     except Exception as e:
-        print(f"⚠️ Error saving BIS manifest: {e}")
+        print(f"WARNING: Error saving BIS manifest: {e}")
 
 
 def get_pdf_modification_time(pdf_path: Path) -> float:
@@ -83,7 +83,7 @@ def extract_text_from_pdf(pdf_path: Path) -> str:
         doc.close()
         return text
     except Exception as e:
-        print(f"⚠️ Error extracting text from {pdf_path.name}: {e}")
+        print(f"WARNING: Error extracting text from {pdf_path.name}: {e}")
         return ""
 
 
@@ -120,11 +120,11 @@ def initialize_bis_vectorstore(force_reload: bool = False) -> Optional[Chroma]:
         pdf_files = list(BIS_DATA_PATH.glob("*.pdf"))
         
         if not pdf_files:
-            print(f"⚠️ No PDF files found in {BIS_DATA_PATH}")
+            print(f"WARNING: No PDF files found in {BIS_DATA_PATH}")
             if not vectorstore_exists:
                 return None
             # If vectorstore exists but no PDFs, just load it
-            print("📚 Loading existing BIS vectorstore...")
+            print("Loading existing BIS vectorstore...")
             vectorstore = Chroma(
                 persist_directory=BIS_CHROMA_DB_PATH,
                 embedding_function=embedding_model
@@ -142,20 +142,20 @@ def initialize_bis_vectorstore(force_reload: bool = False) -> Optional[Chroma]:
             # Check if PDF is new or modified
             if pdf_name not in manifest:
                 new_or_modified_pdfs.append((pdf_file, current_mtime))
-                print(f"📄 New PDF detected: {pdf_name}")
+                print(f"New PDF detected: {pdf_name}")
             elif manifest[pdf_name] != current_mtime:
                 new_or_modified_pdfs.append((pdf_file, current_mtime))
-                print(f"📄 Modified PDF detected: {pdf_name}")
+                print(f"Modified PDF detected: {pdf_name}")
         
         # If vectorstore exists, load it; otherwise create new one
         if vectorstore_exists:
-            print("📚 Loading existing BIS vectorstore...")
+            print("Loading existing BIS vectorstore...")
             vectorstore = Chroma(
                 persist_directory=BIS_CHROMA_DB_PATH,
                 embedding_function=embedding_model
             )
         else:
-            print("📚 Creating new BIS vectorstore...")
+            print("Creating new BIS vectorstore...")
             vectorstore = Chroma(
                 embedding_function=embedding_model,
                 persist_directory=BIS_CHROMA_DB_PATH
@@ -165,11 +165,11 @@ def initialize_bis_vectorstore(force_reload: bool = False) -> Optional[Chroma]:
         
         # Process and embed new/modified PDFs
         if new_or_modified_pdfs:
-            print(f"🔄 Processing {len(new_or_modified_pdfs)} new/modified PDF(s)...")
+            print(f"Processing {len(new_or_modified_pdfs)} new/modified PDF(s)...")
             documents = []
             
             for pdf_file, mtime in new_or_modified_pdfs:
-                print(f"📄 Processing {pdf_file.name}...")
+                print(f"Processing {pdf_file.name}...")
                 text = extract_text_from_pdf(pdf_file)
                 if text.strip():
                     # Split text into chunks
@@ -193,7 +193,7 @@ def initialize_bis_vectorstore(force_reload: bool = False) -> Optional[Chroma]:
                     # Update manifest with new modification time
                     manifest[pdf_file.name] = mtime
                 else:
-                    print(f"⚠️ Skipping {pdf_file.name} — empty or unreadable")
+                    print(f"WARNING: Skipping {pdf_file.name} - empty or unreadable")
             
             if documents:
                 # Add new documents to existing vectorstore in batches
@@ -204,14 +204,14 @@ def initialize_bis_vectorstore(force_reload: bool = False) -> Optional[Chroma]:
                 
                 # Save updated manifest
                 save_bis_manifest(manifest)
-                print(f"✅ Added {len(documents)} new chunks from {len(new_or_modified_pdfs)} PDF(s)")
+                print(f"Added {len(documents)} new chunks from {len(new_or_modified_pdfs)} PDF(s)")
             else:
-                print("⚠️ No documents extracted from new/modified PDFs")
+                print("WARNING: No documents extracted from new/modified PDFs")
         else:
             if not vectorstore_exists:
-                print("⚠️ No PDFs to process and vectorstore doesn't exist")
+                print("WARNING: No PDFs to process and vectorstore doesn't exist")
                 return None
-            print("✅ All PDFs are up to date, no new embeddings needed")
+            print("All PDFs are up to date, no new embeddings needed")
         
         # Cache the instance
         _bis_vectorstore_cache = vectorstore
@@ -219,7 +219,7 @@ def initialize_bis_vectorstore(force_reload: bool = False) -> Optional[Chroma]:
         return vectorstore
         
     except Exception as e:
-        print(f"⚠️ Warning: Could not initialize BIS vectorstore: {e}")
+        print(f"WARNING: Could not initialize BIS vectorstore: {e}")
         print("   Reports will continue without BIS cautions. This is not critical.")
         import traceback
         traceback.print_exc()
@@ -235,185 +235,7 @@ def clear_bis_vectorstore_cache():
     global _bis_vectorstore_cache, _bis_vectorstore_initialized
     _bis_vectorstore_cache = None
     _bis_vectorstore_initialized = False
-    print("🔄 BIS vectorstore cache cleared")
-
-
-def normalize_ingredient_name(name: str) -> str:
-    """
-    Normalize ingredient name for better matching.
-    - Removes accents and special characters
-    - Converts to lowercase
-    - Removes extra whitespace
-    - Removes common prefixes/suffixes that might vary
-    """
-    if not name:
-        return ""
-    
-    # Remove accents and normalize unicode
-    normalized = unicodedata.normalize("NFKD", name)
-    # Convert to ASCII, ignoring non-ASCII characters
-    normalized = normalized.encode("ascii", "ignore").decode("ascii")
-    
-    # Convert to lowercase
-    normalized = normalized.lower()
-    
-    # Remove extra whitespace
-    normalized = re.sub(r"\s+", " ", normalized).strip()
-    
-    # Remove common punctuation that might cause mismatches
-    normalized = re.sub(r"[^\w\s]", " ", normalized)
-    normalized = re.sub(r"\s+", " ", normalized).strip()
-    
-    return normalized
-
-
-def extract_ingredient_variations(text: str, base_ingredient: str) -> List[str]:
-    """
-    Extract potential ingredient name variations from text.
-    Looks for words/phrases that might be variations of the ingredient name.
-    """
-    variations = [base_ingredient]
-    normalized_base = normalize_ingredient_name(base_ingredient)
-    
-    # Split base ingredient into words
-    base_words = normalized_base.split()
-    
-    # Look for potential variations in text (case-insensitive)
-    text_lower = text.lower()
-    
-    # Strategy 1: Look for exact word matches
-    for word in base_words:
-        if len(word) > 3:  # Only for meaningful words
-            # Find all occurrences of this word in context
-            pattern = rf'\b{re.escape(word)}\w*\b'
-            matches = re.findall(pattern, text_lower, re.IGNORECASE)
-            for match in matches:
-                if match not in variations:
-                    variations.append(match)
-    
-    # Strategy 2: Look for chemical compound patterns (e.g., "salicylic acid" might appear as "salicylate")
-    if "acid" in normalized_base:
-        base_without_acid = normalized_base.replace(" acid", "").strip()
-        if base_without_acid:
-            # Look for variations like "salicylate" for "salicylic acid"
-            pattern = rf'\b{re.escape(base_without_acid[:6])}\w*\b'
-            matches = re.findall(pattern, text_lower, re.IGNORECASE)
-            for match in matches:
-                if len(match) > 4 and match not in variations:
-                    variations.append(match)
-    
-    return variations
-
-
-def fuzzy_match_ingredient(ingredient: str, text: str, threshold: float = 0.75) -> Tuple[bool, float, Optional[str]]:
-    """
-    Use fuzzy matching to find ingredient mentions in text.
-    Returns: (found, confidence_score, matched_text)
-    """
-    normalized_ingredient = normalize_ingredient_name(ingredient)
-    
-    if not normalized_ingredient:
-        return False, 0.0, None
-    
-    # Extract potential ingredient mentions from text (words/phrases of similar length)
-    # Look for sequences of 2-5 words that might match
-    words = re.findall(r'\b\w+\b', text.lower())
-    
-    if not words:
-        return False, 0.0, None
-    
-    # Try exact substring match first (fastest)
-    if normalized_ingredient in text.lower():
-        return True, 1.0, normalized_ingredient
-    
-    # Try word-by-word matching
-    ingredient_words = normalized_ingredient.split()
-    if len(ingredient_words) == 1:
-        # Single word - check if it appears in text
-        if ingredient_words[0] in words:
-            return True, 0.9, ingredient_words[0]
-    else:
-        # Multi-word ingredient - look for consecutive word matches
-        for i in range(len(words) - len(ingredient_words) + 1):
-            candidate = " ".join(words[i:i + len(ingredient_words)])
-            if candidate == normalized_ingredient:
-                return True, 1.0, candidate
-    
-    # Use rapidfuzz for fuzzy matching if available
-    if RAPIDFUZZ_AVAILABLE:
-        # Extract all potential phrases from text (2-4 word sequences)
-        candidates = []
-        for i in range(len(words) - 1):
-            for j in range(i + 1, min(i + 5, len(words) + 1)):
-                candidate = " ".join(words[i:j])
-                if len(candidate) > 3:  # Only meaningful phrases
-                    candidates.append(candidate)
-        
-        if candidates:
-            # Find best match using rapidfuzz
-            best_match = process.extractOne(
-                normalized_ingredient,
-                candidates,
-                scorer=fuzz.token_sort_ratio,
-                score_cutoff=int(threshold * 100)
-            )
-            
-            if best_match:
-                matched_text, score, _ = best_match
-                confidence = score / 100.0
-                if confidence >= threshold:
-                    return True, confidence, matched_text
-    
-    return False, 0.0, None
-
-
-def check_ingredient_mention(ingredient: str, text: str, use_fuzzy: bool = True) -> bool:
-    """
-    Check if ingredient is mentioned in text, using fuzzy matching if enabled.
-    """
-    normalized_ingredient = normalize_ingredient_name(ingredient)
-    
-    if not normalized_ingredient:
-        return False
-    
-    text_lower = text.lower()
-    
-    # Exact match (fastest)
-    if normalized_ingredient in text_lower:
-        return True
-    
-    # Word-by-word match
-    ingredient_words = normalized_ingredient.split()
-    if len(ingredient_words) == 1:
-        # Single word - check if it appears as a whole word
-        pattern = rf'\b{re.escape(ingredient_words[0])}\b'
-        if re.search(pattern, text_lower):
-            return True
-    else:
-        # Multi-word - check if all words appear (in any order, but close together)
-        words_in_text = set(re.findall(r'\b\w+\b', text_lower))
-        ingredient_words_set = set(ingredient_words)
-        
-        # Check if all ingredient words appear in text
-        if ingredient_words_set.issubset(words_in_text):
-            # Check if they appear close together (within 50 characters)
-            for i, word in enumerate(ingredient_words):
-                if word in text_lower:
-                    # Find position of this word
-                    pos = text_lower.find(word)
-                    # Check if other words appear nearby
-                    nearby_text = text_lower[max(0, pos - 50):pos + len(word) + 50]
-                    other_words_found = sum(1 for w in ingredient_words if w in nearby_text and w != word)
-                    if other_words_found >= len(ingredient_words) - 1:
-                        return True
-    
-    # Use fuzzy matching if enabled and rapidfuzz is available
-    if use_fuzzy and RAPIDFUZZ_AVAILABLE:
-        found, confidence, _ = fuzzy_match_ingredient(ingredient, text, threshold=0.7)
-        if found and confidence >= 0.7:
-            return True
-    
-    return False
+    print("BIS vectorstore cache cleared")
 
 
 def get_bis_retriever():
@@ -446,39 +268,31 @@ async def get_bis_cautions_for_ingredients(ingredient_names: List[str]) -> Dict[
         if retriever is None:
             return {}
     except Exception as e:
-        print(f"⚠️ BIS retriever not available: {e}")
+        print(f"WARNING: BIS retriever not available: {e}")
         return {}
     
     cautions_map = {}
     
-    # Expand search keywords for better coverage
+    # Expand search keywords for better coverage - focus on numerical limits
     caution_keywords = [
         'caution', 'warning', 'restriction', 'limit', 'maximum', 'minimum',
         'prohibited', 'not allowed', 'should not', 'avoid', 'must not',
         'instruction', 'requirement', 'mandatory', 'compliance', 'regulation',
-        'standard', 'guideline', 'specification', 'condition', 'precaution'
+        'standard', 'guideline', 'specification', 'condition', 'precaution',
+        'percent', 'percentage', '%', 'w/w', 'w/v', 'concentration', 'amount',
+        'not exceed', 'shall not exceed', 'must not exceed', 'should not exceed',
+        'column', 'table', 'mg/kg', 'ppm', 'g/kg', 'mg/l', 'g/l'
     ]
     
     for ingredient in ingredient_names:
         try:
-            # Normalize ingredient name for better search
-            normalized_ingredient = normalize_ingredient_name(ingredient)
-            
             # Use multiple search queries for better coverage
-            # Include both original and normalized versions
             queries = [
                 f"{ingredient} caution warning restriction",
-                f"{normalized_ingredient} caution warning restriction",
                 f"{ingredient} limit concentration maximum",
-                f"{normalized_ingredient} limit concentration maximum",
                 f"{ingredient} instruction requirement",
-                f"{normalized_ingredient} instruction requirement",
-                f"{ingredient} regulation compliance",
-                f"{normalized_ingredient} regulation compliance"
+                f"{ingredient} regulation compliance"
             ]
-            
-            # Remove duplicate queries
-            queries = list(dict.fromkeys(queries))  # Preserves order while removing duplicates
             
             all_docs = []
             seen_doc_ids = set()
@@ -495,10 +309,11 @@ async def get_bis_cautions_for_ingredients(ingredient_names: List[str]) -> Dict[
             
             # Extract relevant information from all documents
             cautions = []
+            ingredient_lower = ingredient.lower()
             
-            # Get ingredient variations for better matching
-            all_docs_text = " ".join([doc.page_content for doc in all_docs])
-            ingredient_variations = extract_ingredient_variations(all_docs_text, ingredient)
+            # Pattern to match numerical values (percentages, limits, concentrations)
+            import re
+            number_pattern = re.compile(r'\d+\.?\d*\s*(?:%|percent|w/w|w/v|mg/kg|ppm|g/kg|mg/l|g/l|mg|g|kg|ml|l)?', re.IGNORECASE)
             
             for doc in all_docs:
                 content = doc.page_content
@@ -506,84 +321,114 @@ async def get_bis_cautions_for_ingredients(ingredient_names: List[str]) -> Dict[
                 
                 # Check if document contains caution-related information
                 if any(keyword in content_lower for keyword in caution_keywords):
-                    # Check if ingredient (or any variation) is mentioned in this document
-                    ingredient_mentioned = False
-                    matched_variation = None
-                    
-                    # Try exact match first
-                    for variation in ingredient_variations:
-                        if check_ingredient_mention(variation, content, use_fuzzy=False):
-                            ingredient_mentioned = True
-                            matched_variation = variation
-                            break
-                    
-                    # If exact match failed, try fuzzy matching
-                    if not ingredient_mentioned:
-                        found, confidence, matched_text = fuzzy_match_ingredient(ingredient, content, threshold=0.7)
-                        if found:
-                            ingredient_mentioned = True
-                            matched_variation = matched_text or normalized_ingredient
-                    
-                    if not ingredient_mentioned:
-                        continue
-                    
-                    # Multiple extraction strategies to catch all cautions
-                    
-                    # Strategy 1: Split by sentences (period)
+                    # PRIORITY: Extract sentences/paragraphs with NUMBERS (limits, percentages, concentrations)
+                    # Strategy 1: Extract complete sentences with numbers and ingredient mention
                     sentences = content.split('.')
                     for sentence in sentences:
                         sentence_clean = sentence.strip()
-                        if sentence_clean:
-                            # Check if sentence mentions ingredient (using fuzzy matching)
-                            if check_ingredient_mention(ingredient, sentence_clean, use_fuzzy=True):
-                                # Check if sentence contains caution keywords
-                                if any(keyword in sentence_clean.lower() for keyword in caution_keywords):
+                        if sentence_clean and ingredient_lower in sentence_clean.lower():
+                            # Prioritize sentences with numbers (limits, percentages)
+                            has_number = bool(number_pattern.search(sentence_clean))
+                            has_caution_keyword = any(keyword in sentence_clean.lower() for keyword in caution_keywords)
+                            
+                            if has_caution_keyword:
+                                # If it has a number, prioritize it; otherwise include if it has caution keywords
+                                if has_number:
+                                    # Ensure sentence is complete and includes the number
+                                    if len(sentence_clean) > 20:  # Avoid very short fragments
+                                        cautions.insert(0, sentence_clean)  # Insert at beginning (higher priority)
+                                else:
                                     cautions.append(sentence_clean)
                     
-                    # Strategy 2: Split by newlines (for structured documents)
+                    # Strategy 2: Extract lines with numbers (for structured documents like tables)
                     lines = content.split('\n')
                     for line in lines:
                         line_clean = line.strip()
-                        if line_clean:
-                            if check_ingredient_mention(ingredient, line_clean, use_fuzzy=True):
-                                if any(keyword in line_clean.lower() for keyword in caution_keywords):
+                        if line_clean and ingredient_lower in line_clean.lower():
+                            has_number = bool(number_pattern.search(line_clean))
+                            has_caution_keyword = any(keyword in line_clean.lower() for keyword in caution_keywords)
+                            
+                            if has_caution_keyword:
+                                if has_number:
+                                    if len(line_clean) > 15:  # Avoid very short fragments
+                                        cautions.insert(0, line_clean)  # Insert at beginning (higher priority)
+                                else:
                                     cautions.append(line_clean)
                     
-                    # Strategy 3: Extract paragraphs that mention ingredient and contain caution keywords
+                    # Strategy 3: Extract paragraphs with numbers
                     paragraphs = content.split('\n\n')
                     for para in paragraphs:
                         para_clean = para.strip()
-                        if para_clean:
-                            if check_ingredient_mention(ingredient, para_clean, use_fuzzy=True):
-                                if any(keyword in para_clean.lower() for keyword in caution_keywords):
-                                    # If paragraph is short, add as-is; if long, split further
-                                    if len(para_clean) < 300:
-                                        cautions.append(para_clean)
+                        if para_clean and ingredient_lower in para_clean.lower():
+                            has_number = bool(number_pattern.search(para_clean))
+                            has_caution_keyword = any(keyword in para_clean.lower() for keyword in caution_keywords)
+                            
+                            if has_caution_keyword:
+                                if has_number:
+                                    # If paragraph has numbers, prioritize it
+                                    if len(para_clean) < 500:  # Keep reasonable length
+                                        cautions.insert(0, para_clean)  # Insert at beginning
                                     else:
-                                        # Split long paragraphs into sentences
+                                        # Split long paragraphs but keep sentences with numbers
                                         para_sentences = para_clean.split('.')
                                         for sent in para_sentences:
                                             sent_clean = sent.strip()
-                                            if sent_clean:
-                                                if check_ingredient_mention(ingredient, sent_clean, use_fuzzy=True):
-                                                    if any(keyword in sent_clean.lower() for keyword in caution_keywords):
-                                                        cautions.append(sent_clean)
+                                            if sent_clean and ingredient_lower in sent_clean.lower():
+                                                if bool(number_pattern.search(sent_clean)):
+                                                    if len(sent_clean) > 20:
+                                                        cautions.insert(0, sent_clean)
+                                else:
+                                    # Paragraph without numbers but has caution keywords
+                                    if len(para_clean) < 300:
+                                        cautions.append(para_clean)
+                                    else:
+                                        # Split long paragraphs
+                                        para_sentences = para_clean.split('.')
+                                        for sent in para_sentences:
+                                            sent_clean = sent.strip()
+                                            if sent_clean and ingredient_lower in sent_clean.lower():
+                                                if any(keyword in sent_clean.lower() for keyword in caution_keywords):
+                                                    cautions.append(sent_clean)
             
             if cautions:
-                # Remove duplicates while preserving order, but keep ALL unique cautions (no limit)
+                # Remove duplicates while preserving order, prioritizing cautions with numbers
                 unique_cautions = []
                 seen = set()
+                
+                # First pass: Add cautions with numbers (prioritized)
                 for caution in cautions:
-                    # Normalize for comparison (lowercase, strip whitespace)
+                    caution_normalized = caution.lower().strip()
+                    if caution_normalized and caution_normalized not in seen:
+                        has_number = bool(re.search(r'\d+\.?\d*\s*(?:%|percent|w/w|w/v|mg/kg|ppm|g/kg|mg/l|g/l|mg|g|kg|ml|l)', caution, re.IGNORECASE))
+                        if has_number:
+                            seen.add(caution_normalized)
+                            unique_cautions.append(caution)
+                
+                # Second pass: Add remaining cautions without numbers
+                for caution in cautions:
                     caution_normalized = caution.lower().strip()
                     if caution_normalized and caution_normalized not in seen:
                         seen.add(caution_normalized)
                         unique_cautions.append(caution)
                 
-                cautions_map[ingredient] = unique_cautions
-                print(f"✅ Retrieved {len(unique_cautions)} caution(s) for {ingredient}")
+                # Clean up: Remove vague references like "column given" and replace with actual context
+                cleaned_cautions = []
+                for caution in unique_cautions:
+                    # If caution mentions "column" but doesn't have actual numbers, try to find context
+                    if 'column' in caution.lower() and not re.search(r'\d+\.?\d*', caution):
+                        # Skip vague column references without numbers
+                        continue
+                    # Ensure caution is meaningful (at least 20 characters)
+                    if len(caution.strip()) >= 20:
+                        cleaned_cautions.append(caution.strip())
+                
+                if cleaned_cautions:
+                    cautions_map[ingredient] = cleaned_cautions
+                    print(f"Retrieved {len(cleaned_cautions)} caution(s) for {ingredient}")
+                else:
+                    print(f"No valid cautions found for {ingredient} (all were too vague or missing numbers)")
         except Exception as e:
-            print(f"⚠️ Error retrieving BIS cautions for {ingredient}: {e}")
+            print(f"WARNING: Error retrieving BIS cautions for {ingredient}: {e}")
             continue
     
     return cautions_map
@@ -610,6 +455,67 @@ async def get_bis_cautions_batch(ingredient_names: List[str]) -> str:
         
         return "\n".join(formatted_cautions)
     except Exception as e:
-        print(f"⚠️ Error retrieving BIS cautions: {e}")
+        print(f"WARNING: Error retrieving BIS cautions: {e}")
         return "BIS cautions retrieval temporarily unavailable. Proceeding with report generation."
 
+
+def check_bis_rag_health() -> Dict[str, any]:
+    """
+    Comprehensive health check for BIS RAG system.
+    Returns dict with status, errors, and diagnostic information.
+    """
+    health = {
+        "status": "unknown",
+        "errors": [],
+        "pdf_files": 0,
+        "vectorstore_exists": False,
+        "vectorstore_initialized": False,
+        "retriever_created": False,
+        "test_query_successful": False
+    }
+    
+    try:
+        # Check PDF files
+        pdf_files = list(BIS_DATA_PATH.glob("*.pdf"))
+        health["pdf_files"] = len(pdf_files)
+        
+        # Check vectorstore existence
+        health["vectorstore_exists"] = os.path.exists(BIS_CHROMA_DB_PATH) and bool(os.listdir(BIS_CHROMA_DB_PATH))
+        
+        # Try to initialize vectorstore
+        try:
+            vectorstore = initialize_bis_vectorstore()
+            health["vectorstore_initialized"] = vectorstore is not None
+        except Exception as e:
+            health["errors"].append(f"Vectorstore initialization failed: {str(e)}")
+        
+        # Try to create retriever
+        try:
+            retriever = get_bis_retriever()
+            health["retriever_created"] = retriever is not None
+        except Exception as e:
+            health["errors"].append(f"Retriever creation failed: {str(e)}")
+        
+        # Try a test query
+        if health["retriever_created"]:
+            try:
+                retriever = get_bis_retriever()
+                test_docs = retriever.invoke("test")
+                health["test_query_successful"] = len(test_docs) > 0 if test_docs else False
+            except Exception as e:
+                health["errors"].append(f"Test query failed: {str(e)}")
+        
+        # Determine overall status
+        if health["vectorstore_initialized"] and health["retriever_created"]:
+            if health["test_query_successful"]:
+                health["status"] = "healthy"
+            else:
+                health["status"] = "retriever_failed"
+        else:
+            health["status"] = "unhealthy"
+            
+    except Exception as e:
+        health["status"] = "error"
+        health["errors"].append(f"Health check failed: {str(e)}")
+    
+    return health
