@@ -175,3 +175,36 @@ class GetCompareHistoryResponse(BaseModel):
     """Response schema for getting compare history"""
     items: List[CompareHistoryItem] = Field(..., description="List of history items")
     total: int = Field(..., description="Total number of items")
+
+
+class MarketResearchProduct(BaseModel):
+    """Schema for a matched product in market research"""
+    id: Optional[str] = Field(None, description="Product ID")
+    productName: Optional[str] = Field(None, description="Product name")
+    brand: Optional[str] = Field(None, description="Brand name")
+    ingredients: Optional[List[str]] = Field(default_factory=list, description="List of ingredients")
+    image: Optional[str] = Field(None, description="Product image URL")
+    images: Optional[List[str]] = Field(default_factory=list, description="List of product image URLs")
+    price: Optional[float] = Field(None, description="Product price")
+    salePrice: Optional[float] = Field(None, description="Sale price")
+    description: Optional[str] = Field(None, description="Product description")
+    matched_ingredients: List[str] = Field(default_factory=list, description="List of ingredients that matched")
+    match_count: int = Field(0, description="Number of matched ingredients")
+    total_ingredients: int = Field(0, description="Total number of ingredients in product")
+    match_percentage: float = Field(0.0, description="Percentage of ingredients matched")
+
+
+class MarketResearchRequest(BaseModel):
+    """Request schema for market research"""
+    url: Optional[str] = Field(None, description="Product URL to extract ingredients from")
+    inci: Optional[str] = Field(None, description="INCI ingredient list")
+    input_type: str = Field(..., description="Type of input: 'url' or 'inci'")
+
+
+class MarketResearchResponse(BaseModel):
+    """Response schema for market research"""
+    products: List[MarketResearchProduct] = Field(default_factory=list, description="List of matched products")
+    extracted_ingredients: List[str] = Field(default_factory=list, description="List of extracted ingredients from input")
+    total_matched: int = Field(0, description="Total number of matched products")
+    processing_time: float = Field(0.0, description="Time taken for processing (in seconds)")
+    input_type: str = Field(..., description="Type of input processed")

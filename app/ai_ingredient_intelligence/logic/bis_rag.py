@@ -250,9 +250,10 @@ def get_bis_retriever():
     
     # Creating a retriever is lightweight - it's just a wrapper around the vectorstore
     # The vectorstore itself is cached, so this is efficient
+    # Increase k and fetch_k for better coverage
     retriever = vectorstore.as_retriever(
         search_type="mmr",
-        search_kwargs={"k": 5, "fetch_k": 10}
+        search_kwargs={"k": 10, "fetch_k": 20}  # Increased for better retrieval
     )
     return retriever
 
@@ -286,33 +287,49 @@ async def get_bis_cautions_for_ingredients(ingredient_names: List[str]) -> Dict[
     
     for ingredient in ingredient_names:
         try:
-            # Use multiple search queries for better coverage
+            # Use multiple search queries for better coverage - be more specific
+            # Try exact ingredient name first, then variations
             queries = [
-                f"{ingredient} caution warning restriction",
-                f"{ingredient} limit concentration maximum",
-                f"{ingredient} instruction requirement",
-                f"{ingredient} regulation compliance"
+                f"{ingredient}",
+                f"{ingredient} caution",
+                f"{ingredient} warning",
+                f"{ingredient} restriction",
+                f"{ingredient} limit",
+                f"{ingredient} maximum",
+                f"{ingredient} concentration",
+                f"{ingredient} percentage",
+                f"{ingredient} w/w",
+                f"{ingredient} mg/kg",
+                f"{ingredient} regulation",
+                f"{ingredient} standard",
+                f"{ingredient} BIS",
+                f"{ingredient} instruction",
+                f"{ingredient} requirement"
             ]
             
             all_docs = []
             seen_doc_ids = set()
             
-            # Collect documents from all queries
+            # Collect documents from all queries - increase k for better coverage
             for query in queries:
-                docs = retriever.invoke(query)
-                for doc in docs:
-                    # Use source + chunk_index as unique identifier
-                    doc_id = f"{doc.metadata.get('source', '')}_{doc.metadata.get('chunk_index', '')}"
-                    if doc_id not in seen_doc_ids:
-                        seen_doc_ids.add(doc_id)
-                        all_docs.append(doc)
+                try:
+                    # Increase k to get more results
+                    docs = retriever.invoke(query)
+                    for doc in docs:
+                        # Use source + chunk_index as unique identifier
+                        doc_id = f"{doc.metadata.get('source', '')}_{doc.metadata.get('chunk_index', '')}"
+                        if doc_id not in seen_doc_ids:
+                            seen_doc_ids.add(doc_id)
+                            all_docs.append(doc)
+                except Exception as e:
+                    print(f"Warning: Error in query '{query}': {e}")
+                    continue
             
             # Extract relevant information from all documents
             cautions = []
             ingredient_lower = ingredient.lower()
             
             # Pattern to match numerical values (percentages, limits, concentrations)
-            import re
             number_pattern = re.compile(r'\d+\.?\d*\s*(?:%|percent|w/w|w/v|mg/kg|ppm|g/kg|mg/l|g/l|mg|g|kg|ml|l)?', re.IGNORECASE)
             
             for doc in all_docs:
@@ -413,20 +430,54 @@ async def get_bis_cautions_for_ingredients(ingredient_names: List[str]) -> Dict[
                 
                 # Clean up: Remove vague references like "column given" and replace with actual context
                 cleaned_cautions = []
+                
+                # Common ingredients that shouldn't have generic safety cautions (unless they have specific numerical limits)
+                common_ingredients_no_generic_cautions = [
+                    'water', 'aqua', 'glycerin', 'glycerol', 'dimethicone', 
+                    'propylene glycol', 'butylene glycol', 'squalane', 'squalene'
+                ]
+                
+                is_common_ingredient = any(common in ingredient_lower for common in common_ingredients_no_generic_cautions)
+                
                 for caution in unique_cautions:
                     # If caution mentions "column" but doesn't have actual numbers, try to find context
                     if 'column' in caution.lower() and not re.search(r'\d+\.?\d*', caution):
                         # Skip vague column references without numbers
                         continue
-                    # Ensure caution is meaningful (at least 20 characters)
-                    if len(caution.strip()) >= 20:
+                    
+                    # For common ingredients, filter out generic safety cautions unless they have numerical limits
+                    if is_common_ingredient:
+                        caution_lower = caution.lower()
+                        # Skip generic safety cautions that don't have numerical values
+                        generic_safety_phrases = [
+                            'avoid contact with eyes',
+                            'avoid contact with eye',
+                            'keep away from eyes',
+                            'keep away from eye',
+                            'do not get in eyes',
+                            'do not get in eye',
+                            'not for use in eyes',
+                            'for external use only',
+                            'external use only'
+                        ]
+                        has_generic_phrase = any(phrase in caution_lower for phrase in generic_safety_phrases)
+                        has_numerical_limit = bool(re.search(r'\d+\.?\d*\s*(?:%|percent|w/w|w/v|mg/kg|ppm|g/kg|mg/l|g/l|mg|g|kg|ml|l)', caution, re.IGNORECASE))
+                        
+                        # Skip generic safety cautions that don't have numerical limits
+                        if has_generic_phrase and not has_numerical_limit:
+                            continue
+                    
+                    # Ensure caution is meaningful (at least 15 characters - reduced threshold for better coverage)
+                    if len(caution.strip()) >= 15:
                         cleaned_cautions.append(caution.strip())
                 
                 if cleaned_cautions:
-                    cautions_map[ingredient] = cleaned_cautions
-                    print(f"Retrieved {len(cleaned_cautions)} caution(s) for {ingredient}")
+                    # Limit to top 10 most relevant cautions to avoid overwhelming
+                    final_cautions = cleaned_cautions[:10]
+                    cautions_map[ingredient] = final_cautions
+                    print(f"✅ Retrieved {len(final_cautions)} caution(s) for {ingredient} (from {len(all_docs)} documents)")
                 else:
-                    print(f"No valid cautions found for {ingredient} (all were too vague or missing numbers)")
+                    print(f"⚠️ No valid cautions found for {ingredient} (searched {len(all_docs)} documents)")
         except Exception as e:
             print(f"WARNING: Error retrieving BIS cautions for {ingredient}: {e}")
             continue

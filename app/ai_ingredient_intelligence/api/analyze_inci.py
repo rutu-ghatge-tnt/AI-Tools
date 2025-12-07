@@ -35,6 +35,9 @@ from app.ai_ingredient_intelligence.models.schemas import (
     CompareHistoryItem,  # ⬅️ new schema for compare history
     SaveCompareHistoryRequest,  # ⬅️ new schema for saving compare history
     GetCompareHistoryResponse,  # ⬅️ new schema for getting compare history
+    MarketResearchRequest,  # ⬅️ new schema for market research
+    MarketResearchResponse,  # ⬅️ new schema for market research response
+    MarketResearchProduct,  # ⬅️ new schema for market research product
 )
 from app.ai_ingredient_intelligence.db.mongodb import db
 from app.ai_ingredient_intelligence.db.collections import distributor_col, decode_history_col, compare_history_col, branded_ingredients_col, inci_col
@@ -2405,3 +2408,266 @@ async def delete_compare_history(history_id: str, user_id: Optional[str] = Heade
             status_code=500,
             detail=f"Failed to delete compare history: {str(e)}"
         )
+
+
+# Market Research endpoint - matches ingredients with externalProducts collection
+@router.post("/market-research", response_model=MarketResearchResponse)
+async def market_research(payload: dict):
+    """
+    Market Research: Match ingredients from URL or INCI input with externalProducts collection.
+    
+    Request body:
+    {
+        "url": "https://example.com/product/..." (optional if inci is provided),
+        "inci": "Water, Glycerin, ..." (optional if url is provided),
+        "input_type": "url" or "inci"
+    }
+    
+    Returns:
+    {
+        "products": [list of matched products with images and full details],
+        "extracted_ingredients": [list of ingredients extracted from input],
+        "total_matched": number of matched products,
+        "processing_time": time taken,
+        "input_type": "url" or "inci"
+    }
+    """
+    start = time.time()
+    scraper = None
+    
+    try:
+        # Validate payload
+        input_type = payload.get("input_type", "").lower()
+        if input_type not in ["url", "inci"]:
+            raise HTTPException(status_code=400, detail="input_type must be 'url' or 'inci'")
+        
+        ingredients = []
+        extracted_text = ""
+        
+        if input_type == "url":
+            url = payload.get("url", "").strip()
+            if not url:
+                raise HTTPException(status_code=400, detail="url is required when input_type is 'url'")
+            
+            if not url.startswith(("http://", "https://")):
+                raise HTTPException(status_code=400, detail="Invalid URL format. Must start with http:// or https://")
+            
+            # Initialize URL scraper and extract ingredients
+            scraper = URLScraper()
+            print(f"Scraping URL for market research: {url}")
+            extraction_result = await scraper.extract_ingredients_from_url(url)
+            
+            # Get ingredients - could be list or string, ensure it's a list
+            ingredients_raw = extraction_result.get("ingredients", [])
+            extracted_text = extraction_result.get("extracted_text", "")
+            
+            # If ingredients is a string, parse it
+            if isinstance(ingredients_raw, str):
+                ingredients = parse_inci_string(ingredients_raw)
+            elif isinstance(ingredients_raw, list):
+                ingredients = ingredients_raw
+            else:
+                ingredients = []
+            
+            print(f"Extracted ingredients from URL: {ingredients}")
+            
+            if not ingredients:
+                raise HTTPException(
+                    status_code=404,
+                    detail="No ingredients found on the product page. Please ensure the page contains ingredient information."
+                )
+        else:
+            # INCI input
+            inci = payload.get("inci", "").strip()
+            if not inci:
+                raise HTTPException(status_code=400, detail="inci is required when input_type is 'inci'")
+            
+            # Parse INCI string
+            ingredients = parse_inci_string(inci)
+            extracted_text = inci
+            
+            if not ingredients:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No valid ingredients found after parsing. Please check your input format."
+                )
+        
+        print(f"Extracted {len(ingredients)} ingredients for market research")
+        print(f"Ingredients list: {ingredients}")
+        
+        # Normalize ingredients for matching (case-insensitive, trimmed)
+        normalized_input_ingredients = [ing.strip().lower() for ing in ingredients if ing.strip()]
+        print(f"Normalized ingredients for matching: {normalized_input_ingredients}")
+        
+        # Query externalProducts collection
+        external_products_col = db["externalProducts"]
+        
+        # Find all products that have ingredients
+        all_products = await external_products_col.find({
+            "ingredients": {"$exists": True, "$ne": None, "$ne": ""}
+        }).to_list(length=None)
+        
+        print(f"Found {len(all_products)} products with ingredients in externalProducts")
+        
+        # Match products based on ingredient overlap
+        matched_products = []
+        print(f"\nStarting ingredient matching with {len(normalized_input_ingredients)} input ingredients against {len(all_products)} products...")
+        for idx, product in enumerate(all_products):
+            if (idx + 1) % 100 == 0:
+                print(f"  Processed {idx + 1}/{len(all_products)} products...")
+            product_ingredients_raw = product.get("ingredients", "")
+            if not product_ingredients_raw:
+                continue
+            
+            # Parse ingredients string into list (ingredients field is a string, not array)
+            if isinstance(product_ingredients_raw, str):
+                # Extract ingredients from the string
+                # Look for "Full Ingredients List:" or similar patterns
+                ingredients_text = product_ingredients_raw
+                # Try to find the actual ingredient list (after "Full Ingredients List:")
+                if "Full Ingredients List:" in ingredients_text:
+                    ingredients_text = ingredients_text.split("Full Ingredients List:")[-1]
+                elif "Ingredients:" in ingredients_text:
+                    ingredients_text = ingredients_text.split("Ingredients:")[-1]
+                
+                # Clean up escaped backslashes (\\\\ becomes \)
+                ingredients_text = ingredients_text.replace("\\\\", "\\")
+                # Replace backslashes with commas for parsing (Water\\Aqua\\Eau -> Water, Aqua, Eau)
+                ingredients_text = ingredients_text.replace("\\", ", ")
+                
+                # Parse the ingredients string using the same parser
+                product_ingredients = parse_inci_string(ingredients_text)
+            elif isinstance(product_ingredients_raw, list):
+                # If it's already a list, use it directly
+                product_ingredients = product_ingredients_raw
+            else:
+                continue
+            
+            if not product_ingredients:
+                continue
+            
+            # Normalize product ingredients
+            normalized_product_ingredients = []
+            original_ingredient_map = {}  # Map normalized -> original for matching
+            for ing in product_ingredients:
+                if isinstance(ing, str):
+                    normalized = ing.strip().lower()
+                    normalized_product_ingredients.append(normalized)
+                    original_ingredient_map[normalized] = ing.strip()
+                elif isinstance(ing, dict) and "name" in ing:
+                    normalized = str(ing["name"]).strip().lower()
+                    normalized_product_ingredients.append(normalized)
+                    original_ingredient_map[normalized] = str(ing["name"]).strip()
+            
+            # Find matching ingredients
+            matched_ingredients = []
+            for input_ing in normalized_input_ingredients:
+                for prod_ing in normalized_product_ingredients:
+                    # Exact match or contains match
+                    if input_ing == prod_ing or input_ing in prod_ing or prod_ing in input_ing:
+                        # Get original ingredient name from map
+                        original_ing = original_ingredient_map.get(prod_ing)
+                        if original_ing and original_ing not in matched_ingredients:
+                            matched_ingredients.append(original_ing)
+                            print(f"  ✓ Matched: '{input_ing}' with product ingredient '{original_ing}'")
+                        break
+            
+            # Only include products with at least one match
+            if matched_ingredients:
+                match_count = len(matched_ingredients)
+                total_ingredients = len(product_ingredients)
+                match_percentage = (match_count / total_ingredients * 100) if total_ingredients > 0 else 0
+                
+                # Get product image - prioritize s3Image/s3Images, fallback to image/images
+                image = None
+                images = []
+                
+                # Try S3 images first (preferred)
+                if "s3Image" in product and product["s3Image"]:
+                    image = product["s3Image"]
+                    if isinstance(image, str):
+                        images = [image]
+                
+                if "s3Images" in product and product["s3Images"]:
+                    if isinstance(product["s3Images"], list) and len(product["s3Images"]) > 0:
+                        images = product["s3Images"]
+                        if not image and images:
+                            image = images[0]
+                
+                # Fallback to regular images if S3 not available
+                if not image and "image" in product and product["image"]:
+                    image = product["image"]
+                    if isinstance(image, str) and image not in images:
+                        images.insert(0, image)
+                
+                if "images" in product and product["images"]:
+                    if isinstance(product["images"], list):
+                        for img in product["images"]:
+                            if img and img not in images:
+                                images.append(img)
+                        if not image and images:
+                            image = images[0]
+                
+                # Build product data using correct field names from schema
+                product_data = {
+                    "id": str(product.get("_id", "")),  # Use 'id' instead of '_id' for Pydantic
+                    "productName": product.get("name") or product.get("productName") or product.get("product_name"),
+                    "brand": product.get("brand") or product.get("brandName") or product.get("brand_name"),
+                    "ingredients": product_ingredients,  # Now it's a parsed list
+                    "image": image,
+                    "images": images,
+                    "price": product.get("price"),
+                    "salePrice": product.get("salePrice") or product.get("sale_price"),
+                    "description": product.get("description"),
+                    "matched_ingredients": matched_ingredients,
+                    "match_count": match_count,
+                    "total_ingredients": total_ingredients,
+                    "match_percentage": round(match_percentage, 2)
+                }
+                
+                # Add any other fields from the product
+                for key in ["category", "subcategory", "url", "countryOfOrigin", "manufacturer"]:
+                    if key in product:
+                        product_data[key] = product[key]
+                
+                matched_products.append(product_data)
+        
+        # Sort by match percentage (descending) and then by match count (descending)
+        matched_products.sort(key=lambda x: (x["match_percentage"], x["match_count"]), reverse=True)
+        
+        processing_time = time.time() - start
+        
+        print(f"\n{'='*60}")
+        print(f"Market Research Summary:")
+        print(f"  Input type: {input_type}")
+        print(f"  Extracted ingredients: {len(ingredients)}")
+        print(f"  Ingredients used for matching: {ingredients[:5]}{'...' if len(ingredients) > 5 else ''}")
+        print(f"  Products in database: {len(all_products)}")
+        print(f"  Products matched: {len(matched_products)}")
+        print(f"  Processing time: {processing_time:.2f}s")
+        print(f"{'='*60}\n")
+        
+        return MarketResearchResponse(
+            products=matched_products,
+            extracted_ingredients=ingredients,
+            total_matched=len(matched_products),
+            processing_time=round(processing_time, 2),
+            input_type=input_type
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in market research: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to perform market research: {str(e)}"
+        )
+    finally:
+        if scraper:
+            try:
+                await scraper.close()
+            except:
+                pass

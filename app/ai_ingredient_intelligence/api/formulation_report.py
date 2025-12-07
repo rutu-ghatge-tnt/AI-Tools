@@ -2,6 +2,7 @@
 import io
 import datetime
 import os
+import re
 from fastapi import APIRouter, HTTPException, Response, Request
 from pydantic import BaseModel
 from typing import List, Optional, Dict
@@ -69,19 +70,22 @@ Generate a clean, structured report with these exact sections:
      * Salicylic Acid: "Beta hydroxy acid, exfoliant, pore-clearing"
      * Benzoyl Peroxide: "Antimicrobial, acne treatment"
      * Proprietary Blend XYZ: "Unknown proprietary ingredient, requires manufacturer clarification"
-   - BIS Cautions: For each ingredient, if BIS cautions are provided in the context, you MUST include ALL of them. CRITICAL REQUIREMENTS:
-     * Each caution must be on a SEPARATE LINE within the table cell
-     * Number each caution starting with 1., 2., 3., etc.
-     * Include EXACT limits, percentages, concentrations, and amounts as provided
-     * Do NOT use vague phrases like "see column" or "refer to table" - include the actual numerical values
-     * Do NOT combine multiple cautions into one line - each must be on its own line
-     * Do NOT skip any cautions - if 4 cautions are provided, you must include all 4
-     * Example format within the cell:
+   - BIS Cautions: For each ingredient, if BIS cautions are provided in the context, you MUST include ALL of them. THIS IS CRITICAL - MISSING CAUTIONS IS A SERIOUS ERROR.
+     * CRITICAL: You MUST include EVERY SINGLE caution that is provided for each ingredient. If 4 cautions are provided, you MUST include all 4. If 5 are provided, include all 5. DO NOT SKIP ANY.
+     * CRITICAL: Each caution must be on a SEPARATE LINE within the table cell. Use actual line breaks (newlines) between cautions.
+     * CRITICAL: Number each caution starting with 1., 2., 3., 4., etc. on its own line.
+     * CRITICAL: Include EXACT limits, percentages, concentrations, and amounts as provided. Copy the exact text from the provided cautions.
+     * CRITICAL: Do NOT use vague phrases like "see column" or "refer to table" - include the actual numerical values.
+     * CRITICAL: Do NOT combine multiple cautions into one line separated by commas or semicolons - each must be on its own line.
+     * CRITICAL: Do NOT summarize or shorten cautions - include the FULL text of each caution exactly as provided.
+     * CRITICAL: Do NOT skip any cautions - if 4 cautions are provided, you must include all 4. If 5 are provided, include all 5.
+     * Example format within the cell (each caution on its own line):
        1. First caution with exact values (e.g., "maximum 5% w/w")
        2. Second caution with exact values (e.g., "not to exceed 2 mg/kg")
        3. Third caution with exact values
        4. Fourth caution with exact values
      * If no BIS cautions are provided for an ingredient, write "no bis cautions"
+     * REMEMBER: Missing even one caution is a CRITICAL ERROR. Count the cautions provided and ensure ALL are included.
    - FAILURE TO PROVIDE ALL COLUMNS WILL RESULT IN INCOMPLETE REPORT
    - INCLUDE ALL INGREDIENTS FROM THE INCI LIST - DO NOT SKIP ANY
    - IMPORTANT: Categorize each ingredient as ACTIVES or EXCIPIENTS appropriately
@@ -233,6 +237,57 @@ def clean_ai_response(text: str) -> str:
     
     return text.strip()
 
+def validate_bis_cautions_in_report(report_text: str, bis_cautions: Optional[Dict[str, List[str]]] = None) -> Dict[str, bool]:
+    """
+    Validate that all BIS cautions are present in the report
+    Returns a dict mapping ingredient names to whether all their cautions were found
+    """
+    if not bis_cautions or len(bis_cautions) == 0:
+        return {}
+    
+    validation_results = {}
+    report_lower = report_text.lower()
+    
+    for ingredient, cautions in bis_cautions.items():
+        if not cautions or len(cautions) == 0:
+            continue
+        
+        ingredient_lower = ingredient.lower()
+        # Check if ingredient appears in report
+        if ingredient_lower not in report_lower:
+            validation_results[ingredient] = False
+            print(f"⚠️ WARNING: Ingredient '{ingredient}' not found in report!")
+            continue
+        
+        # Check for each caution
+        cautions_found = 0
+        for i, caution in enumerate(cautions, 1):
+            # Check for numbered caution (1., 2., etc.)
+            if f"{i}." in report_text:
+                # Also check if key words from caution appear
+                caution_words = caution.split()[:5]  # First 5 words
+                if len(caution_words) >= 3:
+                    search_text = " ".join(caution_words).lower()
+                    if search_text in report_lower:
+                        cautions_found += 1
+            else:
+                # Check if caution text appears even without number
+                caution_words = caution.split()[:5]
+                if len(caution_words) >= 3:
+                    search_text = " ".join(caution_words).lower()
+                    if search_text in report_lower:
+                        cautions_found += 1
+        
+        all_found = cautions_found >= len(cautions) * 0.8  # Allow 80% match (some variation in wording)
+        validation_results[ingredient] = all_found
+        
+        if not all_found:
+            print(f"⚠️ WARNING: Only {cautions_found}/{len(cautions)} cautions found for '{ingredient}'")
+        else:
+            print(f"✅ All {len(cautions)} cautions found for '{ingredient}'")
+    
+    return validation_results
+
 def parse_report_to_json(report_text: str) -> FormulationReportResponse:
     """Parse report text into structured JSON format"""
     lines = report_text.split('\n')
@@ -382,17 +437,46 @@ def parse_report_to_json(report_text: str) -> FormulationReportResponse:
                         break
             
             # Reconstruct the row from collected lines
-            # Join continuation lines with newlines, then split by |
-            full_row = ' '.join(row_lines)  # Join with space for continuation lines
-            cells = [cell.strip() for cell in full_row.split('|') if cell.strip()]
-            
-            # For analysis table, if we have more than 4 cells, merge extras into BIS Cautions (last column)
-            if current_section == 'analysis' and len(cells) > 4:
-                reconstructed = cells[:3]  # First 3 columns: Ingredient, Category, Functions/Notes
-                # Merge remaining cells into BIS Cautions
-                bis_cautions_merged = ' '.join(cells[3:])
-                reconstructed.append(bis_cautions_merged)
-                cells = reconstructed
+            # For multi-line cells, especially BIS Cautions, we need to handle carefully
+            # Strategy: If we have continuation lines without |, they're likely part of the last cell (BIS Cautions)
+            if len(row_lines) > 1 and current_section == 'analysis':
+                # Check if continuation lines are part of BIS Cautions column
+                first_line = row_lines[0]
+                first_cells = [c.strip() for c in first_line.split('|') if c.strip()]
+                
+                # If first line has exactly 3 cells (missing BIS Cautions), continuation lines are BIS Cautions
+                if len(first_cells) == 3:
+                    cells = first_cells[:3]
+                    # Collect continuation lines as BIS Cautions (preserve newlines)
+                    bis_cautions_parts = []
+                    for continuation_line in row_lines[1:]:
+                        if '|' not in continuation_line.strip():
+                            bis_cautions_parts.append(continuation_line.strip())
+                        else:
+                            break  # New row detected
+                    bis_cautions_merged = '\n'.join(bis_cautions_parts) if bis_cautions_parts else ''
+                    cells.append(bis_cautions_merged)
+                else:
+                    # Standard parsing - join with space, but preserve structure for BIS Cautions
+                    full_row = ' '.join(row_lines)
+                    cells = [cell.strip() for cell in full_row.split('|') if cell.strip()]
+                    # If more than 4 cells, merge extras into BIS Cautions
+                    if len(cells) > 4:
+                        reconstructed = cells[:3]
+                        bis_cautions_merged = ' '.join(cells[3:])
+                        reconstructed.append(bis_cautions_merged)
+                        cells = reconstructed
+            else:
+                # Standard parsing for single-line rows or other tables
+                full_row = ' '.join(row_lines)
+                cells = [cell.strip() for cell in full_row.split('|') if cell.strip()]
+                # For analysis table, if we have more than 4 cells, merge extras into BIS Cautions (last column)
+                if current_section == 'analysis' and len(cells) > 4:
+                    reconstructed = cells[:3]  # First 3 columns: Ingredient, Category, Functions/Notes
+                    # Merge remaining cells into BIS Cautions
+                    bis_cautions_merged = ' '.join(cells[3:])
+                    reconstructed.append(bis_cautions_merged)
+                    cells = reconstructed
             
             if cells and len(cells) > 1:  # Skip header rows (they're usually all caps or have specific keywords)
                 # Check if it's a header row (all caps or contains "Ingredient", "Category", etc.)
@@ -421,6 +505,58 @@ def parse_report_to_json(report_text: str) -> FormulationReportResponse:
             continue
         
         i += 1
+    
+    # Add default headers for each table if they don't exist
+    # Analysis table headers
+    if analysis_table and len(analysis_table) > 0:
+        # Check if first row is a header, if not, prepend default headers
+        first_row_cells = analysis_table[0].cells if analysis_table else []
+        is_header = any(c.upper() in ['INGREDIENT', 'CATEGORY', 'FUNCTIONS/NOTES', 'BIS CAUTIONS'] for c in first_row_cells)
+        if not is_header:
+            # Prepend header row
+            analysis_table.insert(0, ReportTableRow(cells=["Ingredient", "Category", "Functions/Notes", "BIS Cautions"]))
+    
+    # Compliance panel headers
+    if compliance_panel and len(compliance_panel) > 0:
+        first_row_cells = compliance_panel[0].cells if compliance_panel else []
+        is_header = any(c.upper() in ['REGULATION', 'STATUS', 'REQUIREMENTS'] for c in first_row_cells)
+        if not is_header:
+            compliance_panel.insert(0, ReportTableRow(cells=["Regulation", "Status", "Requirements"]))
+    
+    # Preservative efficacy headers
+    if preservative_efficacy and len(preservative_efficacy) > 0:
+        first_row_cells = preservative_efficacy[0].cells if preservative_efficacy else []
+        is_header = any(c.upper() in ['PRESERVATIVE', 'EFFICACY', 'PH RANGE', 'STABILITY'] for c in first_row_cells)
+        if not is_header:
+            preservative_efficacy.insert(0, ReportTableRow(cells=["Preservative", "Efficacy", "pH Range", "Stability"]))
+    
+    # Risk panel headers
+    if risk_panel and len(risk_panel) > 0:
+        first_row_cells = risk_panel[0].cells if risk_panel else []
+        is_header = any(c.upper() in ['RISK FACTOR', 'LEVEL', 'MITIGATION'] for c in first_row_cells)
+        if not is_header:
+            risk_panel.insert(0, ReportTableRow(cells=["Risk Factor", "Level", "Mitigation"]))
+    
+    # Cumulative benefit headers
+    if cumulative_benefit and len(cumulative_benefit) > 0:
+        first_row_cells = cumulative_benefit[0].cells if cumulative_benefit else []
+        is_header = any(c.upper() in ['BENEFIT', 'MECHANISM', 'EVIDENCE LEVEL'] for c in first_row_cells)
+        if not is_header:
+            cumulative_benefit.insert(0, ReportTableRow(cells=["Benefit", "Mechanism", "Evidence Level"]))
+    
+    # Claim panel headers
+    if claim_panel and len(claim_panel) > 0:
+        first_row_cells = claim_panel[0].cells if claim_panel else []
+        is_header = any(c.upper() in ['CLAIM', 'SUPPORT LEVEL', 'EVIDENCE'] for c in first_row_cells)
+        if not is_header:
+            claim_panel.insert(0, ReportTableRow(cells=["Claim", "Support Level", "Evidence"]))
+    
+    # Expected benefits analysis headers
+    if expected_benefits_analysis and len(expected_benefits_analysis) > 0:
+        first_row_cells = expected_benefits_analysis[0].cells if expected_benefits_analysis else []
+        is_header = any(c.upper() in ['EXPECTED BENEFIT', 'CAN BE ACHIEVED', 'SUPPORTING INGREDIENTS'] for c in first_row_cells)
+        if not is_header:
+            expected_benefits_analysis.insert(0, ReportTableRow(cells=["Expected Benefit", "Can Be Achieved?", "Supporting Ingredients", "Evidence/Mechanism", "Limitations"]))
     
     return FormulationReportResponse(
         inci_list=inci_list,
@@ -610,11 +746,76 @@ async def generate_report_text(
             categorization_info += f"- NOT BRANDED Ingredients (not found in database): {', '.join(not_branded_ingredients)}\n"
         categorization_info += "\nUse this categorization information to accurately mark ingredients as BRANDED or NOT BRANDED in the report.\n"
     
+    # Clean and reformat BIS cautions using Claude to make them proper sentences
+    cleaned_bis_cautions = {}
+    if bis_cautions and len(bis_cautions) > 0:
+        print(f"🧹 Cleaning and reformatting BIS cautions with Claude...")
+        if claude_client:
+            for ingredient, cautions in bis_cautions.items():
+                if cautions and len(cautions) > 0:
+                    try:
+                        # Ask Claude to reformat cautions into proper sentences
+                        reformat_prompt = f"""You are a regulatory compliance expert. Below are raw BIS (Bureau of Indian Standards) caution fragments extracted from documents for the ingredient: {ingredient}
+
+RAW CAUTION FRAGMENTS:
+{chr(10).join(f'{i+1}. {caution}' for i, caution in enumerate(cautions))}
+
+TASK: Reform each fragment into a complete, proper sentence that makes regulatory sense. 
+
+REQUIREMENTS:
+1. Each caution must be a complete, grammatically correct sentence
+2. Include all numerical values, percentages, limits, CAS numbers, and regulatory information
+3. Make it clear and professional (e.g., "Maximum concentration: 5% w/w" not just "5% w/w")
+4. If a fragment is incomplete or malformed, reconstruct it into a meaningful sentence based on context
+5. Remove fragments that are just CAS numbers, ingredient names, or incomplete text
+6. Each reformatted caution should be on a separate line, numbered 1., 2., 3., etc.
+
+Return ONLY the reformatted cautions, one per line, numbered. If a fragment cannot be made into a proper sentence, skip it.
+
+REFORMATTED CAUTIONS:"""
+
+                        response = claude_client.messages.create(
+                            model="claude-3-opus-20240229",
+                            max_tokens=2000,
+                            temperature=0.1,
+                            messages=[{"role": "user", "content": reformat_prompt}]
+                        )
+                        
+                        reformatted_text = response.content[0].text.strip()
+                        # Parse the reformatted cautions (one per line, numbered)
+                        reformatted_cautions = []
+                        for line in reformatted_text.split('\n'):
+                            line = line.strip()
+                            if line and (line[0].isdigit() or line.startswith('1.') or line.startswith('2.') or line.startswith('3.') or line.startswith('4.') or line.startswith('5.')):
+                                # Remove numbering and clean
+                                cleaned = re.sub(r'^\d+\.\s*', '', line).strip()
+                                if cleaned and len(cleaned) > 10:  # Must be meaningful
+                                    reformatted_cautions.append(cleaned)
+                        
+                        if reformatted_cautions:
+                            cleaned_bis_cautions[ingredient] = reformatted_cautions
+                            print(f"   ✅ {ingredient}: Reformatted {len(reformatted_cautions)} caution(s) from {len(cautions)} fragments")
+                        else:
+                            # Fallback: use original if reformatting failed
+                            cleaned_bis_cautions[ingredient] = cautions
+                            print(f"   ⚠️ {ingredient}: Reformatting failed, using original {len(cautions)} caution(s)")
+                    except Exception as e:
+                        print(f"   ❌ Error reformatting cautions for {ingredient}: {e}")
+                        # Fallback to original
+                        cleaned_bis_cautions[ingredient] = cautions
+        else:
+            # No Claude client, use original
+            cleaned_bis_cautions = bis_cautions
+            print("⚠️ Claude client not available, using original BIS cautions")
+        
+        # Use cleaned cautions
+        bis_cautions = cleaned_bis_cautions
+    
     # Build BIS cautions context if provided
     bis_cautions_info = ""
     if bis_cautions and len(bis_cautions) > 0:
         total_cautions = sum(len(cautions) for cautions in bis_cautions.values() if cautions)
-        print(f"📋 Including BIS cautions for {len(bis_cautions)} ingredients (total {total_cautions} cautions)")
+        print(f"📋 Including cleaned BIS cautions for {len(bis_cautions)} ingredients (total {total_cautions} cautions)")
         bis_cautions_info = "\n\n" + "=" * 70 + "\n"
         bis_cautions_info += "BUREAU OF INDIAN STANDARDS (BIS) CAUTIONS & REGULATORY NOTES\n"
         bis_cautions_info += "=" * 70 + "\n"
@@ -660,7 +861,7 @@ async def generate_report_text(
     if expected_benefits and expected_benefits.strip():
         expected_benefits_info = f"\n\nEXPECTED BENEFITS FROM USER:\n{expected_benefits.strip()}\n\nCRITICAL: You MUST add a section at the end of the report (after section 8) titled:\n\n9) Expected Benefits Analysis\n\nFor each expected benefit mentioned by the user, analyze:\n- Can this benefit be achieved from this formulation? (YES/NO/PARTIALLY)\n- Which ingredients support this benefit?\n- What is the evidence/mechanism?\n- Any limitations or concerns?\n\nFormat as a table with columns: Expected Benefit | Can Be Achieved? | Supporting Ingredients | Evidence/Mechanism | Limitations\n\nThis is a CRITICAL section - DO NOT SKIP IT!\n"
     
-    user_prompt = f"Generate report for this INCI list:\n{inci_str}{categorization_info}{bis_cautions_info}{expected_benefits_info}\n\nREMEMBER: Every table cell must have content. NO EMPTY CELLS!\n\nCRITICAL FOR BIS CAUTIONS:\n- If an ingredient has multiple cautions listed above, you MUST include ALL of them\n- Each caution must be on a SEPARATE LINE within the BIS Cautions column\n- Number each caution (1., 2., 3., 4., etc.)\n- Do NOT combine multiple cautions into one line\n- Do NOT skip any cautions - if 4 are provided, include all 4\n- Do NOT summarize - include the full text of each caution with exact values\n- Write each caution exactly as provided, preserving all numerical values and limits"
+    user_prompt = f"Generate report for this INCI list:\n{inci_str}{categorization_info}{bis_cautions_info}{expected_benefits_info}\n\nREMEMBER: Every table cell must have content. NO EMPTY CELLS!\n\nCRITICAL FOR BIS CAUTIONS - THIS IS MANDATORY:\n- If BIS cautions are provided above for an ingredient, you MUST include ALL of them - DO NOT SKIP ANY\n- Count the number of cautions provided for each ingredient and ensure ALL are included\n- Each caution must be on a SEPARATE LINE within the BIS Cautions column (use actual line breaks)\n- Number each caution starting with 1., 2., 3., 4., etc. on its own line\n- Do NOT combine multiple cautions into one line separated by commas or semicolons\n- Do NOT skip any cautions - if 4 are provided, include all 4; if 5 are provided, include all 5\n- Do NOT summarize or shorten - include the FULL text of each caution exactly as provided\n- Write each caution exactly as provided, preserving all numerical values, percentages, limits, and exact wording\n- Missing even one caution is a CRITICAL ERROR - verify you have included every single caution listed above"
     
     # Try Claude first
     if claude_client:
@@ -761,6 +962,13 @@ async def generate_report_json(payload: FormulationReportRequest):
             expected_benefits=payload.expectedBenefits
         )
         
+        # Validate BIS cautions are present
+        if payload.bisCautions:
+            validation_results = validate_bis_cautions_in_report(report_text, payload.bisCautions)
+            missing_cautions = [ing for ing, found in validation_results.items() if not found]
+            if missing_cautions:
+                print(f"⚠️ WARNING: BIS cautions validation failed for: {', '.join(missing_cautions)}")
+        
         # Parse report text into JSON structure
         report_json = parse_report_to_json(report_text)
         
@@ -791,9 +999,22 @@ async def generate_report(payload: FormulationReportRequest, request: Request):
         retry_count = 0
         ingredient_count = len(payload.inciList)
         
-        while not validate_report_content(report_text, ingredient_count) and retry_count < max_retries:
+        # Check if BIS cautions are missing
+        bis_cautions_missing = False
+        if payload.bisCautions:
+            validation_results = validate_bis_cautions_in_report(report_text, payload.bisCautions)
+            missing_cautions = [ing for ing, found in validation_results.items() if not found]
+            if missing_cautions:
+                bis_cautions_missing = True
+                print(f"⚠️ BIS cautions validation failed for: {', '.join(missing_cautions)}")
+        
+        # Retry if report content is invalid OR if BIS cautions are missing
+        while (not validate_report_content(report_text, ingredient_count) or bis_cautions_missing) and retry_count < max_retries:
             retry_count += 1
-            print(f"⚠️ Report validation failed (attempt {retry_count}/{max_retries}). Regenerating...")
+            if bis_cautions_missing:
+                print(f"⚠️ BIS cautions missing (attempt {retry_count}/{max_retries}). Regenerating with stronger BIS cautions emphasis...")
+            else:
+                print(f"⚠️ Report validation failed (attempt {retry_count}/{max_retries}). Regenerating...")
             
             # Build categorization info for retry
             retry_categorization = ""
@@ -805,17 +1026,46 @@ async def generate_report(payload: FormulationReportRequest, request: Request):
                     retry_categorization += f"- NOT BRANDED Ingredients (not found in database): {', '.join(payload.notBrandedIngredients)}\n"
                 retry_categorization += "\nUse this categorization information to accurately mark ingredients as BRANDED or NOT BRANDED in the report.\n"
             
-            # Build BIS cautions info for retry
+            # Build BIS cautions info for retry (use same detailed format as initial generation)
             retry_bis_cautions = ""
             if payload.bisCautions and len(payload.bisCautions) > 0:
-                retry_bis_cautions = "\n\nBUREAU OF INDIAN STANDARDS (BIS) CAUTIONS & REGULATORY NOTES:\n"
-                retry_bis_cautions += "=" * 50 + "\n"
+                total_cautions = sum(len(cautions) for cautions in payload.bisCautions.values() if cautions)
+                retry_bis_cautions = "\n\n" + "=" * 70 + "\n"
+                retry_bis_cautions += "BUREAU OF INDIAN STANDARDS (BIS) CAUTIONS & REGULATORY NOTES\n"
+                retry_bis_cautions += "=" * 70 + "\n"
+                retry_bis_cautions += "CRITICAL INSTRUCTIONS FOR BIS CAUTIONS:\n"
+                retry_bis_cautions += "1. You MUST include ALL cautions listed below for each ingredient\n"
+                retry_bis_cautions += "2. Each caution must be on a SEPARATE LINE within the table cell\n"
+                retry_bis_cautions += "3. Number each caution (1., 2., 3., etc.)\n"
+                retry_bis_cautions += "4. Include EXACT numerical values (percentages, limits, concentrations)\n"
+                retry_bis_cautions += "5. Do NOT combine multiple cautions into one line\n"
+                retry_bis_cautions += "6. Do NOT use vague phrases - include actual values\n"
+                retry_bis_cautions += "\n" + "-" * 70 + "\n"
+                retry_bis_cautions += "BIS CAUTIONS BY INGREDIENT:\n"
+                retry_bis_cautions += "-" * 70 + "\n"
                 for ingredient, cautions in payload.bisCautions.items():
                     if cautions and len(cautions) > 0:
-                        retry_bis_cautions += f"\n{ingredient}:\n"
+                        retry_bis_cautions += f"\n[{ingredient}] - {len(cautions)} caution(s) - YOU MUST INCLUDE ALL {len(cautions)} CAUTIONS:\n"
                         for i, caution in enumerate(cautions, 1):
-                            retry_bis_cautions += f"  {i}. {caution}\n"
-                retry_bis_cautions += "\nIMPORTANT: Include these BIS cautions in section 2) Analysis table, in the 'BIS Cautions' column. For each ingredient that has BIS cautions, list them in that column. For ingredients without BIS cautions, write 'no bis cautions'.\n"
+                            retry_bis_cautions += f"  CAUTION {i} of {len(cautions)}: {caution}\n"
+                        retry_bis_cautions += f"  → REMEMBER: This ingredient has {len(cautions)} cautions. Include ALL {len(cautions)} in the report!\n"
+                        retry_bis_cautions += "\n"
+                retry_bis_cautions += "\n" + "=" * 70 + "\n"
+                retry_bis_cautions += "FORMATTING REQUIREMENTS FOR TABLE CELL:\n"
+                retry_bis_cautions += "When you write BIS cautions in the 'BIS Cautions' column of the Analysis table:\n"
+                retry_bis_cautions += "- Put each caution on its own line (use actual line breaks, not commas)\n"
+                retry_bis_cautions += "- Start each line with the number and period (1., 2., 3., etc.)\n"
+                retry_bis_cautions += "- Use actual newline characters to separate cautions within the cell\n"
+                retry_bis_cautions += "- CRITICAL: If an ingredient has multiple cautions, you MUST write each one on a separate line\n"
+                retry_bis_cautions += "- Example format for an ingredient with 4 cautions:\n"
+                retry_bis_cautions += "  Ingredient Name | Category | Functions/Notes | 1. First caution with exact values\n"
+                retry_bis_cautions += "  2. Second caution with exact values\n"
+                retry_bis_cautions += "  3. Third caution with exact values\n"
+                retry_bis_cautions += "  4. Fourth caution with exact values\n"
+                retry_bis_cautions += "- DO NOT write all cautions on one line separated by commas or semicolons\n"
+                retry_bis_cautions += "- DO NOT skip any cautions - include ALL of them\n"
+                retry_bis_cautions += "- DO NOT summarize or combine cautions - list each one separately\n"
+                retry_bis_cautions += "=" * 70 + "\n"
             
             # Build expected benefits info for retry
             retry_expected_benefits = ""
@@ -823,7 +1073,7 @@ async def generate_report(payload: FormulationReportRequest, request: Request):
                 retry_expected_benefits = f"\n\nEXPECTED BENEFITS FROM USER:\n{payload.expectedBenefits.strip()}\n\nCRITICAL: You MUST add a section at the end of the report (after section 8) titled:\n\n9) Expected Benefits Analysis\n\nFor each expected benefit mentioned by the user, analyze:\n- Can this benefit be achieved from this formulation? (YES/NO/PARTIALLY)\n- Which ingredients support this benefit?\n- What is the evidence/mechanism?\n- Any limitations or concerns?\n\nFormat as a table with columns: Expected Benefit | Can Be Achieved? | Supporting Ingredients | Evidence/Mechanism | Limitations\n\nThis is a CRITICAL section - DO NOT SKIP IT!\n"
             
             # Regenerate with stronger prompt
-            retry_prompt = f"{SYSTEM_PROMPT}\n\nCRITICAL: The previous response had empty table cells, missing notes, or missing ingredients. Regenerate with NO EMPTY CELLS, MEANINGFUL NOTES, ALL INGREDIENTS INCLUDED.\n\nGenerate report for this INCI list:\n{inci_str}{retry_categorization}{retry_bis_cautions}{retry_expected_benefits}\n\nEVERY SINGLE TABLE CELL MUST CONTAIN MEANINGFUL TEXT!\nINCLUDE ALL {ingredient_count} INGREDIENTS - DO NOT SKIP ANY!\n\nExample of proper notes:\nAqua: Primary solvent, base ingredient\nGlycerin: Humectant, skin conditioning agent\nNiacinamide: Vitamin B3, brightening active\nProprietary Blend XYZ: Unknown proprietary ingredient, requires manufacturer clarification"
+            retry_prompt = f"{SYSTEM_PROMPT}\n\nCRITICAL: The previous response had empty table cells, missing notes, missing ingredients, or missing BIS cautions. Regenerate with NO EMPTY CELLS, MEANINGFUL NOTES, ALL INGREDIENTS INCLUDED, AND ALL BIS CAUTIONS INCLUDED.\n\nGenerate report for this INCI list:\n{inci_str}{retry_categorization}{retry_bis_cautions}{retry_expected_benefits}\n\nEVERY SINGLE TABLE CELL MUST CONTAIN MEANINGFUL TEXT!\nINCLUDE ALL {ingredient_count} INGREDIENTS - DO NOT SKIP ANY!\n\nCRITICAL FOR BIS CAUTIONS:\n- If BIS cautions are provided above, you MUST include ALL of them for each ingredient\n- Count the cautions provided and ensure ALL are included - missing even one is an error\n- Each caution must be on a SEPARATE LINE with proper numbering (1., 2., 3., etc.)\n- Do NOT combine cautions into one line - each must be on its own line\n- Include the FULL text of each caution with exact numerical values\n\nExample of proper notes:\nAqua: Primary solvent, base ingredient\nGlycerin: Humectant, skin conditioning agent\nNiacinamide: Vitamin B3, brightening active\nProprietary Blend XYZ: Unknown proprietary ingredient, requires manufacturer clarification"
             
             # Try to regenerate with Claude first (same as initial generation)
             if claude_client:
@@ -868,6 +1118,19 @@ async def generate_report(payload: FormulationReportRequest, request: Request):
                             messages=[{"role": "user", "content": retry_prompt}]
                         )
                         report_text = retry_response.content[0].text
+            
+            # Clean the retry response
+            report_text = clean_ai_response(report_text)
+            
+            # Re-validate BIS cautions after retry
+            if payload.bisCautions:
+                validation_results = validate_bis_cautions_in_report(report_text, payload.bisCautions)
+                missing_cautions = [ing for ing, found in validation_results.items() if not found]
+                bis_cautions_missing = len(missing_cautions) > 0
+                if bis_cautions_missing:
+                    print(f"⚠️ BIS cautions still missing after retry: {', '.join(missing_cautions)}")
+                else:
+                    print("✅ All BIS cautions now present in report")
         
         if not validate_report_content(report_text):
             print("❌ Failed to generate valid report after multiple attempts")
