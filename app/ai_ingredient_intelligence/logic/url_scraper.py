@@ -213,15 +213,49 @@ class URLScraper:
             self.driver = None
     
     def _detect_platform(self, url: str) -> str:
-        """Detect the e-commerce platform from URL"""
+        """Detect the e-commerce platform from URL - extracts actual platform name from domain"""
+        from urllib.parse import urlparse
         url_lower = url.lower()
+        
+        # Check for known platforms first
         if "amazon" in url_lower:
             return "amazon"
         elif "nykaa" in url_lower:
             return "nykaa"
         elif "flipkart" in url_lower:
             return "flipkart"
+        elif "myntra" in url_lower:
+            return "myntra"
+        elif "purplle" in url_lower:
+            return "purplle"
+        elif "beautybay" in url_lower:
+            return "beautybay"
+        elif "sephora" in url_lower:
+            return "sephora"
+        elif "ulta" in url_lower:
+            return "ulta"
+        elif "cultbeauty" in url_lower:
+            return "cultbeauty"
+        elif "lookfantastic" in url_lower:
+            return "lookfantastic"
         else:
+            # Extract domain name from URL to detect actual platform instead of generic
+            try:
+                parsed = urlparse(url)
+                domain = parsed.netloc.lower()
+                # Remove www. prefix
+                if domain.startswith("www."):
+                    domain = domain[4:]
+                # Extract main domain (e.g., "example.com" -> "example")
+                domain_parts = domain.split(".")
+                if len(domain_parts) >= 2:
+                    # Get the main domain name (second to last part, or last if only one)
+                    platform_name = domain_parts[-2] if len(domain_parts) > 2 else domain_parts[0]
+                    # Return the actual platform name instead of "generic"
+                    return platform_name
+            except:
+                pass
+            # Fallback to generic only if we can't parse the URL
             return "generic"
     
     async def _scrape_amazon(self, driver: webdriver.Chrome) -> str:
@@ -536,39 +570,184 @@ class URLScraper:
             return ""
     
     async def _scrape_generic(self, driver: webdriver.Chrome) -> str:
-        """Scrape ingredients from generic e-commerce page"""
+        """Scrape ingredients from generic e-commerce page - clicks accordions to find ingredient lists"""
         try:
             await asyncio.sleep(2)  # Give JS time to render
             
             loop = asyncio.get_event_loop()
             
             def scrape():
-                # Get all text content
-                body_text = driver.find_element(By.TAG_NAME, "body").text
+                import time
+                from bs4 import BeautifulSoup
                 
-                # Look for common ingredient-related keywords
-                keywords = ["ingredient", "composition", "formula", "contains", "inci"]
+                wait = WebDriverWait(driver, 10)
+                text_parts = []
                 
-                # Try to find sections with ingredient keywords
-                lines = body_text.split("\n")
-                relevant_lines = []
-                in_ingredient_section = False
+                # FIRST: Try to click on accordions/buttons that contain ingredient-related keywords
+                ingredient_keywords = [
+                    "ingredient", "ingredients", "key ingredient", "key ingredients",
+                    "inci", "composition", "formula", "formulation", "contains",
+                    "ingredient list", "full ingredient", "ingredient list"
+                ]
                 
-                for line in lines:
-                    line_lower = line.lower()
-                    if any(keyword in line_lower for keyword in keywords):
-                        in_ingredient_section = True
-                        relevant_lines.append(line)
-                    elif in_ingredient_section and line.strip():
-                        relevant_lines.append(line)
-                        if len(relevant_lines) > 50:  # Limit to prevent too much text
-                            break
+                clicked_elements = set()  # Track clicked elements to avoid duplicates
                 
-                if relevant_lines:
-                    return "\n".join(relevant_lines)
-                else:
-                    # Fallback: return first 5000 characters of body text
-                    return body_text[:5000]
+                try:
+                    # Scroll through the page to find accordion elements
+                    driver.execute_script("window.scrollTo(0, 0);")
+                    time.sleep(1)
+                    
+                    # Find all clickable elements that might be accordions/buttons
+                    # Look for buttons, divs, spans, h3, h4, etc. that contain ingredient keywords
+                    selectors_to_try = [
+                        "button", "div[role='button']", "a[role='button']",
+                        "h3", "h4", "h5", "[class*='accordion']", "[class*='Accordion']",
+                        "[class*='collapse']", "[class*='expand']", "[class*='toggle']",
+                        "[aria-expanded]", "[data-toggle]", "[data-target]"
+                    ]
+                    
+                    for selector in selectors_to_try:
+                        try:
+                            elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                            for element in elements:
+                                try:
+                                    # Get element text and check if it contains ingredient keywords
+                                    element_text = element.text.strip().lower()
+                                    element_id = element.id or element.get_attribute("id") or ""
+                                    
+                                    # Skip if already clicked
+                                    if element_id in clicked_elements:
+                                        continue
+                                    
+                                    # Check if element text contains ingredient keywords
+                                    if any(keyword in element_text for keyword in ingredient_keywords):
+                                        # Scroll element into view
+                                        driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", element)
+                                        time.sleep(0.5)
+                                        
+                                        # Try to click the element
+                                        try:
+                                            # Try JavaScript click first (more reliable)
+                                            driver.execute_script("arguments[0].click();", element)
+                                            clicked_elements.add(element_id)
+                                            print(f"Clicked accordion/button: {element_text[:50]}")
+                                            time.sleep(1.5)  # Wait for content to expand
+                                        except:
+                                            # Try regular click as fallback
+                                            try:
+                                                element.click()
+                                                clicked_elements.add(element_id)
+                                                print(f"Clicked accordion/button (regular): {element_text[:50]}")
+                                                time.sleep(1.5)
+                                            except:
+                                                pass
+                                except:
+                                    continue
+                        except:
+                            continue
+                    
+                    # Also try XPath to find elements containing ingredient keywords
+                    for keyword in ingredient_keywords:
+                        try:
+                            xpath = f"//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{keyword}')]"
+                            elements = driver.find_elements(By.XPATH, xpath)
+                            for element in elements:
+                                try:
+                                    element_id = element.id or element.get_attribute("id") or ""
+                                    if element_id in clicked_elements:
+                                        continue
+                                    
+                                    # Check if it's a clickable element
+                                    tag_name = element.tag_name.lower()
+                                    if tag_name in ['button', 'a', 'div', 'span', 'h3', 'h4', 'h5']:
+                                        driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", element)
+                                        time.sleep(0.5)
+                                        try:
+                                            driver.execute_script("arguments[0].click();", element)
+                                            clicked_elements.add(element_id)
+                                            print(f"Clicked element via XPath: {keyword}")
+                                            time.sleep(1.5)
+                                        except:
+                                            pass
+                                except:
+                                    continue
+                        except:
+                            continue
+                    
+                except Exception as e:
+                    print(f"Error clicking accordions: {e}")
+                
+                # SECOND: Extract text from the page (after clicking accordions)
+                try:
+                    # Wait a bit for all accordions to expand
+                    time.sleep(2)
+                    
+                    # Get all text content
+                    body_text = driver.find_element(By.TAG_NAME, "body").text
+                    
+                    # Look for sections with ingredient keywords
+                    keywords = ["ingredient", "composition", "formula", "contains", "inci"]
+                    lines = body_text.split("\n")
+                    relevant_lines = []
+                    in_ingredient_section = False
+                    
+                    for line in lines:
+                        line_lower = line.lower()
+                        if any(keyword in line_lower for keyword in keywords):
+                            in_ingredient_section = True
+                            relevant_lines.append(line)
+                        elif in_ingredient_section and line.strip():
+                            relevant_lines.append(line)
+                            if len(relevant_lines) > 100:  # Increased limit
+                                break
+                    
+                    if relevant_lines:
+                        text_parts.append("\n".join(relevant_lines))
+                    
+                    # Also get visible text from expanded sections
+                    try:
+                        # Look for common ingredient section selectors
+                        ingredient_selectors = [
+                            "[class*='ingredient']", "[id*='ingredient']",
+                            "[class*='composition']", "[id*='composition']",
+                            "[class*='inci']", "[id*='inci']"
+                        ]
+                        
+                        for selector in ingredient_selectors:
+                            try:
+                                elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                                for element in elements:
+                                    text = element.text.strip()
+                                    if text and len(text) > 20:
+                                        text_parts.append(text)
+                            except:
+                                continue
+                    except:
+                        pass
+                    
+                except Exception as e:
+                    print(f"Error extracting text: {e}")
+                
+                # THIRD: Fallback - get body text if nothing found
+                if not text_parts:
+                    try:
+                        body_text = driver.find_element(By.TAG_NAME, "body").text
+                        # Return first 5000 characters
+                        return body_text[:5000]
+                    except:
+                        return ""
+                
+                # Combine all text parts
+                result = "\n\n".join(text_parts) if text_parts else ""
+                if not result or len(result.strip()) < 10:
+                    # Final fallback
+                    try:
+                        body_text = driver.find_element(By.TAG_NAME, "body").text
+                        return body_text[:5000]
+                    except:
+                        return ""
+                
+                return result
             
             return await loop.run_in_executor(None, scrape)
         except Exception as e:
