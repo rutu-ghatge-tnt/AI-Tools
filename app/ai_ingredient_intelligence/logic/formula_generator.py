@@ -766,11 +766,24 @@ async def validate_and_enrich_claude_ingredients(
         # Use database cost if available, otherwise use Claude's estimate
         cost_per_kg = db_cost_per_kg if db_cost_per_kg else ing.get("estimated_cost_per_kg", 3000)
         
-        # Check if hero ingredient and cost compatibility
-        is_hero = ing.get("is_hero", False) or any(
-            hero.lower() in ingredient_name.lower() or ingredient_name.lower() in hero.lower()
-            for hero in hero_ingredients
-        )
+        # Check if hero ingredient - more thorough matching
+        is_hero = False
+        if ing.get("is_hero", False):
+            is_hero = True
+        elif hero_ingredients:
+            ingredient_name_lower = ingredient_name.lower()
+            inci_lower = " ".join(inci_names).lower()
+            
+            for hero in hero_ingredients:
+                hero_lower = hero.lower().strip()
+                # Check if hero name matches ingredient name or INCI
+                if (hero_lower in ingredient_name_lower or 
+                    ingredient_name_lower in hero_lower or
+                    any(hero_lower in inci for inci in inci_names) or
+                    any(inci in hero_lower for inci in inci_names)):
+                    is_hero = True
+                    print(f"⭐ Hero ingredient matched: '{hero}' -> '{ingredient_name}'")
+                    break
         
         if is_hero:
             # Calculate cost per 100g
@@ -827,6 +840,67 @@ async def validate_and_enrich_claude_ingredients(
         func_cat_ids = db_ingredient.get("functional_category_ids", [])
         func_categories = await get_functional_category_names(func_cat_ids) if func_cat_ids else ing.get("functional_categories", [])
         
+        # Get function - prioritize database description, then Claude, then functional category
+        function = "Other"
+        db_description = db_ingredient.get("description", "").lower()
+        claude_function = ing.get("function", "").lower()
+        
+        # Try to extract function from database description
+        if db_description:
+            if any(word in db_description for word in ["brightening", "lightening", "whitening", "skin lightening"]):
+                function = "Brightening"
+            elif any(word in db_description for word in ["moistur", "hydrat", "humectant"]):
+                function = "Humectant"
+            elif any(word in db_description for word in ["antioxidant", "vitamin c", "vitamin e"]):
+                function = "Antioxidant"
+            elif any(word in db_description for word in ["preserv", "antimicrobial"]):
+                function = "Preservative"
+            elif any(word in db_description for word in ["emollient", "soften", "smooth"]):
+                function = "Emollient"
+            elif any(word in db_description for word in ["thicken", "viscosity", "gum", "polymer"]):
+                function = "Thickener"
+            elif any(word in db_description for word in ["ph", "adjust", "acid", "base"]):
+                function = "pH Adjuster"
+            elif any(word in db_description for word in ["active", "treatment", "therapeutic", "anti"]):
+                function = "Active"
+            elif any(word in db_description for word in ["solvent", "water", "aqua"]):
+                function = "Solvent"
+            elif any(word in db_description for word in ["exfoliant", "peel", "aha", "bha"]):
+                function = "Exfoliant"
+            elif any(word in db_description for word in ["emulsifier", "emulsify"]):
+                function = "Emulsifier"
+        
+        # If still "Other", try Claude's function field
+        if function == "Other" and claude_function:
+            function = ing.get("function", "Other")
+        
+        # If still "Other", use first functional category
+        if function == "Other" and func_categories:
+            # Map functional category to simpler function name
+            first_cat = func_categories[0].lower()
+            if "humectant" in first_cat:
+                function = "Humectant"
+            elif "emollient" in first_cat:
+                function = "Emollient"
+            elif "preserv" in first_cat:
+                function = "Preservative"
+            elif "thickener" in first_cat or "viscosity" in first_cat:
+                function = "Thickener"
+            elif "antioxidant" in first_cat:
+                function = "Antioxidant"
+            elif "skin lightening" in first_cat or "brightening" in first_cat:
+                function = "Brightening"
+            elif "active" in first_cat:
+                function = "Active"
+            elif "solvent" in first_cat:
+                function = "Solvent"
+            elif "exfoliant" in first_cat:
+                function = "Exfoliant"
+            elif "emulsifier" in first_cat:
+                function = "Emulsifier"
+            else:
+                function = func_categories[0]  # Use category name as-is
+        
         # Build validated ingredient
         validated_ing = {
             "ingredient_id": str(db_ingredient["_id"]),
@@ -836,6 +910,7 @@ async def validate_and_enrich_claude_ingredients(
             "estimated_cost_per_kg": cost_per_kg,
             "usage_range": ing.get("usage_range", {"min": 0.1, "max": 5.0}),
             "description": db_ingredient.get("description", ing.get("function", "")),
+            "function": function,  # Add function field
             "is_hero": is_hero,
             "supplier_id": str(supplier_id) if supplier_id else None
         }
@@ -857,7 +932,7 @@ async def select_ingredients_by_benefits(
     exclusions: List[str],
     hero_ingredients: List[str],
     cost_target: Dict[str, float]
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, str]]]:
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, str]], List[Dict], List[Dict]]:
     """
     Select ingredients based on benefits using Claude AI, validated against MongoDB
     
@@ -878,7 +953,7 @@ async def select_ingredients_by_benefits(
     """
     if not claude_client:
         print("⚠️ Claude not available, using fallback template ingredients")
-        return [], []
+        return [], [], [], []
     
     # Build prompt for Claude to select ingredients
     user_prompt = build_ingredient_selection_prompt(benefits, exclusions, hero_ingredients, cost_target)
@@ -905,14 +980,20 @@ async def select_ingredients_by_benefits(
         if not result_text:
             raise ValueError("Empty text in Claude response")
         
-        # Parse Claude's ingredient selection
-        claude_ingredients = parse_claude_ingredient_selection(result_text, benefits, exclusions, hero_ingredients)
+        # Parse Claude's full response (ingredients, phases, insights, warnings)
+        claude_response = parse_claude_ingredient_selection(result_text, benefits, exclusions, hero_ingredients)
+        
+        claude_ingredients = claude_response.get("ingredients", [])
+        claude_phases = claude_response.get("phases", [])
+        claude_insights = claude_response.get("insights", [])
+        claude_warnings = claude_response.get("warnings", [])
         
         print(f"✅ Claude selected {len(claude_ingredients)} ingredients")
+        print(f"   Phases: {len(claude_phases)}, Insights: {len(claude_insights)}, Warnings: {len(claude_warnings)}")
         print(f"🔍 Validating ingredients against database...")
         
         # Validate against MongoDB and generate warnings
-        validated_ingredients, warnings = await validate_and_enrich_claude_ingredients(
+        validated_ingredients, validation_warnings = await validate_and_enrich_claude_ingredients(
             claude_ingredients,
             benefits,
             exclusions,
@@ -921,16 +1002,19 @@ async def select_ingredients_by_benefits(
         )
         
         print(f"✅ {len(validated_ingredients)} ingredients validated and found in database")
-        if warnings:
-            print(f"⚠️ Generated {len(warnings)} warnings")
         
-        return validated_ingredients, warnings
+        # Combine Claude warnings with validation warnings
+        all_warnings = claude_warnings + validation_warnings
+        if all_warnings:
+            print(f"⚠️ Generated {len(all_warnings)} warnings")
+        
+        return validated_ingredients, all_warnings, claude_phases, claude_insights
         
     except Exception as e:
         print(f"⚠️ Error getting ingredients from Claude: {e}")
         import traceback
         traceback.print_exc()
-        return [], []
+        return [], [], [], []
 
 
 def build_exclusion_query(exclusions: List[str]) -> Dict[str, Any]:
@@ -1361,6 +1445,7 @@ CRITICAL RULES:
 4. Consider cost targets
 5. Include necessary base ingredients (water, preservatives, pH adjusters)
 6. Select appropriate functional ingredients (humectants, emollients, actives, etc.)
+7. Organize ingredients into phases (Water Phase, Active Phase, Preservation, etc.)
 
 OUTPUT FORMAT (JSON):
 {
@@ -1372,7 +1457,35 @@ OUTPUT FORMAT (JSON):
             "estimated_cost_per_kg": 5000,
             "usage_range": {"min": 2, "max": 5},
             "function": "Brightening agent",
-            "is_hero": false
+            "is_hero": false,
+            "phase": "B"
+        }
+    ],
+    "phases": [
+        {
+            "id": "A",
+            "name": "Water Phase",
+            "temp": "70°C",
+            "ingredients": ["Purified Water", "Glycerin"]
+        },
+        {
+            "id": "B",
+            "name": "Active Phase",
+            "temp": "40°C",
+            "ingredients": ["Niacinamide", "3-O-Ethyl Ascorbic Acid"]
+        }
+    ],
+    "insights": [
+        {
+            "icon": "💡",
+            "title": "Niacinamide",
+            "text": "Effective at 2-5% for brightening and oil control"
+        }
+    ],
+    "warnings": [
+        {
+            "type": "info",
+            "text": "pH must be maintained at 5.0-6.5 for optimal stability"
         }
     ],
     "reasoning": "Brief explanation of ingredient choices"
@@ -1380,11 +1493,14 @@ OUTPUT FORMAT (JSON):
 
 IMPORTANT:
 - Use standard INCI names
-- Provide realistic cost estimates in ₹/kg
+- Provide realistic cost estimates in ₹/kg (Indian Rupees per kilogram)
 - Provide safe usage percentage ranges
 - Mark hero ingredients with is_hero: true
 - Include at least 5-10 ingredients for a complete formula
 - Always include: Water (Aqua), Preservative, pH Adjuster
+- Organize into phases: Water Phase (A), Active Phase (B), Preservation (C/D)
+- Generate insights explaining key ingredient choices
+- Add warnings for important considerations (pH, stability, etc.)
 """
 
 
@@ -1457,75 +1573,36 @@ def parse_claude_ingredient_selection(
     try:
         ai_data = json.loads(json_match.group())
         
-        ingredients = []
-        for ing_data in ai_data.get("ingredients", []):
-            # Validate required fields
-            if not ing_data.get("ingredient_name"):
-                continue
-            
-            # Get INCI names
-            inci_names = ing_data.get("inci_names", [])
-            if not inci_names:
-                # Use ingredient name as INCI if not provided
-                inci_names = [ing_data["ingredient_name"]]
-            
-            # Check exclusions
-            should_exclude = False
-            for exclusion in exclusions:
-                exclusion_lower = exclusion.lower()
-                ing_name_lower = ing_data["ingredient_name"].lower()
-                inci_lower = " ".join(inci_names).lower()
-                
-                if "silicone" in exclusion_lower and any(s in inci_lower for s in ["silicone", "dimethicone", "cyclomethicone"]):
-                    should_exclude = True
-                    break
-                if "paraben" in exclusion_lower and "paraben" in inci_lower:
-                    should_exclude = True
-                    break
-                if "alcohol" in exclusion_lower and any(a in inci_lower for a in ["alcohol", "ethanol"]):
-                    should_exclude = True
-                    break
-                if "fragrance" in exclusion_lower and any(f in inci_lower for f in ["fragrance", "parfum"]):
-                    should_exclude = True
-                    break
-            
-            if should_exclude:
-                continue
-            
-            # Check if hero ingredient
-            is_hero = ing_data.get("is_hero", False)
-            if not is_hero and hero_ingredients:
-                ing_name_lower = ing_data["ingredient_name"].lower()
-                for hero in hero_ingredients:
-                    if hero.lower() in ing_name_lower or ing_name_lower in hero.lower():
-                        is_hero = True
-                        break
-            
-            # Build ingredient dict
-            ingredient = {
-                "ingredient_id": f"claude_{ing_data['ingredient_name'].lower().replace(' ', '_')}",
-                "ingredient_name": ing_data["ingredient_name"],
-                "inci_names": inci_names,
-                "functional_categories": ing_data.get("functional_categories", ["Other"]),
-                "estimated_cost_per_kg": ing_data.get("estimated_cost_per_kg", 3000),
-                "usage_range": ing_data.get("usage_range", {"min": 0.1, "max": 5.0}),
-                "description": ing_data.get("function", ""),
-                "is_hero": is_hero
-            }
-            
-            ingredients.append(ingredient)
-        
-        return ingredients
+        # Return full structure including phases, insights, warnings
+        return {
+            "ingredients": ai_data.get("ingredients", []),
+            "phases": ai_data.get("phases", []),
+            "insights": ai_data.get("insights", []),
+            "warnings": ai_data.get("warnings", []),
+            "reasoning": ai_data.get("reasoning", "")
+        }
         
     except json.JSONDecodeError as e:
         print(f"⚠️ Error parsing Claude JSON: {e}")
         print(f"Response text: {response_text[:500]}")
-        return []
+        return {
+            "ingredients": [],
+            "phases": [],
+            "insights": [],
+            "warnings": [],
+            "reasoning": ""
+        }
     except Exception as e:
         print(f"⚠️ Error processing Claude ingredient selection: {e}")
         import traceback
         traceback.print_exc()
-        return []
+        return {
+            "ingredients": [],
+            "phases": [],
+            "insights": [],
+            "warnings": [],
+            "reasoning": ""
+        }
 
 
 # ============================================================================
@@ -1944,7 +2021,7 @@ async def generate_formula(wish_data: Dict) -> Dict[str, Any]:
     template = FORMULATION_TEMPLATES.get(product_type, FORMULATION_TEMPLATES["serum"])
     
     # Step 2: Select ingredients using Claude (validated against MongoDB)
-    selected_ingredients, ingredient_warnings = await select_ingredients_by_benefits(
+    selected_ingredients, ingredient_warnings, claude_phases, claude_insights = await select_ingredients_by_benefits(
         benefits=wish_data.get("benefits", []),
         exclusions=wish_data.get("exclusions", []),
         hero_ingredients=wish_data.get("heroIngredients", []),
@@ -1986,7 +2063,12 @@ async def generate_formula(wish_data: Dict) -> Dict[str, Any]:
     )
     
     # Step 5: Organize into phases
-    phases = organize_into_phases(optimized, template)
+    # Use Claude's phases if provided, otherwise organize from template
+    if claude_phases and len(claude_phases) > 0:
+        # Use Claude's phase structure, but populate with optimized ingredients (which have percentages)
+        phases = organize_claude_phases_with_validated_ingredients(claude_phases, optimized, template)
+    else:
+        phases = organize_into_phases(optimized, template)
     
     if not phases:
         raise ValueError("No phases generated. Check ingredient allocation.")
@@ -2038,10 +2120,111 @@ async def generate_formula(wish_data: Dict) -> Dict[str, Any]:
         "texture": get_texture_description(wish_data.get("texture", "serum")),
         "shelfLife": "12 months",  # Default, could be calculated
         "phases": phases,
-        "insights": ai_metadata.get("insights", []),
+        "insights": claude_insights + ai_metadata.get("insights", []),
         "warnings": ingredient_warnings + ai_metadata.get("warnings", []) + build_validation_warnings(validation),
         "compliance": validation.get("compliance", {})
     }
+
+
+def organize_claude_phases_with_validated_ingredients(
+    claude_phases: List[Dict],
+    optimized_ingredients: List[Dict],
+    template: Dict
+) -> List[Dict]:
+    """
+    Organize Claude's phase structure with optimized ingredients (which have percentages)
+    
+    Maps Claude's phase structure to optimized ingredients and formats for frontend
+    """
+    phases = []
+    phase_colors = {
+        "A": "from-blue-500 to-cyan-500",
+        "B": "from-amber-500 to-orange-500",
+        "C": "from-green-500 to-emerald-500",
+        "D": "from-purple-500 to-pink-500"
+    }
+    
+    # Create a map of ingredient names to optimized ingredients (which have percentages)
+    optimized_map = {}
+    for ing in optimized_ingredients:
+        name = ing.get("name") or ing.get("ingredient_name", "")
+        if name:
+            optimized_map[name.lower()] = ing
+    
+    for claude_phase in claude_phases:
+        phase_id = claude_phase.get("id", "A")
+        phase_name = claude_phase.get("name", "Phase")
+        phase_temp = claude_phase.get("temp", "room")
+        phase_ingredient_names = claude_phase.get("ingredients", [])
+        
+        phase_ingredients = []
+        for ing_name in phase_ingredient_names:
+            # Find matching optimized ingredient (which has percentages)
+            ing_lower = ing_name.lower()
+            matched_ing = None
+            
+            # Try exact match first
+            if ing_lower in optimized_map:
+                matched_ing = optimized_map[ing_lower]
+            else:
+                # Try partial match
+                for key, ing in optimized_map.items():
+                    if ing_lower in key or key in ing_lower:
+                        matched_ing = ing
+                        break
+            
+            if matched_ing:
+                # Format ingredient for frontend
+                ing_name_final = matched_ing.get("name") or matched_ing.get("ingredient_name", ing_name)
+                ing_inci = matched_ing.get("inci") or matched_ing.get("original_inci_name", "")
+                if not ing_inci:
+                    inci_names = matched_ing.get("inci_names", [])
+                    ing_inci = inci_names[0] if inci_names else ing_name_final
+                
+                # Get percentage (should be set by allocation)
+                ing_percent = matched_ing.get("percent", 0.0)
+                if isinstance(ing_percent, str):
+                    if ing_percent.lower() in ["q.s.", "qs", "quantum satis"]:
+                        pass  # Keep as string
+                    else:
+                        try:
+                            ing_percent = float(ing_percent)
+                        except (ValueError, TypeError):
+                            ing_percent = 0.0
+                else:
+                    ing_percent = float(ing_percent) if ing_percent else 0.0
+                
+                # Get cost per 100g
+                ing_cost = matched_ing.get("cost", 300.0)
+                if ing_cost > 1000:  # If it's still in cost per kg format, convert
+                    ing_cost = ing_cost / 10.0
+                
+                # Get function
+                ing_function = matched_ing.get("function", "Other")
+                if not ing_function or ing_function == "Other":
+                    func_cats = matched_ing.get("functional_categories", [])
+                    if func_cats:
+                        ing_function = func_cats[0] if isinstance(func_cats, list) else func_cats
+                
+                phase_ingredients.append({
+                    "name": ing_name_final,
+                    "inci": ing_inci,
+                    "percent": ing_percent,
+                    "cost": float(ing_cost),
+                    "function": ing_function,
+                    "hero": bool(matched_ing.get("hero", matched_ing.get("is_hero", False)))
+                })
+        
+        if phase_ingredients:
+            phases.append({
+                "id": phase_id,
+                "name": phase_name,
+                "temp": phase_temp,
+                "color": phase_colors.get(phase_id, "from-slate-500 to-slate-600"),
+                "ingredients": phase_ingredients
+            })
+    
+    return phases
 
 
 def organize_into_phases(ingredients: List[Dict], template: Dict) -> List[Dict]:
@@ -2088,12 +2271,22 @@ def organize_into_phases(ingredients: List[Dict], template: Dict) -> List[Dict]:
                 else:
                     ing_percent = float(ing_percent) if ing_percent else 0.0
                 
+                # Get function - prioritize from ingredient data
+                ing_function = ing.get("function", "Other")
+                if not ing_function or ing_function == "Other":
+                    # Try to get from functional categories
+                    func_cats = ing.get("functional_categories", [])
+                    if func_cats:
+                        ing_function = func_cats[0] if isinstance(func_cats, list) else func_cats
+                    else:
+                        ing_function = "Other"
+                
                 ingredient_dict = {
                     "name": ing_name,
                     "inci": ing_inci,
                     "percent": ing_percent,
                     "cost": float(ing_cost),
-                    "function": ing.get("function", "Other"),
+                    "function": ing_function,
                     "hero": bool(ing.get("hero", ing.get("is_hero", False)))
                 }
                 phase_ingredients.append(ingredient_dict)
