@@ -116,7 +116,8 @@ def _parse_single_string(inci_str: str) -> List[str]:
         normalized = re.sub(pattern_and_word, protect_combination, normalized, flags=re.IGNORECASE)
         
         # Now split by other separators (comma, semicolon, pipe, newline, hyphen with spaces)
-        ingredients = re.split(r'[,;\n|]+|\s+-\s+', normalized)
+        # CRITICAL: Only split on commas followed by space or at end of string, not commas in ingredient names (e.g., "1,2-Hexanediol")
+        ingredients = re.split(r'(?:,\s+|,\s*$|[;\n|]+|\s+-\s+)', normalized)
         
         # Restore combinations and clean
         result = []
@@ -151,13 +152,13 @@ def _parse_single_string(inci_str: str) -> List[str]:
         normalized = re.sub(r'(?<=\w)\s*&\s*(?=\w)', ',', normalized)
         
         # Split by multiple delimiters:
-        # - Comma (,)
+        # - Comma (,) only when followed by space or at end of string (not in ingredient names like "1,2-Hexanediol")
         # - Semicolon (;)
         # - Pipe (|)
         # - Newline (\n)
         # - Hyphen (-) when used as separator (with spaces around it, like "Water - Glycerin")
         #   Only split on hyphens that have spaces around them to avoid splitting ingredient names like "Alpha-Hydroxy Acid"
-        ingredients = re.split(r'[,;\n|]+|\s+-\s+', normalized)
+        ingredients = re.split(r'(?:,\s+|,\s*$|[;\n|]+|\s+-\s+)', normalized)
         
         # Clean and filter
         ingredients = [ing.strip() for ing in ingredients if ing.strip()]

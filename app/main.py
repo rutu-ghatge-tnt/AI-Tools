@@ -14,9 +14,35 @@ warnings.filterwarnings('ignore', message='.*Feedback manager.*')
 warnings.filterwarnings('ignore', category=UserWarning, module='langchain')
 
 from fastapi import FastAPI
-from app.chatbot.api import router as api_router
+
+# Import chatbot router (with error handling for missing dependencies)
+try:
+    from app.chatbot.api import router as api_router
+except ImportError as e:
+    print(f"Warning: Could not import chatbot router: {e}")
+    print("   Chatbot API will not be available. This is not critical.")
+    api_router = None
+
 from app.ai_ingredient_intelligence.api.analyze_inci import router as analyze_inci_router   # ✅ import here
-from app.ai_ingredient_intelligence.api.formulation_report import router as formulation_report_router
+
+# Import formulation report router (with error handling for missing dependencies)
+try:
+    from app.ai_ingredient_intelligence.api.formulation_report import router as formulation_report_router
+except ImportError as e:
+    print(f"Warning: Could not import formulation_report router: {e}")
+    print("   Formulation Report API will not be available. This is not critical.")
+    formulation_report_router = None
+
+from app.ai_ingredient_intelligence.api.cost_calculator import router as cost_calculator_router
+from app.ai_ingredient_intelligence.api.ingredient_search import router as ingredient_search_router
+
+# Import Formula Generation router (with error handling for missing dependencies)
+try:
+    from app.ai_ingredient_intelligence.api.formula_generation import router as formula_generation_router
+except ImportError as e:
+    print(f"Warning: Could not import formula_generation router: {e}")
+    print("   Formula Generation API will not be available. This is not critical.")
+    formula_generation_router = None
 # from app.product_listing_image_extraction.route import router as image_extractor_router  # Commented out - module doesn't exist
 from pathlib import Path
 
@@ -28,7 +54,7 @@ sys.path.insert(0, str(face_analysis_path))
 try:
     from face_analysis.backend.api.main import router as face_analysis_router  # type: ignore
 except ImportError as e:
-    print(f"⚠️ Warning: Could not import face_analysis router: {e}")
+    print(f"Warning: Could not import face_analysis router: {e}")
     print("   Face Analysis API will not be available. This is not critical.")
     face_analysis_router = None
 from fastapi.middleware.cors import CORSMiddleware
@@ -60,13 +86,31 @@ app.add_middleware(
 )
 
 # ✅ Existing chatbot API
-app.include_router(api_router, prefix="/api")
+if api_router is not None:
+    app.include_router(api_router, prefix="/api")
+else:
+    print("Warning: Chatbot router not available, skipping registration")
 
 # ✅ Add analyze-inci API
 app.include_router(analyze_inci_router, prefix="/api")   # <--- added
 
 # ✅ Add formulation report API
-app.include_router(formulation_report_router, prefix="/api")
+if formulation_report_router is not None:
+    app.include_router(formulation_report_router, prefix="/api")
+else:
+    print("Warning: Formulation Report router not available, skipping registration")
+
+# ✅ Add cost calculator API
+app.include_router(cost_calculator_router, prefix="/api")
+
+# ✅ Add ingredient search API
+app.include_router(ingredient_search_router, prefix="/api")
+
+# ✅ Add formula generation API
+if formula_generation_router is not None:
+    app.include_router(formula_generation_router, prefix="/api")
+else:
+    print("Warning: Formula Generation router not available, skipping registration")
 
 # ✅ New image-to-JSON API - Commented out - module doesn't exist
 # app.include_router(image_extractor_router, prefix="/api")
@@ -75,7 +119,7 @@ app.include_router(formulation_report_router, prefix="/api")
 if face_analysis_router is not None:
     app.include_router(face_analysis_router, prefix="/api/face-analysis", tags=["Face Analysis"])
 else:
-    print("⚠️ Face Analysis router not available, skipping registration")
+    print("Warning: Face Analysis router not available, skipping registration")
 
 @app.on_event("startup")
 async def create_indexes():
@@ -85,7 +129,7 @@ async def create_indexes():
         await distributor_col.create_index("ingredientName")
         await distributor_col.create_index("createdAt")
         await distributor_col.create_index([("ingredientName", 1), ("createdAt", -1)])
-        print("✅ Distributor collection indexes created successfully")
+        print("Distributor collection indexes created successfully")
         
         # Create indexes for decode history collection
         from app.ai_ingredient_intelligence.db.collections import decode_history_col, compare_history_col
@@ -93,16 +137,16 @@ async def create_indexes():
         await decode_history_col.create_index("created_at")
         await decode_history_col.create_index([("user_id", 1), ("created_at", -1)])
         await decode_history_col.create_index([("user_id", 1), ("name", "text")])
-        print("✅ Decode history collection indexes created successfully")
+        print("Decode history collection indexes created successfully")
         
         # Create indexes for compare history collection
         await compare_history_col.create_index("user_id")
         await compare_history_col.create_index("created_at")
         await compare_history_col.create_index([("user_id", 1), ("created_at", -1)])
         await compare_history_col.create_index([("user_id", 1), ("name", "text")])
-        print("✅ Compare history collection indexes created successfully")
+        print("Compare history collection indexes created successfully")
     except Exception as e:
-        print(f"⚠️ Warning: Could not create indexes: {e}")
+        print(f"Warning: Could not create indexes: {e}")
         # Don't fail startup if indexes already exist
 
 @app.get("/")

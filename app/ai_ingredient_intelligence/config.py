@@ -14,6 +14,9 @@ GOOGLE_CLOUD_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT")  # Optional - not requi
 # Anthropic Claude API Configuration
 CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
 
+# Presenton API Configuration
+PRESENTON_API_KEY = os.getenv("PRESENTON_API_KEY")
+
 # MongoDB Configuration
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 MONGODB_DB = os.getenv("MONGODB_DB", "skinbb")

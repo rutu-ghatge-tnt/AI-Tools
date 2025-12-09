@@ -94,6 +94,77 @@ class CompareProductsResponse(BaseModel):
     processing_time: float = Field(..., description="Time taken for comparison (in seconds)")
 
 
+# ============================================================================
+# FORMULA GENERATION SCHEMAS
+# ============================================================================
+
+class CreateWishRequest(BaseModel):
+    """Request schema for Create A Wish formula generation"""
+    productType: str = Field(..., description="Product type: serum, cream, lotion, toner, etc.")
+    benefits: List[str] = Field(default_factory=list, description="List of desired benefits")
+    exclusions: List[str] = Field(default_factory=list, description="List of exclusions (e.g., Silicone-free)")
+    heroIngredients: List[str] = Field(default_factory=list, description="Specific ingredients to include")
+    costMin: Optional[float] = Field(None, description="Minimum cost target per 100g (₹)")
+    costMax: Optional[float] = Field(None, description="Maximum cost target per 100g (₹)")
+    texture: Optional[str] = Field(None, description="Texture preference: water, gel, serum, lotion, cream, balm")
+    fragrance: Optional[str] = Field(None, description="Fragrance preference: none, light, moderate, any")
+    notes: Optional[str] = Field(None, description="Additional notes or requirements")
+
+
+class FormulaIngredient(BaseModel):
+    """Schema for a single ingredient in a formula"""
+    name: str
+    inci: str
+    percent: Union[float, str]  # Can be number or "q.s."
+    cost: float
+    function: str
+    hero: Optional[bool] = False
+
+
+class FormulaPhase(BaseModel):
+    """Schema for a formula phase"""
+    id: str
+    name: str
+    temp: str
+    color: str
+    ingredients: List[FormulaIngredient]
+
+
+class FormulaInsight(BaseModel):
+    """Schema for formula insight"""
+    icon: str
+    title: str
+    text: str
+
+
+class FormulaWarning(BaseModel):
+    """Schema for formula warning"""
+    type: str  # "critical" or "info"
+    text: str
+
+
+class FormulaCompliance(BaseModel):
+    """Schema for formula compliance"""
+    silicone: bool
+    paraben: bool
+    vegan: bool
+
+
+class GenerateFormulaResponse(BaseModel):
+    """Response schema for formula generation"""
+    name: str
+    version: str
+    cost: float
+    costTarget: Dict[str, float]
+    ph: Dict[str, float]
+    texture: str
+    shelfLife: str
+    phases: List[FormulaPhase]
+    insights: List[FormulaInsight]
+    warnings: List[FormulaWarning]
+    compliance: FormulaCompliance
+
+
 class DecodeHistoryItem(BaseModel):
     """Schema for decode history item"""
     id: Optional[str] = Field(None, description="History item ID")
@@ -104,6 +175,7 @@ class DecodeHistoryItem(BaseModel):
     input_data: str = Field(..., description="Input data (INCI list or URL)")
     analysis_result: Dict = Field(..., description="Full analysis result")
     report_data: Optional[str] = Field(None, description="Generated report HTML (if available)")
+    notes: Optional[str] = Field(None, description="User notes for this decode")
     created_at: Optional[str] = Field(None, description="Creation timestamp")
 
 
@@ -157,6 +229,7 @@ class CompareHistoryItem(BaseModel):
     input1_type: str = Field(..., description="Type of input1: 'url' or 'inci'")
     input2_type: str = Field(..., description="Type of input2: 'url' or 'inci'")
     comparison_result: Dict = Field(..., description="Full comparison result")
+    notes: Optional[str] = Field(None, description="User notes for this comparison")
     created_at: Optional[str] = Field(None, description="Creation timestamp")
 
 

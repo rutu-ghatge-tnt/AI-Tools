@@ -108,7 +108,7 @@ settings = Settings()
 
 # Debug: Print API key status
 if settings.ANTHROPIC_API_KEY:
-    print(f"✅ Face Analysis API key loaded successfully (length: {len(settings.ANTHROPIC_API_KEY)})")
+    print(f"Face Analysis API key loaded successfully (length: {len(settings.ANTHROPIC_API_KEY)})")
 else:
-    print("❌ Face Analysis API key not found - analysis will not be available")
+    print("Face Analysis API key not found - analysis will not be available")
 

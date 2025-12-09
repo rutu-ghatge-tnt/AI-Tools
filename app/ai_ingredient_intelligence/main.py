@@ -2,6 +2,7 @@
 from fastapi import FastAPI, HTTPException
 from app.ai_ingredient_intelligence.api.analyze_inci import router as analyze_inci_router
 from app.ai_ingredient_intelligence.api.formulation_report import router as formulation_report_router
+from app.ai_ingredient_intelligence.api.formula_generation import router as formula_generation_router
 from app.ai_ingredient_intelligence.db.mongodb import db
 from app.ai_ingredient_intelligence.logic.ocr_processor import OCRProcessor
 from fastapi.middleware.cors import CORSMiddleware
@@ -136,6 +137,7 @@ async def api_info():
 # Include all routers
 app.include_router(analyze_inci_router, prefix="/api")
 app.include_router(formulation_report_router, prefix="/api")
+app.include_router(formula_generation_router, prefix="/api")
 
 if __name__ == "__main__":
     import uvicorn
