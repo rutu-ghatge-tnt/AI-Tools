@@ -3097,32 +3097,73 @@ async def market_research(payload: dict):
                     elif matched_ing_normalized in input_unknown:
                         matched_unknown.append(matched_ing_normalized)
             
-            # Apply filtering logic based on match percentage
+            # Calculate weighted match score instead of strict filtering
+            # This allows showing top matches even if not 100% perfect
+            match_score = 0.0
+            
+            # Weight factors (can be adjusted)
+            ACTIVE_WEIGHT = 3.0  # Actives are most important
+            EXCIPIENT_WEIGHT = 1.0  # Excipients are less important
+            UNKNOWN_WEIGHT = 0.5  # Unknown ingredients are least important
+            BASE_MATCH_WEIGHT = 1.0  # Base match percentage weight
+            
+            # Calculate component scores
+            active_score = 0.0
+            if len(input_actives) > 0:
+                active_match_ratio = len(matched_actives) / len(input_actives)
+                active_score = active_match_ratio * ACTIVE_WEIGHT
+            elif len(input_actives) == 0:
+                # If no actives in input, don't penalize
+                active_score = ACTIVE_WEIGHT
+            
+            excipient_score = 0.0
+            if len(input_excipients) > 0:
+                excipient_match_ratio = len(matched_excipients) / len(input_excipients)
+                excipient_score = excipient_match_ratio * EXCIPIENT_WEIGHT
+            elif len(input_excipients) == 0:
+                excipient_score = EXCIPIENT_WEIGHT
+            
+            unknown_score = 0.0
+            if len(input_unknown) > 0:
+                unknown_match_ratio = len(matched_unknown) / len(input_unknown)
+                unknown_score = unknown_match_ratio * UNKNOWN_WEIGHT
+            elif len(input_unknown) == 0:
+                unknown_score = UNKNOWN_WEIGHT
+            
+            # Base match percentage score (normalized to 0-1)
+            base_match_score = (match_percentage / 100.0) * BASE_MATCH_WEIGHT
+            
+            # Total score: weighted combination
+            total_weight = ACTIVE_WEIGHT + EXCIPIENT_WEIGHT + UNKNOWN_WEIGHT + BASE_MATCH_WEIGHT
+            match_score = (active_score + excipient_score + unknown_score + base_match_score) / total_weight
+            
+            # Normalize to 0-100 for easier understanding
+            match_score_percent = match_score * 100
+            
+            # Include products based on minimum threshold (more flexible than 100% match)
+            # Minimum thresholds:
+            MIN_MATCH_SCORE = 20.0  # Minimum score to include (out of 100)
+            MIN_ACTIVE_MATCH_RATIO = 0.3  # Must match at least 30% of actives (if actives exist)
+            MIN_OVERALL_MATCH = 15.0  # Minimum overall match percentage
+            
             should_include = False
             
-            if match_percentage >= 30:
-                # For >= 30% match: Must match ALL actives AND ALL excipients AND all input INCI (including unknown)
-                all_actives_matched = len(matched_actives) == len(input_actives) if input_actives else True
-                all_excipients_matched = len(matched_excipients) == len(input_excipients) if input_excipients else True
-                all_unknown_matched = len(matched_unknown) == len(input_unknown) if input_unknown else True
-                
-                should_include = all_actives_matched and all_excipients_matched and all_unknown_matched
-                
-                if len(matched_products) < 5:  # Debug for first 5
-                    print(f"  [>=30%] Product match: {match_percentage:.1f}% - Actives: {len(matched_actives)}/{len(input_actives)}, Excipients: {len(matched_excipients)}/{len(input_excipients)}, Unknown: {len(matched_unknown)}/{len(input_unknown)} - Include: {should_include}")
-            else:
-                # For < 30% match: Only show if ALL actives are matched (ignore excipients and unknown)
-                if len(input_actives) == 0:
-                    # If no actives in input, don't include products with <30% match
-                    should_include = False
+            # Check if product meets minimum criteria
+            if match_score_percent >= MIN_MATCH_SCORE:
+                # Additional check: if there are actives, must match at least some of them
+                if len(input_actives) > 0:
+                    active_ratio = len(matched_actives) / len(input_actives)
+                    if active_ratio >= MIN_ACTIVE_MATCH_RATIO and match_percentage >= MIN_OVERALL_MATCH:
+                        should_include = True
                 else:
-                    all_actives_matched = len(matched_actives) == len(input_actives)
-                    should_include = all_actives_matched
-                
-                if len(matched_products) < 5:  # Debug for first 5
-                    print(f"  [<30%] Product match: {match_percentage:.1f}% - Actives: {len(matched_actives)}/{len(input_actives)} - Include: {should_include}")
+                    # No actives in input, just check overall match
+                    if match_percentage >= MIN_OVERALL_MATCH:
+                        should_include = True
             
-            # Include products based on filtering logic
+            if len(matched_products) < 5:  # Debug for first 5
+                print(f"  Product match: {match_percentage:.1f}% | Score: {match_score_percent:.1f} | Actives: {len(matched_actives)}/{len(input_actives)}, Excipients: {len(matched_excipients)}/{len(input_excipients)}, Unknown: {len(matched_unknown)}/{len(input_unknown)} | Include: {should_include}")
+            
+            # Include products based on scoring logic
             if should_include:
                 matches_found += 1
                 
@@ -3205,6 +3246,7 @@ async def market_research(payload: dict):
                     "match_count": match_count,
                     "total_ingredients": len(product_ingredients),
                     "match_percentage": round(match_percentage, 2),
+                    "match_score": round(match_score_percent, 2),  # Weighted match score (0-100)
                     "active_match_count": active_match_count,  # Number of active ingredients matched
                     "active_ingredients": active_ingredients  # List of matched active ingredients
                 }
@@ -3216,14 +3258,14 @@ async def market_research(payload: dict):
                 
                 matched_products.append(product_data)
         
-        # Sort by: 1) active_match_count (descending), 2) match_percentage (descending), 3) match_count (descending)
-        # This prioritizes products with active ingredients matched on top
-        # Products with actives will appear first, then sorted by match percentage
+        # Sort by: 1) match_score (descending - weighted score), 2) active_match_count (descending), 3) match_percentage (descending), 4) match_count (descending)
+        # This prioritizes products with highest weighted scores, which considers actives, excipients, and overall match
         matched_products.sort(
             key=lambda x: (
-                x.get("active_match_count", 0),
-                x.get("match_percentage", 0),
-                x.get("match_count", 0)
+                x.get("match_score", 0),  # Primary sort: weighted match score
+                x.get("active_match_count", 0),  # Secondary: active ingredient matches
+                x.get("match_percentage", 0),  # Tertiary: overall match percentage
+                x.get("match_count", 0)  # Quaternary: raw match count
             ),
             reverse=True
         )

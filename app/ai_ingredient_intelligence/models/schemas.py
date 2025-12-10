@@ -271,6 +271,7 @@ class MarketResearchProduct(BaseModel):
     match_count: int = Field(0, description="Number of matched ingredients")
     total_ingredients: int = Field(0, description="Total number of ingredients in product")
     match_percentage: float = Field(0.0, description="Percentage of input ingredients matched")
+    match_score: float = Field(0.0, description="Weighted match score (0-100) considering actives, excipients, and overall match")
     active_match_count: int = Field(0, description="Number of active ingredients that matched")
     active_ingredients: List[str] = Field(default_factory=list, description="List of matched active ingredients")
 

@@ -71,7 +71,10 @@ from app.ai_ingredient_intelligence.db.collections import distributor_col
 app = FastAPI(
     title="SkinBB AI Skincare Chatbot",
     description="An AI assistant for skincare queries with document retrieval and web search fallback",
-    version="1.0"
+    version="1.0",
+    docs_url="/docs",  # Swagger UI - explicitly enabled
+    redoc_url="/redoc",  # ReDoc alternative - explicitly enabled
+    openapi_url="/openapi.json"  # OpenAPI JSON schema - explicitly enabled
 )
 
 # ✅ CORS - Updated for production
@@ -126,6 +129,14 @@ if make_wish_router is not None:
 else:
     print("Warning: Make a Wish router not available, skipping registration")
 
+# ✅ Add Inspiration Boards API
+try:
+    from app.ai_ingredient_intelligence.api.inspiration_boards import router as inspiration_boards_router
+    app.include_router(inspiration_boards_router, prefix="/api")
+except ImportError as e:
+    print(f"Warning: Could not import inspiration_boards router: {e}")
+    print("   Inspiration Boards API will not be available. This is not critical.")
+
 # ✅ New image-to-JSON API - Commented out - module doesn't exist
 # app.include_router(image_extractor_router, prefix="/api")
 
@@ -159,6 +170,19 @@ async def create_indexes():
         await compare_history_col.create_index([("user_id", 1), ("created_at", -1)])
         await compare_history_col.create_index([("user_id", 1), ("name", "text")])
         print("Compare history collection indexes created successfully")
+        
+        # Create indexes for inspiration boards collections
+        from app.ai_ingredient_intelligence.db.collections import (
+            inspiration_boards_col, inspiration_products_col
+        )
+        await inspiration_boards_col.create_index("user_id")
+        await inspiration_boards_col.create_index("created_at")
+        await inspiration_boards_col.create_index([("user_id", 1), ("created_at", -1)])
+        await inspiration_products_col.create_index("board_id")
+        await inspiration_products_col.create_index("user_id")
+        await inspiration_products_col.create_index([("board_id", 1), ("decoded", 1)])
+        await inspiration_products_col.create_index([("user_id", 1), ("created_at", -1)])
+        print("Inspiration boards collection indexes created successfully")
     except Exception as e:
         print(f"Warning: Could not create indexes: {e}")
         # Don't fail startup if indexes already exist
