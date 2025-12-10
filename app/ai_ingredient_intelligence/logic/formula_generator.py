@@ -64,7 +64,8 @@ from app.ai_ingredient_intelligence.logic.bis_rag import get_bis_cautions_for_in
 
 # Initialize Claude client (only if available)
 claude_api_key = os.getenv("CLAUDE_API_KEY")
-claude_model = os.getenv("CLAUDE_MODEL", "claude-3-5-sonnet-20241022")  # Use latest Sonnet model
+# Use CLAUDE_MODEL from env, fallback to default Sonnet 3.5
+claude_model = os.getenv("CLAUDE_MODEL") or os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929"
 if ANTHROPIC_AVAILABLE and claude_api_key:
     try:
         claude_client = anthropic.Anthropic(api_key=claude_api_key)

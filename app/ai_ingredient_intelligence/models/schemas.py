@@ -1,4 +1,4 @@
-from typing import List, Optional, Union, Dict
+from typing import List, Optional, Union, Dict, Any
 from pydantic import BaseModel, Field
 from fastapi import UploadFile
 
@@ -100,8 +100,11 @@ class CompareProductsResponse(BaseModel):
 
 class CreateWishRequest(BaseModel):
     """Request schema for Create A Wish formula generation"""
+    category: Optional[str] = Field("skincare", description="Category: skincare or haircare")
     productType: str = Field(..., description="Product type: serum, cream, lotion, toner, etc.")
     benefits: List[str] = Field(default_factory=list, description="List of desired benefits")
+    targetAudience: Optional[List[str]] = Field(default_factory=list, description="Target audience (e.g., oily-skin, young-adults)")
+    pricePoint: Optional[str] = Field(None, description="Price point category")
     exclusions: List[str] = Field(default_factory=list, description="List of exclusions (e.g., Silicone-free)")
     heroIngredients: List[str] = Field(default_factory=list, description="Specific ingredients to include")
     costMin: Optional[float] = Field(None, description="Minimum cost target per 100g (₹)")
@@ -109,6 +112,7 @@ class CreateWishRequest(BaseModel):
     texture: Optional[str] = Field(None, description="Texture preference: water, gel, serum, lotion, cream, balm")
     fragrance: Optional[str] = Field(None, description="Fragrance preference: none, light, moderate, any")
     notes: Optional[str] = Field(None, description="Additional notes or requirements")
+    preferences: Optional[Dict[str, Any]] = Field(default_factory=dict, description="User preferences including keyIngredients, avoidIngredients, claims")
 
 
 class FormulaIngredient(BaseModel):
@@ -173,7 +177,8 @@ class DecodeHistoryItem(BaseModel):
     tag: Optional[str] = Field(None, description="Tag for categorization")
     input_type: str = Field(..., description="Input type: 'inci' or 'url'")
     input_data: str = Field(..., description="Input data (INCI list or URL)")
-    analysis_result: Dict = Field(..., description="Full analysis result")
+    status: str = Field(..., description="Status: 'pending' (analysis in progress), 'analyzed' (completed), or 'failed'")
+    analysis_result: Optional[Dict] = Field(None, description="Full analysis result (only present when status is 'analyzed')")
     report_data: Optional[str] = Field(None, description="Generated report HTML (if available)")
     notes: Optional[str] = Field(None, description="User notes for this decode")
     created_at: Optional[str] = Field(None, description="Creation timestamp")
@@ -228,7 +233,8 @@ class CompareHistoryItem(BaseModel):
     input2: str = Field(..., description="Second input (URL or INCI)")
     input1_type: str = Field(..., description="Type of input1: 'url' or 'inci'")
     input2_type: str = Field(..., description="Type of input2: 'url' or 'inci'")
-    comparison_result: Dict = Field(..., description="Full comparison result")
+    status: str = Field(..., description="Status: 'pending' (comparison in progress), 'analyzed' (completed), or 'failed'")
+    comparison_result: Optional[Dict] = Field(None, description="Full comparison result (only present when status is 'analyzed')")
     notes: Optional[str] = Field(None, description="User notes for this comparison")
     created_at: Optional[str] = Field(None, description="Creation timestamp")
 
@@ -264,7 +270,9 @@ class MarketResearchProduct(BaseModel):
     matched_ingredients: List[str] = Field(default_factory=list, description="List of ingredients that matched")
     match_count: int = Field(0, description="Number of matched ingredients")
     total_ingredients: int = Field(0, description="Total number of ingredients in product")
-    match_percentage: float = Field(0.0, description="Percentage of ingredients matched")
+    match_percentage: float = Field(0.0, description="Percentage of input ingredients matched")
+    active_match_count: int = Field(0, description="Number of active ingredients that matched")
+    active_ingredients: List[str] = Field(default_factory=list, description="List of matched active ingredients")
 
 
 class MarketResearchRequest(BaseModel):
@@ -281,3 +289,33 @@ class MarketResearchResponse(BaseModel):
     total_matched: int = Field(0, description="Total number of matched products")
     processing_time: float = Field(0.0, description="Time taken for processing (in seconds)")
     input_type: str = Field(..., description="Type of input processed")
+
+
+# ============================================================================
+# MAKE A WISH SCHEMAS
+# ============================================================================
+
+class MakeWishRequest(BaseModel):
+    """Request schema for Make a Wish formula generation (5-stage AI pipeline)"""
+    category: str = Field("skincare", description="Category: 'skincare' or 'haircare'")
+    productType: str = Field(..., description="Product type: serum, cream, shampoo, conditioner, etc.")
+    benefits: List[str] = Field(..., description="List of desired benefits")
+    exclusions: List[str] = Field(default_factory=list, description="List of exclusions (e.g., Silicone-free, Paraben-free)")
+    heroIngredients: List[str] = Field(default_factory=list, description="Specific ingredients to prioritize")
+    costMin: Optional[float] = Field(30, description="Minimum cost target per 100g (₹)")
+    costMax: Optional[float] = Field(60, description="Maximum cost target per 100g (₹)")
+    texture: Optional[str] = Field("lightweight", description="Texture preference: lightweight, gel, cream, etc.")
+    claims: List[str] = Field(default_factory=list, description="Product claims to support (e.g., Vegan, Dermatologist-tested)")
+    targetAudience: List[str] = Field(default_factory=list, description="Target audience (e.g., oily-skin, young-adults)")
+    additionalNotes: Optional[str] = Field(None, description="Additional notes or requirements")
+
+
+class MakeWishResponse(BaseModel):
+    """Response schema for Make a Wish formula generation"""
+    wish_data: Dict[str, Any]
+    ingredient_selection: Dict[str, Any] = Field(..., description="Stage 1: Ingredient selection results")
+    optimized_formula: Dict[str, Any] = Field(..., description="Stage 2: Optimized formula with percentages")
+    manufacturing: Dict[str, Any] = Field(..., description="Stage 3: Manufacturing process instructions")
+    cost_analysis: Dict[str, Any] = Field(..., description="Stage 4: Cost analysis and pricing recommendations")
+    compliance: Dict[str, Any] = Field(..., description="Stage 5: Regulatory compliance check")
+    metadata: Dict[str, Any] = Field(..., description="Metadata about the generation process")

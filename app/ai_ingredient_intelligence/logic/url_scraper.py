@@ -846,7 +846,7 @@ Product name:"""
 
             claude_client = self._get_claude_client()
             from app.config import CLAUDE_MODEL
-            model_name = CLAUDE_MODEL if CLAUDE_MODEL else "claude-3-opus-20240229"
+            model_name = CLAUDE_MODEL if CLAUDE_MODEL else (os.getenv("CLAUDE_MODEL") or os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929")
             
             response = claude_client.messages.create(
                 model=model_name,
@@ -907,7 +907,7 @@ Return only the JSON array of INCI names:"""
 
             claude_client = self._get_claude_client()
             from app.config import CLAUDE_MODEL
-            model_name = CLAUDE_MODEL if CLAUDE_MODEL else "claude-3-opus-20240229"
+            model_name = CLAUDE_MODEL if CLAUDE_MODEL else (os.getenv("CLAUDE_MODEL") or os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929")
             
             response = claude_client.messages.create(
                 model=model_name,
@@ -977,7 +977,7 @@ Return only the JSON array:"""
             
             # Call Claude API - use config model (defaults to claude-3-opus-20240229)
             from app.config import CLAUDE_MODEL
-            model_name = CLAUDE_MODEL if CLAUDE_MODEL else "claude-3-opus-20240229"
+            model_name = CLAUDE_MODEL if CLAUDE_MODEL else (os.getenv("CLAUDE_MODEL") or os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929")
             
             response = claude_client.messages.create(
                 model=model_name,

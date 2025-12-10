@@ -14,7 +14,8 @@ load_dotenv(BASE_DIR / ".env")
 from typing import Optional
 
 CLAUDE_API_KEY: Optional[str] = os.getenv("CLAUDE_API_KEY")
-CLAUDE_MODEL: str = os.getenv("MODEL_NAME", "claude-3-opus-20240229")
+# Use CLAUDE_MODEL if set, otherwise fall back to MODEL_NAME, otherwise use default
+CLAUDE_MODEL: str = os.getenv("CLAUDE_MODEL") or os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929"
 
 # Get the absolute path to the directory where this config.py file resides
 APP_DIR = Path(__file__).parent.resolve()

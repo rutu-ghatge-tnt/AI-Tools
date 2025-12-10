@@ -1,29 +1,38 @@
 # app/ai_ingredient_intelligence/scripts/clean_external_products.py
 """
-Script to clean the externalProducts collection by extracting only the INCI list
-from the ingredients field using AI.
+Script to clean the externalproducts collection by extracting only the INCI list
+from the ingredients field using Claude AI.
 
 This script:
-1. Connects to MongoDB and queries externalProducts collection
+1. Connects to MongoDB and queries externalproducts collection
 2. Skips products that have already been cleaned (ingredientsCleaned: true)
-3. Uses AI (GPT-5) to extract only the INCI list from ingredients field
+3. Uses Claude AI to extract only the INCI list from ingredients field
 4. Updates the document with cleaned ingredients and marks it as cleaned
 
 Usage:
     python -m app.ai_ingredient_intelligence.scripts.clean_external_products
+
+Requirements:
+    - CLAUDE_API_KEY must be set in .env file
+    - anthropic package must be installed (pip install anthropic)
 """
 
 import os
 import json
 import asyncio
-import aiohttp
 import time
 from collections import defaultdict
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
-from tqdm.asyncio import tqdm_asyncio
-from tqdm import tqdm
 from typing import Optional, Dict, Any, List
+
+# Try to import anthropic
+try:
+    import anthropic
+    ANTHROPIC_AVAILABLE = True
+except ImportError:
+    ANTHROPIC_AVAILABLE = False
+    print("Warning: anthropic package not installed. Install with: pip install anthropic")
 
 # Load .env variables
 load_dotenv()
@@ -31,12 +40,16 @@ load_dotenv()
 # MongoDB Configuration
 MONGO_URI: str = os.getenv("MONGO_URI", "mongodb://skinbb_owner:SkinBB%4054321@93.127.194.42:27017/skin_bb?authSource=admin")
 DB_NAME: str = os.getenv("DB_NAME", "skin_bb")
-OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY") or ""
+CLAUDE_API_KEY: str = os.getenv("CLAUDE_API_KEY") or ""
 
-if not OPENAI_API_KEY:
-    raise RuntimeError("❌ OPENAI_API_KEY is missing. Please set it in your .env file.")
+if not CLAUDE_API_KEY:
+    raise RuntimeError("❌ CLAUDE_API_KEY is missing. Please set it in your .env file.")
 
-OPENAI_API_URL: str = "https://api.openai.com/v1/chat/completions"
+if not ANTHROPIC_AVAILABLE:
+    raise RuntimeError("❌ anthropic package is not installed. Install with: pip install anthropic")
+
+# Initialize Claude client
+claude_client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
 
 # Mongo client
 client = AsyncIOMotorClient(MONGO_URI)
@@ -74,7 +87,6 @@ rate_limiter = RateLimiter()
 
 
 async def clean_ingredients_with_ai(
-    session: aiohttp.ClientSession,
     ingredients_text: str
 ) -> Optional[List[str]]:
     """
@@ -84,128 +96,128 @@ async def clean_ingredients_with_ai(
     if not ingredients_text or not ingredients_text.strip():
         return None
     
-    prompt = f"""You are a cosmetic ingredient expert. Extract ONLY the INCI (International Nomenclature of Cosmetic Ingredients) list from the following text.
+    # Truncate if too long (Claude has token limits)
+    ingredients_text_truncated = ingredients_text[:5000] if len(ingredients_text) > 5000 else ingredients_text
+    
+    # Check if input is already a clean comma-separated list (common case)
+    # If it looks like a clean list, try parsing it directly first
+    if "," in ingredients_text_truncated and len(ingredients_text_truncated) < 2000:
+        # Check if it looks like a clean list (has commas, no obvious headers/descriptions)
+        has_headers = any(marker in ingredients_text_truncated.lower() for marker in [
+            "full ingredients", "ingredients list", "ingredients:", "expiry date",
+            "country of origin", "manufacturer", "importer", "address:"
+        ])
+        
+        if not has_headers:
+            # Try parsing directly - might already be clean
+            from app.ai_ingredient_intelligence.utils.inci_parser import parse_inci_string
+            direct_parse = parse_inci_string(ingredients_text_truncated)
+            if direct_parse and len(direct_parse) >= 2:  # If we get 2+ ingredients, it's probably clean
+                print(f"  ✅ Input appears to be clean list, parsed directly ({len(direct_parse)} ingredients)")
+                return direct_parse
+    
+    prompt = f"""Extract the INCI ingredient list from this text. Return ONLY a comma-separated list of ingredient names.
 
-Remove all unnecessary text, descriptions, headers, footers, and other non-ingredient content. Return ONLY the clean INCI ingredient list.
+Text:
+{ingredients_text_truncated}
 
-Input text:
-{ingredients_text}
+Rules:
+- Extract only INCI ingredient names
+- Remove headers, descriptions, marketing text, expiry dates, addresses
+- Keep combinations with "(and)" or "&" intact
+- Return format: "Ingredient1, Ingredient2, Ingredient3"
+- No explanations, just the list
 
-CRITICAL INSTRUCTIONS:
-1. Extract ONLY the actual INCI ingredient names
-2. Remove all headers like "Ingredients:", "Full Ingredients List:", "INGREDIENTS", etc.
-3. Remove all descriptions, explanations, or additional text
-4. Remove any marketing text or product information
-5. Return ingredients as a comma-separated list
-6. Each ingredient should be properly formatted (e.g., "Water", "Glycerin", "Sodium Hyaluronate")
-7. Preserve ingredient combinations that use "(and)" or "&" (e.g., "Xylitylglucoside (and) Anhydroxylitol")
-8. Do NOT include any explanations, just the ingredient list
+If the text is already a clean ingredient list, return it exactly as-is.
+If you cannot find any ingredients, return: UNABLE_TO_EXTRACT
 
-Output format: Return ONLY a comma-separated list of ingredients, nothing else.
 Example output: Water, Glycerin, Sodium Hyaluronate, Niacinamide, Xylitylglucoside (and) Anhydroxylitol
-
-If you cannot extract a valid INCI list, return: "UNABLE_TO_EXTRACT"
 """
 
-    # Model priority - GPT-5 first (user preference)
+    # Claude models to try (in order of preference)
+    # First try the model from environment variable, then fallbacks
+    primary_model = os.getenv("CLAUDE_MODEL") or os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929"
+    
     models_to_try = [
-        # GPT-5 models (user preference)
-        {"name": "gpt-5", "max_tokens": 2000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
-        {"name": "gpt-5-chat-latest", "max_tokens": 2000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
-        {"name": "gpt-5-mini", "max_tokens": 2000, "endpoint": "chat", "rpm": 500, "tpm": 200000},
-        {"name": "gpt-5-mini-2025-08-07", "max_tokens": 2000, "endpoint": "chat", "rpm": 500, "tpm": 200000},
-        
-        # GPT-4 models as fallback
-        {"name": "chatgpt-4o-latest", "max_tokens": 2000, "endpoint": "chat", "rpm": 200, "tpm": 500000},
-        {"name": "gpt-4.1", "max_tokens": 2000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
-        {"name": "gpt-4o-2024-11-20", "max_tokens": 2000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
-        {"name": "gpt-4o", "max_tokens": 2000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
-        
-        # Fast models as last resort
-        {"name": "gpt-3.5-turbo", "max_tokens": 2000, "endpoint": "chat", "rpm": 500, "tpm": 200000},
-        {"name": "gpt-3.5-turbo-instruct", "max_tokens": 2000, "endpoint": "completions", "rpm": 3500, "tpm": 90000},
+        {"name": primary_model, "max_tokens": 2000},
+        {"name": "claude-sonnet-4-5-20250929", "max_tokens": 2000},  # Claude Sonnet 4.5
+        {"name": "claude-3-5-haiku-20241022", "max_tokens": 2000},  # Fast fallback (this one works)
     ]
     
     for model_config in models_to_try:
         model_name = model_config["name"]
         max_tokens = model_config["max_tokens"]
-        endpoint = model_config["endpoint"]
-        rpm_limit = model_config["rpm"]
         
-        # Check rate limits before making request
-        await rate_limiter.wait_if_needed(model_name, rpm_limit)
+        # Check rate limits before making request (Claude has different limits)
+        await rate_limiter.wait_if_needed(model_name, 50)  # Conservative rate limit
         
         # Small delay between requests
         await asyncio.sleep(0.5)
         
-        # Prepare payload based on endpoint type
-        if endpoint == "chat":
-            payload = {
-                "model": model_name,
-                "messages": [{"role": "user", "content": prompt}]
-            }
-            # GPT-5 models use max_completion_tokens
-            if model_name.startswith("gpt-5"):
-                payload["max_completion_tokens"] = max_tokens
-            else:
-                payload["max_tokens"] = max_tokens
-        else:  # completions endpoint
-            payload = {
-                "model": model_name,
-                "prompt": prompt,
-                "max_tokens": max_tokens,
-                "temperature": 0.3,
-                "top_p": 0.9
-            }
-        
         try:
-            # Use correct endpoint based on model type
-            api_url = "https://api.openai.com/v1/chat/completions" if endpoint == "chat" else "https://api.openai.com/v1/completions"
+            # Use Claude API (run in thread pool since it's synchronous)
+            loop = asyncio.get_event_loop()
+            response = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: claude_client.messages.create(
+                        model=model_name,
+                        max_tokens=max_tokens,
+                        temperature=0.3,
+                        messages=[
+                            {"role": "user", "content": prompt}
+                        ]
+                    )
+                ),
+                timeout=30.0  # 30 second timeout
+            )
             
-            async with session.post(
-                api_url,
-                headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=60)
-            ) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    
-                    if endpoint == "chat":
-                        content = data["choices"][0]["message"]["content"].strip()
-                    else:
-                        content = data["choices"][0]["text"].strip()
-                    
-                    # Check if extraction failed
-                    if "UNABLE_TO_EXTRACT" in content.upper():
-                        print(f"  ⚠️ AI could not extract ingredients")
-                        return None
-                    
-                    # Parse the comma-separated list
-                    from app.ai_ingredient_intelligence.utils.inci_parser import parse_inci_string
-                    cleaned_ingredients = parse_inci_string(content)
-                    
-                    if cleaned_ingredients:
-                        return cleaned_ingredients
-                    else:
-                        print(f"  ⚠️ No ingredients found in AI response")
-                        continue
-                        
-                elif response.status == 429:
-                    # Rate limited, try next model
-                    print(f"  ⚠️ Rate limited on {model_name}, trying next model...")
-                    continue
-                else:
-                    error_text = await response.text()
-                    print(f"  ⚠️ Error {response.status} on {model_name}: {error_text[:100]}")
-                    continue
+            content = response.content[0].text.strip()
+            
+            # Debug: Show first 200 chars of response for troubleshooting
+            if len(content) > 200:
+                debug_content = content[:200] + "..."
+            else:
+                debug_content = content
+            
+            # Check if extraction failed
+            if "UNABLE_TO_EXTRACT" in content.upper():
+                print(f"  ⚠️ AI returned UNABLE_TO_EXTRACT from {model_name}")
+                print(f"     Input preview: {ingredients_text_truncated[:150]}...")
+                print(f"     Response: {debug_content}")
+                # If it's the last model, show more details
+                if model_config == models_to_try[-1]:
+                    print(f"     Full input length: {len(ingredients_text_truncated)} chars")
+                continue  # Try next model
+            
+            # Parse the comma-separated list
+            from app.ai_ingredient_intelligence.utils.inci_parser import parse_inci_string
+            cleaned_ingredients = parse_inci_string(content)
+            
+            if cleaned_ingredients and len(cleaned_ingredients) > 0:
+                print(f"  ✅ Successfully extracted {len(cleaned_ingredients)} ingredients using {model_name}")
+                return cleaned_ingredients
+            else:
+                print(f"  ⚠️ No ingredients found in AI response from {model_name}")
+                print(f"     Response preview: {debug_content}")
+                continue
                     
         except asyncio.TimeoutError:
             print(f"  ⚠️ Timeout on {model_name}, trying next model...")
             continue
-        except Exception as e:
-            print(f"  ⚠️ Exception on {model_name}: {type(e).__name__}: {str(e)[:100]}")
+        except asyncio.CancelledError:
+            print(f"  ⚠️ Request cancelled on {model_name}, trying next model...")
             continue
+        except Exception as e:
+            error_msg = str(e)
+            # Check if it's a rate limit error
+            if "rate limit" in error_msg.lower() or "429" in error_msg:
+                print(f"  ⚠️ Rate limited on {model_name}, trying next model...")
+                await asyncio.sleep(2)  # Wait a bit longer for rate limits
+                continue
+            else:
+                print(f"  ⚠️ Exception on {model_name}: {type(e).__name__}: {str(e)[:100]}")
+                continue
     
     # All models failed
     print(f"  ❌ All models failed to extract ingredients")
@@ -213,7 +225,6 @@ If you cannot extract a valid INCI list, return: "UNABLE_TO_EXTRACT"
 
 
 async def process_product(
-    session: aiohttp.ClientSession,
     product: Dict[str, Any],
     stats: Dict[str, int],
     collection
@@ -226,22 +237,44 @@ async def process_product(
     product_name = product.get("productName") or product.get("name") or "Unknown"
     ingredients_raw = product.get("ingredients", "")
     
-    # Handle both string and array formats
-    if isinstance(ingredients_raw, list):
-        # If it's already an array, join it to a string for AI processing
-        ingredients_raw = ", ".join(str(ing) for ing in ingredients_raw if ing)
-    
-    if not ingredients_raw or not isinstance(ingredients_raw, str) or not ingredients_raw.strip():
-        stats["skipped_no_ingredients"] += 1
-        return False
-    
     # Skip if already cleaned
     if product.get("ingredientsCleaned") is True:
         stats["skipped_already_cleaned"] += 1
         return False
     
+    # If ingredients are already a clean array, use them directly
+    if isinstance(ingredients_raw, list):
+        # Check if it's already a clean list of strings
+        if all(isinstance(ing, str) and ing.strip() for ing in ingredients_raw):
+            # Already clean array - just update the flag
+            try:
+                await collection.update_one(
+                    {"_id": product_id},
+                    {
+                        "$set": {
+                            "ingredients": ingredients_raw,  # Keep as array
+                            "ingredientsCleaned": True,
+                            "ingredientsCleanedAt": time.time()
+                        }
+                    }
+                )
+                stats["success"] += 1
+                print(f"  ✅ Already clean array: {product_name[:50]} ({len(ingredients_raw)} ingredients)")
+                return True
+            except Exception as e:
+                print(f"  ❌ Database update failed for {product_name[:50]}: {str(e)}")
+                stats["failed_update"] += 1
+                return False
+        else:
+            # Array but needs cleaning - join for AI processing
+            ingredients_raw = ", ".join(str(ing) for ing in ingredients_raw if ing)
+    
+    if not ingredients_raw or not isinstance(ingredients_raw, str) or not ingredients_raw.strip():
+        stats["skipped_no_ingredients"] += 1
+        return False
+    
     # Extract ingredients using AI
-    cleaned_ingredients = await clean_ingredients_with_ai(session, ingredients_raw)
+    cleaned_ingredients = await clean_ingredients_with_ai(ingredients_raw)
     
     if not cleaned_ingredients:
         stats["failed_extraction"] += 1
@@ -269,7 +302,6 @@ async def process_product(
 
 
 async def process_batch(
-    session: aiohttp.ClientSession,
     products: List[Dict[str, Any]],
     stats: Dict[str, int],
     batch_num: int,
@@ -278,7 +310,7 @@ async def process_batch(
     """Process a batch of products concurrently"""
     print(f"\n📦 Processing batch {batch_num} ({len(products)} products)...")
     
-    tasks = [process_product(session, product, stats, collection) for product in products]
+    tasks = [process_product(product, stats, collection) for product in products]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
     # Count exceptions
@@ -381,14 +413,13 @@ async def main():
     
     # Process products in batches
     batch_size = 5  # Process 5 products concurrently
-    async with aiohttp.ClientSession() as session:
-        for i in range(0, len(all_products), batch_size):
-            batch = all_products[i:i + batch_size]
-            await process_batch(session, batch, stats, (i // batch_size) + 1, collection)
-            
-            # Small delay between batches
-            if i + batch_size < len(all_products):
-                await asyncio.sleep(2)
+    for i in range(0, len(all_products), batch_size):
+        batch = all_products[i:i + batch_size]
+        await process_batch(batch, stats, (i // batch_size) + 1, collection)
+        
+        # Small delay between batches
+        if i + batch_size < len(all_products):
+            await asyncio.sleep(2)
     
     # Print final statistics
     print("\n" + "="*60)

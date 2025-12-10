@@ -639,7 +639,7 @@ Return ONLY the reformatted cautions, one per line, numbered. If a fragment cann
 REFORMATTED CAUTIONS:"""
 
                         response = claude_client.messages.create(
-                            model="claude-3-opus-20240229",
+                            model=os.getenv("CLAUDE_MODEL") or os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929",
                             max_tokens=2000,
                             temperature=0.1,
                             messages=[{"role": "user", "content": reformat_prompt}]

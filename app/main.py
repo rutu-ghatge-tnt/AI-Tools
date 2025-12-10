@@ -43,6 +43,14 @@ except ImportError as e:
     print(f"Warning: Could not import formula_generation router: {e}")
     print("   Formula Generation API will not be available. This is not critical.")
     formula_generation_router = None
+
+# Import Make a Wish router (with error handling for missing dependencies)
+try:
+    from app.ai_ingredient_intelligence.api.make_wish_api import router as make_wish_router
+except ImportError as e:
+    print(f"Warning: Could not import make_wish router: {e}")
+    print("   Make a Wish API will not be available. This is not critical.")
+    make_wish_router = None
 # from app.product_listing_image_extraction.route import router as image_extractor_router  # Commented out - module doesn't exist
 from pathlib import Path
 
@@ -111,6 +119,12 @@ if formula_generation_router is not None:
     app.include_router(formula_generation_router, prefix="/api")
 else:
     print("Warning: Formula Generation router not available, skipping registration")
+
+# ✅ Add Make a Wish API
+if make_wish_router is not None:
+    app.include_router(make_wish_router, prefix="/api")
+else:
+    print("Warning: Make a Wish router not available, skipping registration")
 
 # ✅ New image-to-JSON API - Commented out - module doesn't exist
 # app.include_router(image_extractor_router, prefix="/api")

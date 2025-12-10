@@ -101,7 +101,7 @@ async def server_health():
     health_status["checks"]["environment"] = {
         "CLAUDE_API_KEY": "set" if claude_key else "missing",
         "HEADLESS_MODE": headless_mode,
-        "MODEL_NAME": os.getenv("MODEL_NAME", "claude-3-opus-20240229")
+        "MODEL_NAME": os.getenv("CLAUDE_MODEL") or os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929"
     }
     if not claude_key:
         health_status["errors"].append("CLAUDE_API_KEY not set in environment")
@@ -1538,7 +1538,7 @@ async def compare_products(payload: dict):
         
         # Create comparison prompt for Claude
         from app.config import CLAUDE_MODEL
-        model_name = CLAUDE_MODEL if CLAUDE_MODEL else "claude-3-opus-20240229"
+        model_name = CLAUDE_MODEL if CLAUDE_MODEL else (os.getenv("CLAUDE_MODEL") or os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929")
         
         # Prepare full text for better extraction (use more context to capture price, ratings, etc.)
         # Use more characters to ensure we capture price, ratings, and other product details
@@ -2047,6 +2047,15 @@ async def save_decode_history(payload: dict, user_id: Optional[str] = Header(Non
     """
     Save decode history with name and tag (user-specific)
     
+    HISTORY FUNCTIONALITY:
+    - All decode operations are automatically saved to user's history
+    - History is user-specific and isolated by user_id
+    - Supports status tracking: "in_progress" (pending), "completed" (analyzed), or "failed"
+    - Name and tags can be edited later using PATCH /decode-history/{history_id}
+    - Input data (INCI or URL) cannot be changed after creation
+    - History items can be searched by name or tag
+    - History persists across sessions and page refreshes
+    
     Request body:
     {
         "name": "Product Name",
@@ -2145,6 +2154,15 @@ async def get_decode_history(
     """
     Get decode history with optional unified search by name or tag (user-specific)
     
+    HISTORY FUNCTIONALITY:
+    - Returns all decode history items for the authenticated user
+    - Status field indicates: "pending" (analysis in progress), "analyzed" (completed), or "failed"
+    - Frontend can use status to determine if analysis is complete or still pending
+    - If page refreshes before analysis completes, status="pending" indicates input is preserved
+    - Items with status="pending" will have analysis_result=None
+    - Supports pagination with limit and skip parameters
+    - Search works across both name and tag fields
+    
     Query parameters:
     - search: Search term for name or tag (optional, searches both)
     - limit: Number of results (default: 50)
@@ -2182,6 +2200,20 @@ async def get_decode_history(
             # Ensure report_data is included (might be None if not set)
             if "report_data" not in item:
                 item["report_data"] = None
+            # Map status for frontend: "in_progress" -> "pending", "completed" -> "analyzed"
+            if "status" in item:
+                status_mapping = {
+                    "in_progress": "pending",
+                    "completed": "analyzed",
+                    "failed": "failed"
+                }
+                item["status"] = status_mapping.get(item["status"], item["status"])
+            else:
+                # Default to "analyzed" for backward compatibility (old records without status)
+                item["status"] = "analyzed"
+            # Ensure analysis_result is None if status is pending or failed
+            if item.get("status") in ["pending", "failed"] and "analysis_result" not in item:
+                item["analysis_result"] = None
         
         # Debug: print first item to verify report_data is included
         if items:
@@ -2219,7 +2251,28 @@ async def options_decode_history(history_id: str):
 @router.patch("/decode-history/{history_id}")
 async def update_decode_history(history_id: str, payload: dict, user_id: Optional[str] = Header(None, alias="X-User-Id")):
     """
-    Update a decode history item (e.g., add report data)
+    Update a decode history item - allows editing name and tags only
+    
+    HISTORY FUNCTIONALITY:
+    - Name and tags can be edited at any time, even after analysis is complete
+    - Input data (INCI or URL) cannot be changed after creation to maintain data integrity
+    - Other fields like report_data, notes, status, and analysis_result can also be updated
+    - This endpoint is useful for organizing and categorizing history items
+    
+    Editable fields:
+    - name: Update the name of the decode history item
+    - tag: Update or add a categorization tag
+    - notes: Update user notes
+    - report_data: Update report HTML (if available)
+    - status: Update status (in_progress, completed, failed)
+    - analysis_result: Update analysis result
+    - expected_benefits: Update expected benefits
+    
+    Non-editable fields:
+    - input_data: Cannot be changed (creates new history item instead)
+    - input_type: Cannot be changed
+    - user_id: Cannot be changed
+    - created_at: Cannot be changed
     
     Headers:
     - X-User-Id: User ID (required)
@@ -2233,8 +2286,19 @@ async def update_decode_history(history_id: str, payload: dict, user_id: Optiona
         if not ObjectId.is_valid(history_id):
             raise HTTPException(status_code=400, detail="Invalid history ID")
         
+        # Prevent editing input_data and input_type
+        if "input_data" in payload or "input_type" in payload:
+            raise HTTPException(
+                status_code=400, 
+                detail="input_data and input_type cannot be edited. Create a new history item instead."
+            )
+        
         # Build update document
         update_doc = {}
+        if "name" in payload:
+            update_doc["name"] = payload["name"]
+        if "tag" in payload:
+            update_doc["tag"] = payload["tag"]
         if "report_data" in payload:
             update_doc["report_data"] = payload["report_data"]
         if "notes" in payload:
@@ -2283,6 +2347,12 @@ async def delete_decode_history(history_id: str, user_id: Optional[str] = Header
     """
     Delete a decode history item by ID (user-specific)
     
+    HISTORY FUNCTIONALITY:
+    - Permanently deletes a decode history item from user's history
+    - Only the owner (matching user_id) can delete their own history items
+    - Deletion is permanent and cannot be undone
+    - Useful for cleaning up old or unwanted history items
+    
     Headers:
     - X-User-Id: User ID (required)
     """
@@ -2327,6 +2397,14 @@ async def delete_decode_history(history_id: str, user_id: Optional[str] = Header
 async def save_compare_history(payload: dict, user_id: Optional[str] = Header(None, alias="X-User-Id")):
     """
     Save compare history with name and tag (user-specific)
+    
+    HISTORY FUNCTIONALITY:
+    - All product comparison operations are automatically saved to user's history
+    - History is user-specific and isolated by user_id
+    - Supports status tracking: "in_progress" (pending), "completed" (analyzed), or "failed"
+    - Name and tags can be used for organization and categorization
+    - History items can be searched by name or tag
+    - History persists across sessions and page refreshes
     
     Request body:
     {
@@ -2425,6 +2503,15 @@ async def get_compare_history(
     """
     Get compare history with optional unified search by name or tag (user-specific)
     
+    HISTORY FUNCTIONALITY:
+    - Returns all comparison history items for the authenticated user
+    - Status field indicates: "in_progress" (pending), "completed" (analyzed), or "failed"
+    - Frontend can use status to determine if comparison is complete or still pending
+    - If page refreshes before comparison completes, status="in_progress" indicates inputs are preserved
+    - Items with status="in_progress" will have comparison_result=None
+    - Supports pagination with limit and skip parameters
+    - Search works across both name and tag fields
+    
     Query parameters:
     - search: Search term for name or tag (optional, searches both)
     - limit: Number of results (default: 50)
@@ -2459,6 +2546,20 @@ async def get_compare_history(
         for item in items:
             item["id"] = str(item["_id"])
             del item["_id"]
+            # Map status for frontend: "in_progress" -> "pending", "completed" -> "analyzed"
+            if "status" in item:
+                status_mapping = {
+                    "in_progress": "pending",
+                    "completed": "analyzed",
+                    "failed": "failed"
+                }
+                item["status"] = status_mapping.get(item["status"], item["status"])
+            else:
+                # Default to "analyzed" for backward compatibility (old records without status)
+                item["status"] = "analyzed"
+            # Ensure comparison_result is None if status is pending or failed
+            if item.get("status") in ["pending", "failed"] and "comparison_result" not in item:
+                item["comparison_result"] = None
         
         return GetCompareHistoryResponse(
             items=[CompareHistoryItem(**item) for item in items],
@@ -2580,24 +2681,22 @@ async def delete_compare_history(history_id: str, user_id: Optional[str] = Heade
 @router.post("/market-research", response_model=MarketResearchResponse)
 async def market_research(payload: dict):
     """
-    Market Research: Match products from URL, INCI, name, or ingredient input with externalProducts collection.
+    Market Research: Match products from URL or INCI list with externalProducts collection.
     
     Request body:
     {
         "url": "https://example.com/product/..." (required if input_type is "url"),
         "inci": "Water, Glycerin, ..." (required if input_type is "inci"),
-        "name": "Product Name" (required if input_type is "name"),
-        "ingredient": "Water" or ["Water", "Glycerin"] (required if input_type is "ingredient"),
-        "input_type": "url", "inci", "name", or "ingredient"
+        "input_type": "url" or "inci"
     }
     
     Returns:
     {
-        "products": [list of matched products with images and full details],
+        "products": [list of matched products with images and full details, sorted by active matches and match percentage],
         "extracted_ingredients": [list of ingredients extracted from input],
         "total_matched": number of matched products,
         "processing_time": time taken,
-        "input_type": "url", "inci", "name", or "ingredient"
+        "input_type": "url" or "inci"
     }
     """
     start = time.time()
@@ -2606,12 +2705,11 @@ async def market_research(payload: dict):
     try:
         # Validate payload
         input_type = payload.get("input_type", "").lower()
-        if input_type not in ["url", "inci", "name", "ingredient"]:
-            raise HTTPException(status_code=400, detail="input_type must be 'url', 'inci', 'name', or 'ingredient'")
+        if input_type not in ["url", "inci"]:
+            raise HTTPException(status_code=400, detail="input_type must be 'url' or 'inci'")
         
         ingredients = []
         extracted_text = ""
-        product_name_search = None
         
         if input_type == "url":
             url = payload.get("url", "").strip()
@@ -2660,212 +2758,171 @@ async def market_research(payload: dict):
                     status_code=400,
                     detail="No valid ingredients found after parsing. Please check your input format."
                 )
-        elif input_type == "name":
-            # Product name input
-            product_name_search = payload.get("name", "").strip()
-            if not product_name_search:
-                raise HTTPException(status_code=400, detail="name is required when input_type is 'name'")
-            
-            extracted_text = product_name_search
-            print(f"Searching for products by name: {product_name_search}")
-        elif input_type == "ingredient":
-            # Direct ingredient input
-            ingredient_input = payload.get("ingredient")
-            if not ingredient_input:
-                raise HTTPException(status_code=400, detail="ingredient is required when input_type is 'ingredient'")
-            
-            # Handle both string and list inputs
-            if isinstance(ingredient_input, str):
-                ingredient_input = ingredient_input.strip()
-                # If it's a single ingredient without commas, treat it as a single ingredient
-                if "," not in ingredient_input and ";" not in ingredient_input and "|" not in ingredient_input:
-                    ingredients = [ingredient_input]
-                else:
-                    # Parse if it's a comma-separated string
-                    ingredients = parse_inci_string(ingredient_input)
-                extracted_text = ingredient_input
-            elif isinstance(ingredient_input, list):
-                # Use list directly
-                ingredients = [str(ing).strip() for ing in ingredient_input if ing and str(ing).strip()]
-                extracted_text = ", ".join(ingredients)
-            else:
-                raise HTTPException(status_code=400, detail="ingredient must be a string or list")
-            
-            if not ingredients:
-                raise HTTPException(
-                    status_code=400,
-                    detail="No valid ingredients found. Please provide at least one ingredient."
-                )
         
-        # Query externalProducts collection
-        external_products_col = db["externalProducts"]
+        # Query externalproducts collection (lowercase - as shown in MongoDB Compass)
+        external_products_col = db["externalproducts"]
+        collection_name = "externalproducts"
+        print(f"✅ Using collection: {collection_name}")
         
-        # Handle name-based search
-        if input_type == "name":
-            # Search by product name (case-insensitive partial match)
-            name_lower = product_name_search.lower()
-            all_products = await external_products_col.find({
-                "$or": [
-                    {"name": {"$regex": name_lower, "$options": "i"}},
-                    {"productName": {"$regex": name_lower, "$options": "i"}},
-                    {"product_name": {"$regex": name_lower, "$options": "i"}}
-                ]
-            }).to_list(length=None)
-            
-            print(f"Found {len(all_products)} products matching name '{product_name_search}' in externalProducts")
-            
-            # For name-based search, return all matching products without ingredient matching
-            matched_products = []
-            for product in all_products:
-                # Get product ingredients if available
-                product_ingredients_raw = product.get("ingredients", "")
-                product_ingredients = []
-                
-                if product_ingredients_raw:
-                    if isinstance(product_ingredients_raw, str):
-                        ingredients_text = product_ingredients_raw
-                        if "Full Ingredients List:" in ingredients_text:
-                            ingredients_text = ingredients_text.split("Full Ingredients List:")[-1]
-                        elif "Ingredients:" in ingredients_text:
-                            ingredients_text = ingredients_text.split("Ingredients:")[-1]
-                        ingredients_text = ingredients_text.replace("\\\\", "\\").replace("\\", ", ")
-                        product_ingredients = parse_inci_string(ingredients_text)
-                    elif isinstance(product_ingredients_raw, list):
-                        product_ingredients = product_ingredients_raw
-                
-                # Get product image
-                image = None
-                images = []
-                
-                if "s3Image" in product and product["s3Image"]:
-                    image = product["s3Image"]
-                    if isinstance(image, str):
-                        images = [image]
-                
-                if "s3Images" in product and product["s3Images"]:
-                    if isinstance(product["s3Images"], list) and len(product["s3Images"]) > 0:
-                        images = product["s3Images"]
-                        if not image and images:
-                            image = images[0]
-                
-                if not image and "image" in product and product["image"]:
-                    image = product["image"]
-                    if isinstance(image, str) and image not in images:
-                        images.insert(0, image)
-                
-                if "images" in product and product["images"]:
-                    if isinstance(product["images"], list):
-                        for img in product["images"]:
-                            if img and img not in images:
-                                images.append(img)
-                        if not image and images:
-                            image = images[0]
-                
-                product_data = {
-                    "id": str(product.get("_id", "")),
-                    "productName": product.get("name") or product.get("productName") or product.get("product_name"),
-                    "brand": product.get("brand") or product.get("brandName") or product.get("brand_name"),
-                    "ingredients": product_ingredients,
-                    "image": image,
-                    "images": images,
-                    "price": product.get("price"),
-                    "salePrice": product.get("salePrice") or product.get("sale_price"),
-                    "description": product.get("description"),
-                    "matched_ingredients": [],
-                    "match_count": 0,
-                    "total_ingredients": len(product_ingredients),
-                    "match_percentage": 0.0
-                }
-                
-                for key in ["category", "subcategory", "url", "countryOfOrigin", "manufacturer"]:
-                    if key in product:
-                        product_data[key] = product[key]
-                
-                matched_products.append(product_data)
-            
-            processing_time = time.time() - start
-            
-            print(f"\n{'='*60}")
-            print(f"Market Research Summary:")
-            print(f"  Input type: {input_type}")
-            print(f"  Search name: {product_name_search}")
-            print(f"  Products matched: {len(matched_products)}")
-            print(f"  Processing time: {processing_time:.2f}s")
-            print(f"{'='*60}\n")
-            
-            return MarketResearchResponse(
-                products=matched_products,
-                extracted_ingredients=[],
-                total_matched=len(matched_products),
-                processing_time=round(processing_time, 2),
-                input_type=input_type
-            )
-        
-        # For ingredient-based matching (url, inci, ingredient types)
+        # For ingredient-based matching (url, inci)
         print(f"Extracted {len(ingredients)} ingredients for market research")
         print(f"Ingredients list: {ingredients}")
         
-        # Normalize ingredients for matching (case-insensitive, trimmed)
+        # Normalize ingredients for matching (case-insensitive, trimmed, remove trailing punctuation)
         # Also create variations for better matching (e.g., "Niacinamide" variations)
         normalized_input_ingredients = []
         for ing in ingredients:
             if ing and ing.strip():
-                normalized = ing.strip().lower()
-                normalized_input_ingredients.append(normalized)
-                # Also add version without common prefixes/suffixes for better matching
-                # Remove common prefixes like "extract", "oil", etc. for partial matching
-                if len(normalized) > 5:
-                    # Add base word if it ends with common suffixes
-                    if normalized.endswith(" extract"):
-                        normalized_input_ingredients.append(normalized.replace(" extract", ""))
-                    if normalized.endswith(" oil"):
-                        normalized_input_ingredients.append(normalized.replace(" oil", ""))
+                # Clean and normalize: strip, remove trailing punctuation, lowercase
+                cleaned = ing.strip().rstrip('.,;!?').strip()
+                if cleaned:
+                    normalized = cleaned.lower()
+                    normalized_input_ingredients.append(normalized)
+                    # Also add version without common prefixes/suffixes for better matching
+                    # Remove common prefixes like "extract", "oil", etc. for partial matching
+                    if len(normalized) > 5:
+                        # Add base word if it ends with common suffixes
+                        if normalized.endswith(" extract"):
+                            normalized_input_ingredients.append(normalized.replace(" extract", ""))
+                        if normalized.endswith(" oil"):
+                            normalized_input_ingredients.append(normalized.replace(" oil", ""))
         
         # Remove duplicates while preserving order
         seen = set()
         normalized_input_ingredients = [x for x in normalized_input_ingredients if not (x in seen or seen.add(x))]
         
+        print(f"Normalized {len(ingredients)} input ingredients to {len(normalized_input_ingredients)} unique normalized ingredients")
+        
         print(f"Normalized ingredients for matching ({len(normalized_input_ingredients)}): {normalized_input_ingredients[:10]}{'...' if len(normalized_input_ingredients) > 10 else ''}")
         
-        # Try to find products using MongoDB query first (more efficient)
-        # Build query conditions for both string and array formats
-        import re
-        query_conditions = []
+        # Categorize input ingredients into actives and excipients
+        print(f"\n{'='*60}")
+        print("STEP 1.5: Categorizing input ingredients...")
+        print(f"{'='*60}")
+        input_actives = []  # List of normalized active ingredient names
+        input_excipients = []  # List of normalized excipient ingredient names
+        input_unknown = []  # Ingredients without category
         
-        for ing in normalized_input_ingredients:
-            if len(ing) > 2:  # Only create regex for meaningful ingredients
-                # Escape special regex characters and create case-insensitive pattern
-                escaped_ing = re.escape(ing)
-                
-                # For string ingredients field - regex search (works for both string and array when MongoDB converts)
-                query_conditions.append({"ingredients": {"$regex": escaped_ing, "$options": "i"}})
-        
-        # Query products that might contain any of the input ingredients
-        if query_conditions:
+        if normalized_input_ingredients:
             try:
-                potential_products = await external_products_col.find({
-                    "$and": [
-                        {"ingredients": {"$exists": True, "$ne": None, "$ne": ""}},
-                        {"$or": query_conditions}
-                    ]
-                }).limit(1000).to_list(length=None)  # Limit to 1000 for performance
-                print(f"Found {len(potential_products)} products potentially matching ingredients using MongoDB query")
+                # Query INCI collection for categories
+                inci_query = {
+                    "inciName_normalized": {"$in": normalized_input_ingredients}
+                }
+                inci_cursor = inci_col.find(inci_query, {"inciName": 1, "inciName_normalized": 1, "category": 1})
+                inci_results = await inci_cursor.to_list(length=None)
+                
+                # Build mapping of normalized name -> category
+                input_category_map = {}
+                for inci_doc in inci_results:
+                    normalized = inci_doc.get("inciName_normalized", "").strip().lower()
+                    category = inci_doc.get("category", "")
+                    if normalized and category:
+                        input_category_map[normalized] = category
+                
+                # Categorize input ingredients
+                for normalized_ing in normalized_input_ingredients:
+                    category = input_category_map.get(normalized_ing)
+                    if category == "Active":
+                        input_actives.append(normalized_ing)
+                    elif category == "Excipient":
+                        input_excipients.append(normalized_ing)
+                    else:
+                        input_unknown.append(normalized_ing)
+                
+                print(f"  Input actives: {len(input_actives)}")
+                print(f"  Input excipients: {len(input_excipients)}")
+                print(f"  Input unknown (no category): {len(input_unknown)}")
+                if input_actives:
+                    print(f"  Sample actives: {input_actives[:5]}")
+                if input_excipients:
+                    print(f"  Sample excipients: {input_excipients[:5]}")
             except Exception as e:
-                print(f"Error with MongoDB regex query: {e}, falling back to all products")
-                potential_products = []
-        else:
-            potential_products = []
+                print(f"  Warning: Error categorizing input ingredients: {e}")
+                import traceback
+                traceback.print_exc()
+                # If categorization fails, treat all as unknown (will match all)
+                input_unknown = normalized_input_ingredients.copy()
         
-        # Fallback: Get all products if regex query didn't work or returned very few results
-        # This ensures we don't miss any matches due to format differences
-        if len(potential_products) < 10:  # If we got very few results, check all products
-            print("MongoDB query returned few results, falling back to checking all products...")
+        # CRITICAL: Always fetch ALL products with ingredients - don't rely on regex query
+        # The regex query might not work well with arrays, so we'll do matching in Python
+        print(f"\n{'='*60}")
+        print("STEP 1: Fetching products from database...")
+        print(f"{'='*60}")
+        all_products = []
+        try:
+            # First, check how many products exist
+            print("Counting documents in collection...")
+            total_count = await external_products_col.count_documents({})
+            print(f"  Total documents: {total_count}")
+            
+            # Check for ingredients field in different ways
+            has_ingredients_count_1 = await external_products_col.count_documents({
+                "ingredients": {"$exists": True}
+            })
+            has_ingredients_count_2 = await external_products_col.count_documents({
+                "ingredients": {"$exists": True, "$ne": None}
+            })
+            has_ingredients_count_3 = await external_products_col.count_documents({
+                "ingredients": {"$exists": True, "$ne": None, "$ne": ""}
+            })
+            
+            print(f"  Products with ingredients field: {has_ingredients_count_1}")
+            print(f"  Products with ingredients (not null): {has_ingredients_count_2}")
+            print(f"  Products with ingredients (not null/empty): {has_ingredients_count_3}")
+            
+            # Try to get a sample product to see the structure
+            sample_product = await external_products_col.find_one({})
+            if sample_product:
+                print(f"\n  Sample product structure:")
+                print(f"    Keys: {list(sample_product.keys())[:10]}")
+                if "ingredients" in sample_product:
+                    sample_ing = sample_product["ingredients"]
+                    print(f"    Ingredients type: {type(sample_ing).__name__}")
+                    if isinstance(sample_ing, list):
+                        print(f"    Ingredients array length: {len(sample_ing)}")
+                        print(f"    First 3 ingredients: {sample_ing[:3]}")
+                    elif isinstance(sample_ing, str):
+                        print(f"    Ingredients string length: {len(sample_ing)}")
+                        print(f"    First 200 chars: {sample_ing[:200]}")
+            
+            # Fetch ALL products that have ingredients (no limit - we need to check everything)
+            print(f"\nFetching all products with ingredients...")
             all_products = await external_products_col.find({
                 "ingredients": {"$exists": True, "$ne": None, "$ne": ""}
-            }).limit(2000).to_list(length=None)  # Limit to 2000 for performance
-            print(f"Found {len(all_products)} total products with ingredients in externalProducts")
-        else:
-            all_products = potential_products
+            }).to_list(length=None)  # NO LIMIT - check all products
+            
+            print(f"✅ Fetched {len(all_products)} products to check")
+            
+            if len(all_products) == 0:
+                print(f"\n⚠️ WARNING: No products found in {collection_name} collection!")
+                print("   Possible reasons:")
+                print("   1. The collection is empty")
+                print("   2. Products don't have 'ingredients' field")
+                print("   3. All ingredients fields are null or empty")
+                print("   4. Collection name is incorrect")
+                
+                # Try fetching ANY products to see if collection has data
+                any_products = await external_products_col.find({}).limit(5).to_list(length=None)
+                if any_products:
+                    print(f"   Found {len(any_products)} products in collection, but none have ingredients field")
+                    print(f"   Sample product keys: {list(any_products[0].keys())[:10] if any_products else 'N/A'}")
+                
+                return MarketResearchResponse(
+                    products=[],
+                    extracted_ingredients=ingredients,
+                    total_matched=0,
+                    processing_time=round(time.time() - start, 2),
+                    input_type=input_type
+                )
+        except Exception as e:
+            print(f"\n❌ ERROR fetching products: {e}")
+            import traceback
+            traceback.print_exc()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to fetch products from database: {str(e)}"
+            )
         
         # Debug: Check a few sample products to see ingredient format
         if all_products and len(all_products) > 0:
@@ -2894,13 +2951,31 @@ async def market_research(payload: dict):
         matched_products = []
         print(f"\n{'='*60}")
         print(f"Starting ingredient matching:")
-        print(f"  Input ingredients ({len(normalized_input_ingredients)}): {normalized_input_ingredients[:5]}{'...' if len(normalized_input_ingredients) > 5 else ''}")
+        print(f"  Input ingredients ({len(normalized_input_ingredients)}): {normalized_input_ingredients[:10]}{'...' if len(normalized_input_ingredients) > 10 else ''}")
         print(f"  Products to check: {len(all_products)}")
         print(f"{'='*60}\n")
         
+        if len(all_products) == 0:
+            print("⚠️ WARNING: No products found in database to check!")
+            print("This might indicate:")
+            print("  1. The externalProducts collection is empty")
+            print("  2. No products have an 'ingredients' field")
+            print("  3. Database connection issue")
+            return MarketResearchResponse(
+                products=[],
+                extracted_ingredients=ingredients,
+                total_matched=0,
+                processing_time=round(time.time() - start, 2),
+                input_type=input_type
+            )
+        
+        print(f"🔍 Starting to check {len(all_products)} products for matches...")
+        matches_found = 0
+        
         for idx, product in enumerate(all_products):
-            if (idx + 1) % 100 == 0:
-                print(f"  Processed {idx + 1}/{len(all_products)} products...")
+            if (idx + 1) % 500 == 0:
+                print(f"  Processed {idx + 1}/{len(all_products)} products... ({matches_found} matches so far)")
+            
             product_ingredients_raw = product.get("ingredients", "")
             if not product_ingredients_raw:
                 continue
@@ -2938,63 +3013,118 @@ async def market_research(payload: dict):
             if not product_ingredients:
                 continue
             
-            # Normalize product ingredients
+            # Normalize product ingredients (remove trailing punctuation for better matching)
             normalized_product_ingredients = []
             original_ingredient_map = {}  # Map normalized -> original for matching
             for ing in product_ingredients:
                 if isinstance(ing, str):
-                    normalized = ing.strip().lower()
-                    normalized_product_ingredients.append(normalized)
-                    original_ingredient_map[normalized] = ing.strip()
+                    # Clean: strip, remove trailing punctuation, lowercase
+                    cleaned = ing.strip().rstrip('.,;!?').strip()
+                    if cleaned:
+                        normalized = cleaned.lower()
+                        normalized_product_ingredients.append(normalized)
+                        original_ingredient_map[normalized] = ing.strip()  # Keep original for display
                 elif isinstance(ing, dict) and "name" in ing:
-                    normalized = str(ing["name"]).strip().lower()
-                    normalized_product_ingredients.append(normalized)
-                    original_ingredient_map[normalized] = str(ing["name"]).strip()
+                    cleaned = str(ing["name"]).strip().rstrip('.,;!?').strip()
+                    if cleaned:
+                        normalized = cleaned.lower()
+                        normalized_product_ingredients.append(normalized)
+                        original_ingredient_map[normalized] = str(ing["name"]).strip()
             
             # Find matching ingredients - improved matching logic with better word boundary matching
             matched_ingredients = []
+            matched_input_indices = set()  # Track which input ingredients were matched
             import re
             
-            for input_ing in normalized_input_ingredients:
-                matched_this_input = False
+            for idx, input_ing in enumerate(normalized_input_ingredients):
                 input_clean = input_ing.strip()
+                if not input_clean:
+                    continue
                 
+                # Try to match this input ingredient with any product ingredient
                 for prod_ing in normalized_product_ingredients:
                     prod_clean = prod_ing.strip()
+                    if not prod_clean:
+                        continue
                     
-                    # Multiple matching strategies:
+                    is_match = False
+                    
+                    # Multiple matching strategies (in order of preference):
                     # 1. Exact match
                     if input_clean == prod_clean:
                         is_match = True
-                    # 2. Contains match (handles cases like "Niacinamide" matching "Niacinamide (Vitamin B3)")
-                    elif input_clean in prod_clean or prod_clean in input_clean:
-                        is_match = True
-                    # 3. Word boundary match - check if input is a complete word in product
+                    # 2. Word boundary match - check if input is a complete word in product (most reliable)
                     elif len(input_clean) > 3:
                         # Use word boundaries for better matching
                         word_boundary_pattern = r'\b' + re.escape(input_clean) + r'\b'
                         if re.search(word_boundary_pattern, prod_clean, re.IGNORECASE):
                             is_match = True
-                        else:
-                            is_match = False
-                    else:
-                        is_match = False
+                    # 3. Contains match (handles cases like "Niacinamide" matching "Niacinamide (Vitamin B3)")
+                    # But only if the input is substantial (at least 4 chars) to avoid false matches
+                    elif len(input_clean) >= 4:
+                        if input_clean in prod_clean or prod_clean in input_clean:
+                            is_match = True
+                    # 4. For short ingredients (3 chars or less), only exact match
+                    # This prevents false matches on very short strings
                     
                     if is_match:
                         # Get original ingredient name from map
                         original_ing = original_ingredient_map.get(prod_ing)
                         if original_ing and original_ing not in matched_ingredients:
                             matched_ingredients.append(original_ing)
-                            matched_this_input = True
-                            if len(matched_products) < 5:  # Only log for first few matches to avoid spam
-                                print(f"  ✓ Matched: '{input_ing}' with product ingredient '{original_ing}'")
-                        break
+                            matched_input_indices.add(idx)
+                            if len(matched_products) < 10:  # Log for first 10 matches for debugging
+                                print(f"  ✓ Matched: '{input_ing}' -> '{original_ing}'")
+                        break  # Found a match for this input ingredient, move to next
             
-            # Only include products with at least one match
-            if matched_ingredients:
-                match_count = len(matched_ingredients)
-                total_ingredients = len(product_ingredients)
-                match_percentage = (match_count / total_ingredients * 100) if total_ingredients > 0 else 0
+            # Calculate match percentage based on INPUT ingredients (not product ingredients)
+            match_count = len(matched_input_indices)
+            total_input_ingredients = len(normalized_input_ingredients)
+            match_percentage = (match_count / total_input_ingredients * 100) if total_input_ingredients > 0 else 0
+            
+            # Track which actives and excipients from input are matched
+            matched_actives = []
+            matched_excipients = []
+            matched_unknown = []
+            
+            for matched_idx in matched_input_indices:
+                if matched_idx < len(normalized_input_ingredients):
+                    matched_ing_normalized = normalized_input_ingredients[matched_idx]
+                    if matched_ing_normalized in input_actives:
+                        matched_actives.append(matched_ing_normalized)
+                    elif matched_ing_normalized in input_excipients:
+                        matched_excipients.append(matched_ing_normalized)
+                    elif matched_ing_normalized in input_unknown:
+                        matched_unknown.append(matched_ing_normalized)
+            
+            # Apply filtering logic based on match percentage
+            should_include = False
+            
+            if match_percentage >= 30:
+                # For >= 30% match: Must match ALL actives AND ALL excipients AND all input INCI (including unknown)
+                all_actives_matched = len(matched_actives) == len(input_actives) if input_actives else True
+                all_excipients_matched = len(matched_excipients) == len(input_excipients) if input_excipients else True
+                all_unknown_matched = len(matched_unknown) == len(input_unknown) if input_unknown else True
+                
+                should_include = all_actives_matched and all_excipients_matched and all_unknown_matched
+                
+                if len(matched_products) < 5:  # Debug for first 5
+                    print(f"  [>=30%] Product match: {match_percentage:.1f}% - Actives: {len(matched_actives)}/{len(input_actives)}, Excipients: {len(matched_excipients)}/{len(input_excipients)}, Unknown: {len(matched_unknown)}/{len(input_unknown)} - Include: {should_include}")
+            else:
+                # For < 30% match: Only show if ALL actives are matched (ignore excipients and unknown)
+                if len(input_actives) == 0:
+                    # If no actives in input, don't include products with <30% match
+                    should_include = False
+                else:
+                    all_actives_matched = len(matched_actives) == len(input_actives)
+                    should_include = all_actives_matched
+                
+                if len(matched_products) < 5:  # Debug for first 5
+                    print(f"  [<30%] Product match: {match_percentage:.1f}% - Actives: {len(matched_actives)}/{len(input_actives)} - Include: {should_include}")
+            
+            # Include products based on filtering logic
+            if should_include:
+                matches_found += 1
                 
                 # Get product image - prioritize s3Image/s3Images, fallback to image/images
                 image = None
@@ -3026,6 +3156,40 @@ async def market_research(payload: dict):
                         if not image and images:
                             image = images[0]
                 
+                # Check which matched ingredients are active
+                # Query ingre_inci collection to get categories for matched ingredients
+                matched_ingredients_normalized = [ing.strip().lower() for ing in matched_ingredients]
+                active_ingredients = []
+                active_match_count = 0
+                
+                if matched_ingredients_normalized:
+                    try:
+                        # Query INCI collection for categories
+                        inci_query = {
+                            "inciName_normalized": {"$in": matched_ingredients_normalized}
+                        }
+                        inci_cursor = inci_col.find(inci_query, {"inciName": 1, "inciName_normalized": 1, "category": 1})
+                        inci_results = await inci_cursor.to_list(length=None)
+                        
+                        # Build mapping of normalized name -> category
+                        inci_category_map = {}
+                        for inci_doc in inci_results:
+                            normalized = inci_doc.get("inciName_normalized", "").strip().lower()
+                            category = inci_doc.get("category", "")
+                            if normalized and category:
+                                inci_category_map[normalized] = category
+                        
+                        # Check which matched ingredients are active
+                        for matched_ing in matched_ingredients:
+                            normalized = matched_ing.strip().lower()
+                            if normalized in inci_category_map:
+                                category = inci_category_map[normalized]
+                                if category == "Active":
+                                    active_ingredients.append(matched_ing)
+                                    active_match_count += 1
+                    except Exception as e:
+                        print(f"  Warning: Error checking active ingredients: {e}")
+                
                 # Build product data using correct field names from schema
                 product_data = {
                     "id": str(product.get("_id", "")),  # Use 'id' instead of '_id' for Pydantic
@@ -3039,8 +3203,10 @@ async def market_research(payload: dict):
                     "description": product.get("description"),
                     "matched_ingredients": matched_ingredients,
                     "match_count": match_count,
-                    "total_ingredients": total_ingredients,
-                    "match_percentage": round(match_percentage, 2)
+                    "total_ingredients": len(product_ingredients),
+                    "match_percentage": round(match_percentage, 2),
+                    "active_match_count": active_match_count,  # Number of active ingredients matched
+                    "active_ingredients": active_ingredients  # List of matched active ingredients
                 }
                 
                 # Add any other fields from the product
@@ -3050,8 +3216,17 @@ async def market_research(payload: dict):
                 
                 matched_products.append(product_data)
         
-        # Sort by match percentage (descending) and then by match count (descending)
-        matched_products.sort(key=lambda x: (x["match_percentage"], x["match_count"]), reverse=True)
+        # Sort by: 1) active_match_count (descending), 2) match_percentage (descending), 3) match_count (descending)
+        # This prioritizes products with active ingredients matched on top
+        # Products with actives will appear first, then sorted by match percentage
+        matched_products.sort(
+            key=lambda x: (
+                x.get("active_match_count", 0),
+                x.get("match_percentage", 0),
+                x.get("match_count", 0)
+            ),
+            reverse=True
+        )
         
         processing_time = time.time() - start
         
@@ -3059,16 +3234,33 @@ async def market_research(payload: dict):
         print(f"Market Research Summary:")
         print(f"  Input type: {input_type}")
         print(f"  Extracted ingredients: {len(ingredients)}")
-        print(f"  Normalized input ingredients: {normalized_input_ingredients[:10]}{'...' if len(normalized_input_ingredients) > 10 else ''}")
+        print(f"  Normalized input ingredients: {len(normalized_input_ingredients)}")
+        print(f"  Sample input ingredients: {normalized_input_ingredients[:5]}")
         print(f"  Products in database: {len(all_products)}")
         print(f"  Products matched: {len(matched_products)}")
         if len(matched_products) > 0:
-            print(f"  Top match: {matched_products[0].get('productName', 'Unknown')[:50]} ({matched_products[0].get('match_count', 0)} ingredients matched)")
+            top_match = matched_products[0]
+            print(f"  Top match: {top_match.get('productName', 'Unknown')[:50]}")
+            print(f"    - Match count: {top_match.get('match_count', 0)}/{len(normalized_input_ingredients)}")
+            print(f"    - Match percentage: {top_match.get('match_percentage', 0)}%")
+            print(f"    - Active matches: {top_match.get('active_match_count', 0)}")
+            print(f"    - Matched ingredients: {top_match.get('matched_ingredients', [])[:5]}")
         else:
-            print(f"  WARNING: No products matched!")
+            print(f"  ⚠️  WARNING: No products matched!")
             if len(all_products) > 0:
                 print(f"  Debug: Checked {len(all_products)} products but found no matches")
-                print(f"  Debug: This might indicate ingredient format mismatch or database structure issue")
+                print(f"  Debug: Sample input ingredients: {normalized_input_ingredients[:5]}")
+                # Show a sample product's ingredients for debugging
+                if len(all_products) > 0:
+                    sample = all_products[0]
+                    sample_ing = sample.get("ingredients", "")
+                    if isinstance(sample_ing, list) and len(sample_ing) > 0:
+                        print(f"  Debug: Sample product ingredients (first 5): {sample_ing[:5]}")
+                    elif isinstance(sample_ing, str):
+                        parsed = parse_inci_string(sample_ing[:200])
+                        print(f"  Debug: Sample product ingredients (parsed, first 5): {parsed[:5]}")
+            else:
+                print(f"  Debug: No products found in database to check")
         print(f"  Processing time: {processing_time:.2f}s")
         print(f"{'='*60}\n")
         
