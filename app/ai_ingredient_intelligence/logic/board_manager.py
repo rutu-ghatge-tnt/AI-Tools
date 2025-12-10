@@ -96,12 +96,18 @@ async def get_board_detail(user_id: str, board_id: str) -> Optional[Dict[str, An
         return None
     
     # Get all products for this board
+    print(f"DEBUG: Getting products for board {board_id} (ObjectId: {board_obj_id})")
     products_cursor = inspiration_products_col.find({"board_id": board_obj_id}).sort("date_added", -1)
     products = []
+    
+    product_count_before = await inspiration_products_col.count_documents({"board_id": board_obj_id})
+    print(f"DEBUG: Found {product_count_before} products in database for this board")
     
     async for product_doc in products_cursor:
         product = await _format_product(product_doc)
         products.append(product)
+    
+    print(f"DEBUG: Formatted {len(products)} products for response")
     
     # Calculate stats
     if products:

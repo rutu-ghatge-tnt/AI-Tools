@@ -290,6 +290,44 @@ class MarketResearchResponse(BaseModel):
     total_matched: int = Field(0, description="Total number of matched products")
     processing_time: float = Field(0.0, description="Time taken for processing (in seconds)")
     input_type: str = Field(..., description="Type of input processed")
+    ai_analysis: Optional[str] = Field(None, description="AI analysis message when no actives found (e.g., 'This formulation contains no defined active ingredient...')")
+    ai_product_type: Optional[str] = Field(None, description="Product type identified by AI (e.g., 'cleanser', 'lotion', 'cream')")
+    ai_reasoning: Optional[str] = Field(None, description="AI reasoning for ingredient selection and matching strategy")
+
+
+class MarketResearchHistoryItem(BaseModel):
+    """Schema for market research history item"""
+    id: Optional[str] = Field(None, description="History item ID")
+    user_id: Optional[str] = Field(None, description="User ID who created this history")
+    name: str = Field(..., description="Name for this market research")
+    tag: Optional[str] = Field(None, description="Tag for categorization")
+    input_type: str = Field(..., description="Input type: 'inci' or 'url'")
+    input_data: str = Field(..., description="Input data (INCI list or URL)")
+    research_result: Optional[Dict] = Field(None, description="Full market research result")
+    ai_analysis: Optional[str] = Field(None, description="AI analysis message")
+    ai_product_type: Optional[str] = Field(None, description="Product type identified by AI")
+    ai_reasoning: Optional[str] = Field(None, description="AI reasoning")
+    notes: Optional[str] = Field(None, description="User notes for this research")
+    created_at: Optional[str] = Field(None, description="Creation timestamp")
+
+
+class SaveMarketResearchHistoryRequest(BaseModel):
+    """Request schema for saving market research history"""
+    name: str = Field(..., description="Name for this market research")
+    tag: Optional[str] = Field(None, description="Tag for categorization")
+    input_type: str = Field(..., description="Input type: 'inci' or 'url'")
+    input_data: str = Field(..., description="Input data (INCI list or URL)")
+    research_result: Optional[Dict] = Field(None, description="Full market research result")
+    ai_analysis: Optional[str] = Field(None, description="AI analysis message")
+    ai_product_type: Optional[str] = Field(None, description="Product type identified by AI")
+    ai_reasoning: Optional[str] = Field(None, description="AI reasoning")
+    notes: Optional[str] = Field(None, description="User notes")
+
+
+class GetMarketResearchHistoryResponse(BaseModel):
+    """Response schema for getting market research history"""
+    items: List[MarketResearchHistoryItem] = Field(..., description="List of history items")
+    total: int = Field(..., description="Total number of items")
 
 
 # ============================================================================

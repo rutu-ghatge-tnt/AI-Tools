@@ -220,6 +220,9 @@ class FetchProductResponse(BaseModel):
     reviews: Optional[int]
     image: Optional[str]
     ingredients: Optional[List[str]] = Field(default_factory=list)
+    benefits: Optional[List[str]] = Field(default_factory=list)
+    tags: Optional[List[str]] = Field(default_factory=list)
+    target_audience: Optional[List[str]] = Field(default_factory=list)
     success: bool
     message: Optional[str] = None
 

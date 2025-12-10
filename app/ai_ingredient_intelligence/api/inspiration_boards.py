@@ -126,10 +126,11 @@ async def add_product_from_url_endpoint(
         # Fetch product data from URL
         fetched_data = await fetch_product_from_url(request.url)
         
-        if not fetched_data.get("success"):
+        # Be more lenient - if we have any data, proceed (even if success is False)
+        if not fetched_data or (not fetched_data.get("success") and not fetched_data.get("name") and not fetched_data.get("platform")):
             raise HTTPException(
                 status_code=400,
-                detail=fetched_data.get("message", "Failed to fetch product from URL")
+                detail=fetched_data.get("message", "Failed to fetch product from URL") if fetched_data else "Failed to fetch product from URL"
             )
         
         # Add product to board
@@ -142,6 +143,9 @@ async def add_product_from_url_endpoint(
     except HTTPException:
         raise
     except Exception as e:
+        import traceback
+        print(f"ERROR adding product: {str(e)}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 

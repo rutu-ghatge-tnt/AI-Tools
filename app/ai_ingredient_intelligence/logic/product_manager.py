@@ -61,12 +61,33 @@ async def add_product_from_url(
         "updated_at": datetime.utcnow()
     }
     
+    print(f"DEBUG: Inserting product for board {board_id}, user {user_id}")
+    print(f"DEBUG: Product data: name={product_data.get('name')}, brand={product_data.get('brand')}, url={product_data.get('url')}")
+    
     result = await inspiration_products_col.insert_one(product_data)
     
-    return await _format_product({
+    print(f"DEBUG: Product inserted with ID: {result.inserted_id}")
+    
+    # Update board's updated_at timestamp
+    await inspiration_boards_col.update_one(
+        {"_id": board_obj_id},
+        {"$set": {"updated_at": datetime.utcnow()}}
+    )
+    
+    # Verify the product was inserted
+    verify_product = await inspiration_products_col.find_one({"_id": result.inserted_id})
+    print(f"DEBUG: Verification - Product found in DB: {verify_product is not None}")
+    if verify_product:
+        print(f"DEBUG: Product board_id in DB: {verify_product.get('board_id')}, expected: {board_obj_id}")
+    
+    formatted_product = await _format_product({
         **product_data,
         "_id": result.inserted_id
     })
+    
+    print(f"DEBUG: Returning formatted product: {formatted_product.get('product_id')}")
+    
+    return formatted_product
 
 
 async def add_product_manual(

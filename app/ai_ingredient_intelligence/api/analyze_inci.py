@@ -18,7 +18,27 @@ from app.ai_ingredient_intelligence.logic.bis_rag import (
     BIS_CHROMA_DB_PATH
 )
 from app.ai_ingredient_intelligence.logic.url_scraper import URLScraper
-from app.ai_ingredient_intelligence.logic.cas_api import get_synonyms_batch
+from app.ai_ingredient_intelligence.logic.cas_api import get_synonyms_batch, get_synonyms_for_ingredient
+
+# Claude AI setup for intelligent matching
+try:
+    import anthropic
+    ANTHROPIC_AVAILABLE = True
+except ImportError:
+    ANTHROPIC_AVAILABLE = False
+    anthropic = None
+
+claude_api_key = os.getenv("CLAUDE_API_KEY")
+claude_model = os.getenv("CLAUDE_MODEL") or os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929"
+
+if ANTHROPIC_AVAILABLE and claude_api_key:
+    try:
+        claude_client = anthropic.Anthropic(api_key=claude_api_key)
+    except Exception as e:
+        print(f"Warning: Could not initialize Claude client: {e}")
+        claude_client = None
+else:
+    claude_client = None
 from app.ai_ingredient_intelligence.utils.inci_parser import parse_inci_string
 from app.ai_ingredient_intelligence.models.schemas import (
     AnalyzeInciRequest,
@@ -38,9 +58,12 @@ from app.ai_ingredient_intelligence.models.schemas import (
     MarketResearchRequest,  # ⬅️ new schema for market research
     MarketResearchResponse,  # ⬅️ new schema for market research response
     MarketResearchProduct,  # ⬅️ new schema for market research product
+    MarketResearchHistoryItem,  # ⬅️ new schema for market research history
+    SaveMarketResearchHistoryRequest,  # ⬅️ new schema for saving market research history
+    GetMarketResearchHistoryResponse,  # ⬅️ new schema for getting market research history
 )
 from app.ai_ingredient_intelligence.db.mongodb import db
-from app.ai_ingredient_intelligence.db.collections import distributor_col, decode_history_col, compare_history_col, branded_ingredients_col, inci_col
+from app.ai_ingredient_intelligence.db.collections import distributor_col, decode_history_col, compare_history_col, market_research_history_col, branded_ingredients_col, inci_col
 from datetime import datetime, timezone, timedelta
 from bson import ObjectId
 
@@ -1414,6 +1437,207 @@ async def get_distributor_by_ingredient(ingredient_name: str, ingredient_id: Opt
         raise HTTPException(status_code=500, detail=f"Failed to fetch distributors: {str(e)}")
 
 
+@router.post("/distributor/by-ingredients")
+async def get_distributors_by_ingredients(payload: dict):
+    """
+    Get distributor information for multiple ingredients in a single batch call
+    
+    Request body:
+    {
+        "ingredients": [
+            {"name": "Ingredient1", "id": "optional_id1"},
+            {"name": "Ingredient2", "id": "optional_id2"},
+            ...
+        ]
+    }
+    
+    Returns:
+    {
+        "Ingredient1": [distributor1, distributor2, ...],
+        "Ingredient2": [distributor3, ...],
+        ...
+    }
+    """
+    try:
+        if "ingredients" not in payload or not isinstance(payload["ingredients"], list):
+            raise HTTPException(status_code=400, detail="Request must contain 'ingredients' array")
+        
+        ingredients = payload["ingredients"]
+        if not ingredients:
+            return {}
+        
+        # Collect all ingredient IDs and names
+        all_ingredient_ids = []
+        all_ingredient_names = []
+        ingredient_id_map = {}  # Maps ingredient_name -> list of IDs
+        ingredient_name_to_key = {}  # Maps normalized name to original key
+        
+        for ing in ingredients:
+            if not isinstance(ing, dict) or "name" not in ing:
+                continue
+            
+            ingredient_name = ing["name"]
+            ingredient_id = ing.get("id")
+            
+            # Normalize name for lookup
+            normalized_name = ingredient_name.strip().lower()
+            ingredient_name_to_key[normalized_name] = ingredient_name
+            
+            # If ID provided, use it
+            if ingredient_id:
+                try:
+                    ObjectId(ingredient_id)  # Validate format
+                    all_ingredient_ids.append(ingredient_id)
+                    if ingredient_name not in ingredient_id_map:
+                        ingredient_id_map[ingredient_name] = []
+                    ingredient_id_map[ingredient_name].append(ingredient_id)
+                except:
+                    pass
+            
+            all_ingredient_names.append(ingredient_name)
+        
+        # If no IDs provided, lookup IDs from names
+        if not all_ingredient_ids:
+            for ing in ingredients:
+                if not isinstance(ing, dict) or "name" not in ing:
+                    continue
+                ingredient_name = ing["name"]
+                async for branded_ingredient in branded_ingredients_col.find(
+                    {"ingredient_name": {"$regex": f"^{ingredient_name}$", "$options": "i"}}
+                ):
+                    ing_id_str = str(branded_ingredient["_id"])
+                    all_ingredient_ids.append(ing_id_str)
+                    if ingredient_name not in ingredient_id_map:
+                        ingredient_id_map[ingredient_name] = []
+                    ingredient_id_map[ingredient_name].append(ing_id_str)
+        
+        # Build query conditions
+        query_conditions = []
+        
+        # Primary: Search by ingredientIds array using $in operator
+        if all_ingredient_ids:
+            ingredient_ids_as_objectids = []
+            for ing_id_str in all_ingredient_ids:
+                try:
+                    ingredient_ids_as_objectids.append(ObjectId(ing_id_str))
+                except:
+                    pass
+            
+            if ingredient_ids_as_objectids:
+                query_conditions.append({
+                    "$or": [
+                        {"ingredientIds": {"$in": ingredient_ids_as_objectids}},  # ObjectId format
+                        {"ingredientIds": {"$in": all_ingredient_ids}}  # String format
+                    ]
+                })
+        
+        # Backward compatibility: Also search by ingredient names (case-insensitive)
+        if all_ingredient_names:
+            name_regex_conditions = [
+                {"ingredientName": {"$regex": f"^{name}$", "$options": "i"}}
+                for name in all_ingredient_names
+            ]
+            if name_regex_conditions:
+                query_conditions.append({"$or": name_regex_conditions})
+        
+        # Build final query
+        if not query_conditions:
+            return {}
+        
+        query = {"$or": query_conditions} if len(query_conditions) > 1 else query_conditions[0]
+        
+        # Single database query for all distributors
+        all_distributors = await distributor_col.find(query).sort("createdAt", -1).to_list(length=None)
+        
+        # Process distributors: convert ObjectId to string and fetch ingredient names
+        processed_distributors = []
+        for distributor in all_distributors:
+            distributor["_id"] = str(distributor["_id"])
+            
+            # Fetch ingredientName from ingredientIds
+            if "ingredientIds" in distributor and distributor.get("ingredientIds"):
+                ingredient_names = []
+                for ing_id in distributor["ingredientIds"]:
+                    try:
+                        if isinstance(ing_id, str):
+                            try:
+                                ing_id_obj = ObjectId(ing_id)
+                            except:
+                                continue
+                        else:
+                            ing_id_obj = ing_id
+                        
+                        ing_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
+                        if ing_doc:
+                            ingredient_names.append(ing_doc.get("ingredient_name", ""))
+                    except Exception as e:
+                        pass
+                
+                if ingredient_names:
+                    distributor["ingredientName"] = ingredient_names[0] if len(ingredient_names) == 1 else ", ".join(ingredient_names)
+                else:
+                    distributor["ingredientName"] = distributor.get("ingredientName", "")
+            else:
+                distributor["ingredientName"] = distributor.get("ingredientName", "")
+            
+            processed_distributors.append(distributor)
+        
+        # Group distributors by ingredient name
+        result_map = {}
+        
+        # Initialize result map with empty arrays for all requested ingredients
+        for ing in ingredients:
+            if isinstance(ing, dict) and "name" in ing:
+                result_map[ing["name"]] = []
+        
+        # Group distributors by matching ingredient
+        for distributor in processed_distributors:
+            distributor_ingredient_name = distributor.get("ingredientName", "")
+            
+            # Try to match distributor to requested ingredients
+            matched = False
+            for ing in ingredients:
+                if not isinstance(ing, dict) or "name" not in ing:
+                    continue
+                
+                ingredient_name = ing["name"]
+                normalized_name = ingredient_name.strip().lower()
+                distributor_normalized = distributor_ingredient_name.strip().lower()
+                
+                # Check if distributor matches this ingredient
+                # Match by exact name or if distributor's ingredientIds contains this ingredient's ID
+                if (normalized_name == distributor_normalized or 
+                    (ingredient_name in ingredient_id_map and 
+                     distributor.get("ingredientIds") and
+                     any(str(ing_id) in [str(x) for x in distributor.get("ingredientIds", [])] 
+                         for ing_id in ingredient_id_map[ingredient_name]))):
+                    if ingredient_name not in result_map:
+                        result_map[ingredient_name] = []
+                    result_map[ingredient_name].append(distributor)
+                    matched = True
+                    break
+            
+            # If no match found but distributor has ingredientName, try fuzzy match
+            if not matched and distributor_ingredient_name:
+                for ing in ingredients:
+                    if not isinstance(ing, dict) or "name" not in ing:
+                        continue
+                    ingredient_name = ing["name"]
+                    if ingredient_name.strip().lower() == distributor_ingredient_name.strip().lower():
+                        if ingredient_name not in result_map:
+                            result_map[ingredient_name] = []
+                        result_map[ingredient_name].append(distributor)
+                        break
+        
+        return result_map
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error fetching distributors in batch: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch distributors: {str(e)}")
+
+
 @router.post("/compare-products", response_model=CompareProductsResponse)
 async def compare_products(payload: dict):
     """
@@ -2677,11 +2901,518 @@ async def delete_compare_history(history_id: str, user_id: Optional[str] = Heade
         )
 
 
+# ============================================================================
+# AI-POWERED INGREDIENT IDENTIFICATION FOR MARKET RESEARCH
+# ============================================================================
+
+async def analyze_formulation_and_suggest_matching_with_ai(
+    original_ingredients: List[str],
+    normalized_ingredients: List[str],
+    category_map: Dict[str, str]
+) -> Dict[str, any]:
+    """
+    Use Claude AI to analyze formulation and suggest what ingredients/products to match
+    for market research when no active ingredients are found in the database.
+    
+    Returns dict with:
+    - analysis: AI's analysis message
+    - product_type: Type of product (cleanser, lotion, etc.)
+    - ingredients_to_match: List of normalized ingredient names to use for matching
+    """
+    if not claude_client:
+        return {
+            "analysis": None,
+            "product_type": None,
+            "ingredients_to_match": [],
+            "reasoning": None
+        }
+    
+    print(f"    [AI Function] Analyzing formulation with {len(original_ingredients)} ingredients...")
+    
+    # Build context about what we found
+    categorized_ingredients = []
+    uncategorized_ingredients = []
+    
+    for norm_ing in normalized_ingredients:
+        category = category_map.get(norm_ing)
+        original = next((ing for ing in original_ingredients if ing.strip().lower() == norm_ing), norm_ing)
+        if category:
+            categorized_ingredients.append(f"- {original} → {category}")
+        else:
+            uncategorized_ingredients.append(f"- {original}")
+    
+    system_prompt = """You are an expert cosmetic chemist analyzing formulations for market research matching.
+
+Your task is to:
+1. Analyze the formulation to determine if it has active ingredients
+2. Identify the product type (cleanser, lotion, serum, etc.)
+3. If no actives found, provide a clear analysis message
+4. Suggest which ingredients should be used for matching similar products
+
+ANALYSIS APPROACH:
+- First, check if there are any therapeutic/active ingredients (moisturizers like urea/glycerin, sunscreens, acne actives, soothing agents, etc.)
+- If NO actives found, provide a message like: "This formulation contains no defined active ingredient (e.g., no moisturizer like urea/glycerin, no sunscreen, no acne actives, no soothing agents, etc.). Based on ingredients, it resembles a [product_type]."
+- Identify the product type: cleanser, lotion base, cream base, shampoo, conditioner, etc.
+- Based on the product type, suggest which ingredients to use for matching (even if they're excipients, they can help find similar base formulations)
+
+MATCHING STRATEGY:
+- If actives exist: Use those for matching
+- If no actives: Use key functional ingredients that define the product type (e.g., for cleansers: surfactants; for lotions: emollients, humectants)
+
+OUTPUT FORMAT:
+Return a JSON object with this structure:
+{
+  "analysis": "Your analysis message (e.g., 'This formulation contains no defined active ingredient...')",
+  "product_type": "cleanser" | "lotion" | "cream" | "serum" | "shampoo" | "conditioner" | "other",
+  "ingredients_to_match": ["normalized_ingredient1", "normalized_ingredient2", ...],
+  "reasoning": "Brief explanation of matching strategy"
+}
+
+The "ingredients_to_match" array should contain NORMALIZED (lowercase, trimmed) ingredient names from the input list that should be used for matching products."""
+
+    user_prompt = f"""Analyze this formulation and determine the matching strategy for market research.
+
+ORIGINAL INGREDIENT LIST:
+{chr(10).join(original_ingredients[:50])}
+
+CATEGORIZED INGREDIENTS (from database):
+{chr(10).join(categorized_ingredients[:20]) if categorized_ingredients else "None found in database"}
+
+UNCATEGORIZED INGREDIENTS (not in database):
+{chr(10).join(uncategorized_ingredients[:30]) if uncategorized_ingredients else "None"}
+
+TASK:
+1. Check if this formulation has any active/therapeutic ingredients
+2. If NO actives: Provide analysis message explaining why (e.g., "This formulation contains no defined active ingredient...")
+3. Identify the product type based on ingredient profile
+4. Suggest which ingredients to use for matching (actives if present, or key functional ingredients if no actives)
+5. Return normalized ingredient names for matching
+
+Return your analysis as JSON with the structure specified in the system prompt."""
+
+    try:
+        response = claude_client.messages.create(
+            model=claude_model,
+            max_tokens=2000,
+            temperature=0.2,  # Lower temperature for more consistent classification
+            system=system_prompt,
+            messages=[
+                {"role": "user", "content": user_prompt}
+            ]
+        )
+        
+        if not response.content or len(response.content) == 0:
+            return {
+                "analysis": None,
+                "product_type": None,
+                "ingredients_to_match": [],
+                "reasoning": None
+            }
+        
+        content = response.content[0].text.strip()
+        
+        # Try to extract JSON from the response
+        # Handle cases where response might have markdown code blocks
+        json_match = re.search(r'\{[^{}]*"ingredients_to_match"[^{}]*\}', content, re.DOTALL)
+        if json_match:
+            content = json_match.group(0)
+        elif "```json" in content:
+            content = content.split("```json")[1].split("```")[0].strip()
+        elif "```" in content:
+            content = content.split("```")[1].split("```")[0].strip()
+        
+        result = json.loads(content)
+        analysis = result.get("analysis", "")
+        product_type = result.get("product_type", "")
+        ingredients_to_match = result.get("ingredients_to_match", [])
+        reasoning = result.get("reasoning", "")
+        
+        print(f"    AI Analysis: {analysis}")
+        if product_type:
+            print(f"    Product Type: {product_type}")
+        print(f"    AI Reasoning: {reasoning}")
+        
+        # Normalize the AI-identified ingredients to match our format
+        normalized_actives = []
+        for ai_ing in ingredients_to_match:
+            normalized = re.sub(r"\s+", " ", str(ai_ing).strip()).strip().lower()
+            if normalized and normalized in normalized_ingredients:
+                normalized_actives.append(normalized)
+        
+        return {
+            "analysis": analysis,
+            "product_type": product_type,
+            "ingredients_to_match": normalized_actives,
+            "reasoning": reasoning
+        }
+        
+    except json.JSONDecodeError as e:
+        print(f"    ⚠️  Error parsing AI response as JSON: {e}")
+        print(f"    Response was: {content[:200]}")
+        # Return empty dict instead of empty list to maintain structure
+        return {
+            "analysis": None,
+            "product_type": None,
+            "ingredients_to_match": [],
+            "reasoning": None
+        }
+    except Exception as e:
+        print(f"    ⚠️  Error calling Claude AI: {e}")
+        import traceback
+        traceback.print_exc()
+        # Return empty dict instead of empty list to maintain structure
+        return {
+            "analysis": None,
+            "product_type": None,
+            "ingredients_to_match": [],
+            "reasoning": None
+        }
+
+
+async def enhance_product_ranking_with_ai(
+    products: List[Dict],
+    input_actives: List[str],
+    original_ingredients: List[str]
+) -> List[Dict]:
+    """
+    Use AI to intelligently re-rank products based on ingredient analysis.
+    Considers ingredient importance, concentration, and product similarity.
+    """
+    if not claude_client or len(products) == 0:
+        return products
+    
+    # Limit to top 20 products for AI analysis (to avoid too many API calls)
+    products_to_analyze = products[:20]
+    
+    # Build product summary for AI
+    product_summaries = []
+    for i, product in enumerate(products_to_analyze):
+        product_summaries.append({
+            "index": i,
+            "name": product.get("productName", "Unknown"),
+            "brand": product.get("brand", ""),
+            "matched_actives": product.get("active_ingredients", [])[:5],  # Top 5
+            "match_percentage": product.get("match_percentage", 0),
+            "total_ingredients": product.get("total_ingredients", 0)
+        })
+    
+    system_prompt = """You are an expert cosmetic product analyst specializing in market research and product matching.
+
+Your task is to analyze and rank products based on their similarity to a target product's active ingredients.
+
+RANKING CRITERIA (in order of importance):
+1. **Active Ingredient Match Quality**: Products with more matching active ingredients rank higher
+2. **Ingredient Importance**: Key actives (e.g., Retinol, Niacinamide, Salicylic Acid) are more important than less common ones
+3. **Match Completeness**: Products that match ALL or most target actives rank higher than partial matches
+4. **Product Relevance**: Products with similar active profiles are more relevant
+
+OUTPUT FORMAT:
+Return a JSON object with this structure:
+{
+  "ranked_indices": [3, 1, 5, 2, ...],  // Product indices in order of relevance (0-based)
+  "reasoning": "Brief explanation of ranking logic"
+}
+
+The ranked_indices array should contain the product indices (from the input) in order from most relevant to least relevant."""
+
+    user_prompt = f"""Analyze and rank the following products based on their similarity to the target product's active ingredients.
+
+TARGET PRODUCT ACTIVE INGREDIENTS:
+{chr(10).join(f"- {ing}" for ing in input_actives[:10])}
+
+PRODUCTS TO RANK:
+{json.dumps(product_summaries, indent=2)}
+
+TASK:
+1. Analyze each product's matched active ingredients
+2. Compare them to the target product's active ingredients
+3. Rank products from most similar/relevant to least similar
+4. Consider both the number of matches and the importance of matched ingredients
+
+Return your ranking as JSON with the structure specified in the system prompt."""
+
+    try:
+        response = claude_client.messages.create(
+            model=claude_model,
+            max_tokens=1500,
+            temperature=0.2,
+            system=system_prompt,
+            messages=[
+                {"role": "user", "content": user_prompt}
+            ]
+        )
+        
+        if not response.content or len(response.content) == 0:
+            return products
+        
+        content = response.content[0].text.strip()
+        
+        # Extract JSON
+        json_match = re.search(r'\{[^{}]*"ranked_indices"[^{}]*\}', content, re.DOTALL)
+        if json_match:
+            content = json_match.group(0)
+        elif "```json" in content:
+            content = content.split("```json")[1].split("```")[0].strip()
+        elif "```" in content:
+            content = content.split("```")[1].split("```")[0].strip()
+        
+        result = json.loads(content)
+        ranked_indices = result.get("ranked_indices", [])
+        reasoning = result.get("reasoning", "")
+        
+        print(f"    AI Ranking Reasoning: {reasoning}")
+        
+        # Re-order products based on AI ranking
+        if ranked_indices and len(ranked_indices) == len(products_to_analyze):
+            # Create mapping from index to product
+            reordered = []
+            used_indices = set()
+            for idx in ranked_indices:
+                if 0 <= idx < len(products_to_analyze) and idx not in used_indices:
+                    reordered.append(products_to_analyze[idx])
+                    used_indices.add(idx)
+            
+            # Add any products not in the AI ranking (shouldn't happen, but safety check)
+            for i, product in enumerate(products_to_analyze):
+                if i not in used_indices:
+                    reordered.append(product)
+            
+            # Combine with products not analyzed
+            return reordered + products[len(products_to_analyze):]
+        
+        return products
+        
+    except Exception as e:
+        print(f"    ⚠️  Error in AI ranking: {e}")
+        return products
+
+
+# ============================================================================
+# MARKET RESEARCH HISTORY ENDPOINTS
+# ============================================================================
+
+@router.post("/save-market-research-history")
+async def save_market_research_history(payload: dict, user_id: Optional[str] = Header(None, alias="X-User-Id")):
+    """
+    Save market research history (user-specific)
+    
+    Request body:
+    {
+        "name": "Product Name",
+        "tag": "optional-tag",
+        "input_type": "inci" or "url",
+        "input_data": "ingredient list or URL",
+        "research_result": {...} (optional),
+        "ai_analysis": "AI analysis message",
+        "ai_product_type": "Product type",
+        "ai_reasoning": "AI reasoning",
+        "notes": "User notes"
+    }
+    
+    Headers:
+    - X-User-Id: User ID (optional, can also be in payload)
+    """
+    try:
+        if "name" not in payload:
+            raise HTTPException(status_code=400, detail="name is required")
+        if "input_type" not in payload:
+            raise HTTPException(status_code=400, detail="input_type is required")
+        if "input_data" not in payload:
+            raise HTTPException(status_code=400, detail="input_data is required")
+        
+        user_id_value = user_id or payload.get("user_id")
+        if not user_id_value:
+            raise HTTPException(status_code=400, detail="user_id is required (provide in header or payload)")
+        
+        name = payload.get("name", "").strip()
+        tag = payload.get("tag", "").strip() or None
+        input_type = payload.get("input_type", "").lower()
+        input_data = payload.get("input_data", "").strip()
+        research_result = payload.get("research_result")
+        ai_analysis = payload.get("ai_analysis")
+        ai_product_type = payload.get("ai_product_type")
+        ai_reasoning = payload.get("ai_reasoning")
+        notes = payload.get("notes", "").strip() or None
+        
+        if input_type not in ["inci", "url"]:
+            raise HTTPException(status_code=400, detail="input_type must be 'inci' or 'url'")
+        
+        history_doc = {
+            "user_id": user_id_value,
+            "name": name,
+            "tag": tag,
+            "input_type": input_type,
+            "input_data": input_data,
+            "research_result": research_result,
+            "ai_analysis": ai_analysis,
+            "ai_product_type": ai_product_type,
+            "ai_reasoning": ai_reasoning,
+            "notes": notes,
+            "created_at": (datetime.now(timezone(timedelta(hours=5, minutes=30)))).isoformat()
+        }
+        
+        result = await market_research_history_col.insert_one(history_doc)
+        
+        return {
+            "success": True,
+            "id": str(result.inserted_id),
+            "message": "Market research history saved successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error saving market research history: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to save market research history: {str(e)}"
+        )
+
+
+@router.get("/market-research-history", response_model=GetMarketResearchHistoryResponse)
+async def get_market_research_history(
+    search: Optional[str] = None,
+    limit: int = 50,
+    skip: int = 0,
+    user_id: Optional[str] = Header(None, alias="X-User-Id")
+):
+    """
+    Get market research history (user-specific)
+    
+    Query parameters:
+    - search: Search term for name or tag (optional)
+    - limit: Number of results (default: 50)
+    - skip: Number of results to skip (default: 0)
+    
+    Headers:
+    - X-User-Id: User ID (required)
+    """
+    try:
+        if not user_id:
+            raise HTTPException(status_code=400, detail="User ID is required. Please provide X-User-Id header")
+        
+        query = {"user_id": user_id}
+        
+        if search:
+            query["$or"] = [
+                {"name": {"$regex": search, "$options": "i"}},
+                {"tag": {"$regex": search, "$options": "i"}}
+            ]
+        
+        total = await market_research_history_col.count_documents(query)
+        cursor = market_research_history_col.find(query).sort("created_at", -1).skip(skip).limit(limit)
+        items = await cursor.to_list(length=limit)
+        
+        for item in items:
+            item["id"] = str(item["_id"])
+            del item["_id"]
+        
+        return GetMarketResearchHistoryResponse(
+            items=[MarketResearchHistoryItem(**item) for item in items],
+            total=total
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error fetching market research history: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch market research history: {str(e)}"
+        )
+
+
+@router.patch("/market-research-history/{history_id}")
+async def update_market_research_history(history_id: str, payload: dict, user_id: Optional[str] = Header(None, alias="X-User-Id")):
+    """
+    Update market research history item (user-specific)
+    Allows editing name, tag, and notes
+    """
+    try:
+        if not user_id:
+            raise HTTPException(status_code=400, detail="User ID is required. Please provide X-User-Id header")
+        
+        update_data = {}
+        if "name" in payload:
+            update_data["name"] = payload["name"].strip()
+        if "tag" in payload:
+            update_data["tag"] = payload["tag"].strip() or None
+        if "notes" in payload:
+            update_data["notes"] = payload["notes"].strip() or None
+        
+        if not update_data:
+            raise HTTPException(status_code=400, detail="No fields to update")
+        
+        result = await market_research_history_col.update_one(
+            {"_id": ObjectId(history_id), "user_id": user_id},
+            {"$set": update_data}
+        )
+        
+        if result.matched_count == 0:
+            raise HTTPException(status_code=404, detail="History item not found or you don't have permission to update it")
+        
+        return {
+            "success": True,
+            "message": "Market research history updated successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error updating market research history: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to update market research history: {str(e)}"
+        )
+
+
+@router.delete("/market-research-history/{history_id}")
+async def delete_market_research_history(history_id: str, user_id: Optional[str] = Header(None, alias="X-User-Id")):
+    """
+    Delete market research history item (user-specific)
+    """
+    try:
+        if not user_id:
+            raise HTTPException(status_code=400, detail="User ID is required. Please provide X-User-Id header")
+        
+        result = await market_research_history_col.delete_one({
+            "_id": ObjectId(history_id),
+            "user_id": user_id
+        })
+        
+        if result.deleted_count == 0:
+            raise HTTPException(status_code=404, detail="History item not found or you don't have permission to delete it")
+        
+        return {
+            "success": True,
+            "message": "Market research history deleted successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error deleting market research history: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to delete market research history: {str(e)}"
+        )
+
+
 # Market Research endpoint - matches ingredients with externalProducts collection
 @router.post("/market-research", response_model=MarketResearchResponse)
 async def market_research(payload: dict):
     """
     Market Research: Match products from URL or INCI list with externalProducts collection.
+    
+    IMPORTANT: Only matches ACTIVE ingredients. Shows all products that have at least one active ingredient match.
     
     Request body:
     {
@@ -2692,12 +3423,15 @@ async def market_research(payload: dict):
     
     Returns:
     {
-        "products": [list of matched products with images and full details, sorted by active matches and match percentage],
+        "products": [list of matched products with images and full details, sorted by active match percentage],
         "extracted_ingredients": [list of ingredients extracted from input],
-        "total_matched": number of matched products,
+        "total_matched": number of matched products (with at least one active ingredient match),
         "processing_time": time taken,
         "input_type": "url" or "inci"
     }
+    
+    Note: Products are included if they match at least one active ingredient from the input.
+    Excipients and unknown ingredients are ignored for matching purposes.
     """
     start = time.time()
     scraper = None
@@ -2768,24 +3502,16 @@ async def market_research(payload: dict):
         print(f"Extracted {len(ingredients)} ingredients for market research")
         print(f"Ingredients list: {ingredients}")
         
-        # Normalize ingredients for matching (case-insensitive, trimmed, remove trailing punctuation)
-        # Also create variations for better matching (e.g., "Niacinamide" variations)
+        # Normalize ingredients for matching - use same normalization as database
+        # Database uses: re.sub(r"\s+", " ", s).strip().lower()
+        import re
         normalized_input_ingredients = []
         for ing in ingredients:
             if ing and ing.strip():
-                # Clean and normalize: strip, remove trailing punctuation, lowercase
-                cleaned = ing.strip().rstrip('.,;!?').strip()
-                if cleaned:
-                    normalized = cleaned.lower()
+                # Use same normalization as database: normalize spaces, strip, lowercase
+                normalized = re.sub(r"\s+", " ", ing.strip()).strip().lower()
+                if normalized:
                     normalized_input_ingredients.append(normalized)
-                    # Also add version without common prefixes/suffixes for better matching
-                    # Remove common prefixes like "extract", "oil", etc. for partial matching
-                    if len(normalized) > 5:
-                        # Add base word if it ends with common suffixes
-                        if normalized.endswith(" extract"):
-                            normalized_input_ingredients.append(normalized.replace(" extract", ""))
-                        if normalized.endswith(" oil"):
-                            normalized_input_ingredients.append(normalized.replace(" oil", ""))
         
         # Remove duplicates while preserving order
         seen = set()
@@ -2794,6 +3520,11 @@ async def market_research(payload: dict):
         print(f"Normalized {len(ingredients)} input ingredients to {len(normalized_input_ingredients)} unique normalized ingredients")
         
         print(f"Normalized ingredients for matching ({len(normalized_input_ingredients)}): {normalized_input_ingredients[:10]}{'...' if len(normalized_input_ingredients) > 10 else ''}")
+        
+        # Initialize AI analysis variables (will be populated if AI is used)
+        ai_analysis_message = None
+        ai_product_type = None
+        ai_reasoning = None
         
         # Categorize input ingredients into actives and excipients
         print(f"\n{'='*60}")
@@ -2805,20 +3536,36 @@ async def market_research(payload: dict):
         
         if normalized_input_ingredients:
             try:
-                # Query INCI collection for categories
+                # Query INCI collection for categories (exact match only)
                 inci_query = {
                     "inciName_normalized": {"$in": normalized_input_ingredients}
                 }
+                print(f"  Querying INCI collection with {len(normalized_input_ingredients)} normalized ingredients...")
+                print(f"  Sample normalized ingredients being queried: {normalized_input_ingredients[:5]}")
                 inci_cursor = inci_col.find(inci_query, {"inciName": 1, "inciName_normalized": 1, "category": 1})
                 inci_results = await inci_cursor.to_list(length=None)
+                print(f"  Found {len(inci_results)} INCI records in database")
                 
                 # Build mapping of normalized name -> category
                 input_category_map = {}
                 for inci_doc in inci_results:
                     normalized = inci_doc.get("inciName_normalized", "").strip().lower()
                     category = inci_doc.get("category", "")
+                    inci_name = inci_doc.get("inciName", "")
                     if normalized and category:
                         input_category_map[normalized] = category
+                        if len(input_category_map) <= 5:  # Log first 5 matches
+                            print(f"    Matched: '{normalized}' -> category: '{category}' (INCI: {inci_name})")
+                
+                print(f"  Built category map with {len(input_category_map)} entries")
+                if len(input_category_map) == 0 and len(normalized_input_ingredients) > 0:
+                    print(f"  ⚠️  WARNING: No matches found in database!")
+                    print(f"  This means the normalized names don't match what's in the database.")
+                    print(f"  Sample query values: {normalized_input_ingredients[:3]}")
+                    # Try to find a sample from database to compare
+                    sample_doc = await inci_col.find_one({}, {"inciName": 1, "inciName_normalized": 1, "category": 1})
+                    if sample_doc:
+                        print(f"  Sample DB doc: inciName='{sample_doc.get('inciName')}', inciName_normalized='{sample_doc.get('inciName_normalized')}'")
                 
                 # Categorize input ingredients
                 for normalized_ing in normalized_input_ingredients:
@@ -2835,6 +3582,14 @@ async def market_research(payload: dict):
                 print(f"  Input unknown (no category): {len(input_unknown)}")
                 if input_actives:
                     print(f"  Sample actives: {input_actives[:5]}")
+                else:
+                    print(f"  ⚠️  WARNING: No active ingredients found!")
+                    print(f"  This could mean:")
+                    print(f"    1. Ingredients are not categorized in the database")
+                    print(f"    2. Normalized names don't match")
+                    print(f"    3. All ingredients are excipients")
+                    print(f"  Sample normalized ingredients: {normalized_input_ingredients[:5]}")
+                    print(f"  Sample category map entries: {list(input_category_map.items())[:5] if input_category_map else 'None'}")
                 if input_excipients:
                     print(f"  Sample excipients: {input_excipients[:5]}")
             except Exception as e:
@@ -2843,6 +3598,65 @@ async def market_research(payload: dict):
                 traceback.print_exc()
                 # If categorization fails, treat all as unknown (will match all)
                 input_unknown = normalized_input_ingredients.copy()
+                print(f"  Fallback: Treating all {len(input_unknown)} ingredients as unknown")
+        
+        # If no actives found, use AI to analyze formulation and suggest what to match
+        if len(input_actives) == 0:
+            print(f"\n⚠️  No active ingredients found in database lookup!")
+            print(f"  Using AI to analyze formulation and suggest matching strategy...")
+            print(f"  Total input ingredients: {len(normalized_input_ingredients)}")
+            
+            # Use Claude AI to analyze formulation and suggest what to match
+            if claude_client and normalized_input_ingredients:
+                print(f"  🤖 Calling Claude AI to analyze formulation...")
+                try:
+                    ai_analysis = await analyze_formulation_and_suggest_matching_with_ai(
+                        ingredients,
+                        normalized_input_ingredients,
+                        input_category_map
+                    )
+                    
+                    # Store AI analysis for response (always store, even if no ingredients to match)
+                    if ai_analysis:
+                        # Get values, convert empty strings to None
+                        analysis_val = ai_analysis.get("analysis")
+                        ai_analysis_message = analysis_val if analysis_val and analysis_val.strip() else None
+                        
+                        product_type_val = ai_analysis.get("product_type")
+                        ai_product_type = product_type_val if product_type_val and product_type_val.strip() else None
+                        
+                        reasoning_val = ai_analysis.get("reasoning")
+                        ai_reasoning = reasoning_val if reasoning_val and reasoning_val.strip() else None
+                        
+                        print(f"  📊 AI Analysis stored: {ai_analysis_message}")
+                        print(f"  🏷️  Product Type stored: {ai_product_type}")
+                        print(f"  💭 AI Reasoning stored: {ai_reasoning}")
+                    
+                    if ai_analysis and ai_analysis.get("ingredients_to_match"):
+                        ai_identified_actives = ai_analysis.get("ingredients_to_match", [])
+                        print(f"  ✓ AI suggested {len(ai_identified_actives)} ingredients to match: {ai_identified_actives[:5]}")
+                        
+                        # Add AI-identified actives to input_actives
+                        input_actives.extend(ai_identified_actives)
+                        print(f"  ✓ Total active ingredients after AI: {len(input_actives)}")
+                    else:
+                        print(f"  ⚠️  AI could not suggest ingredients to match. Will skip product matching.")
+                        if ai_analysis_message:
+                            print(f"  AI Message: {ai_analysis_message}")
+                except Exception as e:
+                    print(f"  ❌ Error using AI to analyze formulation: {e}")
+                    import traceback
+                    traceback.print_exc()
+            else:
+                if not claude_client:
+                    print(f"  ⚠️  Claude client not available. Cannot use AI matching.")
+                    if not claude_api_key:
+                        print(f"     Reason: CLAUDE_API_KEY environment variable not set")
+                    elif not ANTHROPIC_AVAILABLE:
+                        print(f"     Reason: anthropic package not installed")
+                if not normalized_input_ingredients:
+                    print(f"  ⚠️  No normalized ingredients available for AI analysis.")
+                print(f"  Will skip product matching since no actives to match against.")
         
         # CRITICAL: Always fetch ALL products with ingredients - don't rely on regex query
         # The regex query might not work well with arrays, so we'll do matching in Python
@@ -2913,7 +3727,10 @@ async def market_research(payload: dict):
                     extracted_ingredients=ingredients,
                     total_matched=0,
                     processing_time=round(time.time() - start, 2),
-                    input_type=input_type
+                    input_type=input_type,
+                    ai_analysis=ai_analysis_message,
+                    ai_product_type=ai_product_type,
+                    ai_reasoning=ai_reasoning
                 )
         except Exception as e:
             print(f"\n❌ ERROR fetching products: {e}")
@@ -2970,6 +3787,11 @@ async def market_research(payload: dict):
             )
         
         print(f"🔍 Starting to check {len(all_products)} products for matches...")
+        print(f"  Active ingredients to match against: {len(input_actives)}")
+        if input_actives:
+            print(f"  Active ingredients list: {input_actives[:10]}{'...' if len(input_actives) > 10 else ''}")
+        else:
+            print(f"  ⚠️  NO ACTIVE INGREDIENTS FOUND - will skip all products!")
         matches_found = 0
         
         for idx, product in enumerate(all_products):
@@ -3031,17 +3853,32 @@ async def market_research(payload: dict):
                         normalized_product_ingredients.append(normalized)
                         original_ingredient_map[normalized] = str(ing["name"]).strip()
             
-            # Find matching ingredients - improved matching logic with better word boundary matching
+            # MARKET RESEARCH: Only match active ingredients
+            # Skip this product if no active ingredients in input
+            if len(input_actives) == 0:
+                # No active ingredients to match, skip this product
+                continue
+            
+            # Find matching ingredients - ONLY match active ingredients
             matched_ingredients = []
-            matched_input_indices = set()  # Track which input ingredients were matched
+            matched_active_indices = set()  # Track which active ingredients were matched
             import re
             
+            # Create a mapping from normalized active ingredient to its index in normalized_input_ingredients
+            active_to_index_map = {}
             for idx, input_ing in enumerate(normalized_input_ingredients):
-                input_clean = input_ing.strip()
+                if input_ing in input_actives:
+                    active_to_index_map[input_ing] = idx
+            
+            # Only match active ingredients
+            for active_ing in input_actives:
+                input_clean = active_ing.strip()
                 if not input_clean:
                     continue
                 
-                # Try to match this input ingredient with any product ingredient
+                # Try to match this active ingredient with any product ingredient
+                matched_this_active = False
+                
                 for prod_ing in normalized_product_ingredients:
                     prod_clean = prod_ing.strip()
                     if not prod_clean:
@@ -3072,98 +3909,46 @@ async def market_research(payload: dict):
                         original_ing = original_ingredient_map.get(prod_ing)
                         if original_ing and original_ing not in matched_ingredients:
                             matched_ingredients.append(original_ing)
-                            matched_input_indices.add(idx)
+                            # Track the index of this active ingredient
+                            if active_ing in active_to_index_map:
+                                matched_active_indices.add(active_to_index_map[active_ing])
+                            matched_this_active = True
                             if len(matched_products) < 10:  # Log for first 10 matches for debugging
-                                print(f"  ✓ Matched: '{input_ing}' -> '{original_ing}'")
-                        break  # Found a match for this input ingredient, move to next
+                                print(f"  ✓ Matched active: '{active_ing}' -> '{original_ing}' (product: {product.get('name', 'Unknown')[:30]})")
+                        break  # Found a match for this active ingredient, move to next
+                
+                # Debug: log if we couldn't match this active
+                if not matched_this_active and idx < 3:  # Log for first 3 products
+                    print(f"  ✗ Could not match active '{active_ing}' in product {product.get('name', 'Unknown')[:30]}")
+                    if len(normalized_product_ingredients) > 0:
+                        print(f"    Product has {len(normalized_product_ingredients)} ingredients, sample: {normalized_product_ingredients[:3]}")
             
-            # Calculate match percentage based on INPUT ingredients (not product ingredients)
-            match_count = len(matched_input_indices)
-            total_input_ingredients = len(normalized_input_ingredients)
-            match_percentage = (match_count / total_input_ingredients * 100) if total_input_ingredients > 0 else 0
-            
-            # Track which actives and excipients from input are matched
+            # Calculate match percentage based ONLY on active ingredients
             matched_actives = []
-            matched_excipients = []
-            matched_unknown = []
-            
-            for matched_idx in matched_input_indices:
+            for matched_idx in matched_active_indices:
                 if matched_idx < len(normalized_input_ingredients):
                     matched_ing_normalized = normalized_input_ingredients[matched_idx]
                     if matched_ing_normalized in input_actives:
                         matched_actives.append(matched_ing_normalized)
-                    elif matched_ing_normalized in input_excipients:
-                        matched_excipients.append(matched_ing_normalized)
-                    elif matched_ing_normalized in input_unknown:
-                        matched_unknown.append(matched_ing_normalized)
             
-            # Calculate weighted match score instead of strict filtering
-            # This allows showing top matches even if not 100% perfect
-            match_score = 0.0
+            # Match percentage is based only on active ingredients
+            active_match_count = len(matched_actives)
+            total_active_ingredients = len(input_actives)
+            active_match_percentage = (active_match_count / total_active_ingredients * 100) if total_active_ingredients > 0 else 0
             
-            # Weight factors (can be adjusted)
-            ACTIVE_WEIGHT = 3.0  # Actives are most important
-            EXCIPIENT_WEIGHT = 1.0  # Excipients are less important
-            UNKNOWN_WEIGHT = 0.5  # Unknown ingredients are least important
-            BASE_MATCH_WEIGHT = 1.0  # Base match percentage weight
+            # For compatibility, also calculate overall match (but we won't use it for filtering)
+            match_count = active_match_count
+            total_input_ingredients = len(input_actives)  # Only count actives
+            match_percentage = active_match_percentage  # Same as active match percentage
             
-            # Calculate component scores
-            active_score = 0.0
-            if len(input_actives) > 0:
-                active_match_ratio = len(matched_actives) / len(input_actives)
-                active_score = active_match_ratio * ACTIVE_WEIGHT
-            elif len(input_actives) == 0:
-                # If no actives in input, don't penalize
-                active_score = ACTIVE_WEIGHT
-            
-            excipient_score = 0.0
-            if len(input_excipients) > 0:
-                excipient_match_ratio = len(matched_excipients) / len(input_excipients)
-                excipient_score = excipient_match_ratio * EXCIPIENT_WEIGHT
-            elif len(input_excipients) == 0:
-                excipient_score = EXCIPIENT_WEIGHT
-            
-            unknown_score = 0.0
-            if len(input_unknown) > 0:
-                unknown_match_ratio = len(matched_unknown) / len(input_unknown)
-                unknown_score = unknown_match_ratio * UNKNOWN_WEIGHT
-            elif len(input_unknown) == 0:
-                unknown_score = UNKNOWN_WEIGHT
-            
-            # Base match percentage score (normalized to 0-1)
-            base_match_score = (match_percentage / 100.0) * BASE_MATCH_WEIGHT
-            
-            # Total score: weighted combination
-            total_weight = ACTIVE_WEIGHT + EXCIPIENT_WEIGHT + UNKNOWN_WEIGHT + BASE_MATCH_WEIGHT
-            match_score = (active_score + excipient_score + unknown_score + base_match_score) / total_weight
-            
-            # Normalize to 0-100 for easier understanding
-            match_score_percent = match_score * 100
-            
-            # Include products based on minimum threshold (more flexible than 100% match)
-            # Minimum thresholds:
-            MIN_MATCH_SCORE = 20.0  # Minimum score to include (out of 100)
-            MIN_ACTIVE_MATCH_RATIO = 0.3  # Must match at least 30% of actives (if actives exist)
-            MIN_OVERALL_MATCH = 15.0  # Minimum overall match percentage
-            
-            should_include = False
-            
-            # Check if product meets minimum criteria
-            if match_score_percent >= MIN_MATCH_SCORE:
-                # Additional check: if there are actives, must match at least some of them
-                if len(input_actives) > 0:
-                    active_ratio = len(matched_actives) / len(input_actives)
-                    if active_ratio >= MIN_ACTIVE_MATCH_RATIO and match_percentage >= MIN_OVERALL_MATCH:
-                        should_include = True
-                else:
-                    # No actives in input, just check overall match
-                    if match_percentage >= MIN_OVERALL_MATCH:
-                        should_include = True
+            # MARKET RESEARCH: Include any product that has at least one active ingredient match
+            # No percentage threshold - show all products with active ingredient matches
+            should_include = active_match_count > 0
             
             if len(matched_products) < 5:  # Debug for first 5
-                print(f"  Product match: {match_percentage:.1f}% | Score: {match_score_percent:.1f} | Actives: {len(matched_actives)}/{len(input_actives)}, Excipients: {len(matched_excipients)}/{len(input_excipients)}, Unknown: {len(matched_unknown)}/{len(input_unknown)} | Include: {should_include}")
+                print(f"  Product match (active only): {active_match_percentage:.1f}% | Actives: {len(matched_actives)}/{len(input_actives)} | Include: {should_include}")
             
-            # Include products based on scoring logic
+            # Include products that have at least one active ingredient match
             if should_include:
                 matches_found += 1
                 
@@ -3197,39 +3982,51 @@ async def market_research(payload: dict):
                         if not image and images:
                             image = images[0]
                 
-                # Check which matched ingredients are active
-                # Query ingre_inci collection to get categories for matched ingredients
+                # Since we only match active ingredients, all matched ingredients should be active
+                # But we verify by checking the INCI collection to get the actual active ingredient names
                 matched_ingredients_normalized = [ing.strip().lower() for ing in matched_ingredients]
                 active_ingredients = []
-                active_match_count = 0
                 
                 if matched_ingredients_normalized:
                     try:
-                        # Query INCI collection for categories
+                        # Query INCI collection for categories to verify and get proper names
                         inci_query = {
                             "inciName_normalized": {"$in": matched_ingredients_normalized}
                         }
                         inci_cursor = inci_col.find(inci_query, {"inciName": 1, "inciName_normalized": 1, "category": 1})
                         inci_results = await inci_cursor.to_list(length=None)
                         
-                        # Build mapping of normalized name -> category
+                        # Build mapping of normalized name -> category and INCI name
                         inci_category_map = {}
+                        inci_name_map = {}
                         for inci_doc in inci_results:
                             normalized = inci_doc.get("inciName_normalized", "").strip().lower()
                             category = inci_doc.get("category", "")
+                            inci_name = inci_doc.get("inciName", "")
                             if normalized and category:
                                 inci_category_map[normalized] = category
+                                inci_name_map[normalized] = inci_name
                         
-                        # Check which matched ingredients are active
+                        # Collect active ingredients from matched ingredients
                         for matched_ing in matched_ingredients:
                             normalized = matched_ing.strip().lower()
                             if normalized in inci_category_map:
                                 category = inci_category_map[normalized]
                                 if category == "Active":
-                                    active_ingredients.append(matched_ing)
-                                    active_match_count += 1
+                                    # Use proper INCI name if available, otherwise use matched name
+                                    active_name = inci_name_map.get(normalized, matched_ing)
+                                    if active_name not in active_ingredients:
+                                        active_ingredients.append(active_name)
                     except Exception as e:
                         print(f"  Warning: Error checking active ingredients: {e}")
+                        # Fallback: use matched ingredients as active ingredients
+                        active_ingredients = matched_ingredients.copy()
+                else:
+                    # No matched ingredients, so no active ingredients
+                    active_ingredients = []
+                
+                # active_match_count is the number of input active ingredients that were matched
+                active_match_count = len(matched_actives)
                 
                 # Build product data using correct field names from schema
                 product_data = {
@@ -3242,76 +4039,125 @@ async def market_research(payload: dict):
                     "price": product.get("price"),
                     "salePrice": product.get("salePrice") or product.get("sale_price"),
                     "description": product.get("description"),
-                    "matched_ingredients": matched_ingredients,
-                    "match_count": match_count,
+                    "matched_ingredients": matched_ingredients,  # All matched ingredients (should be active)
+                    "match_count": active_match_count,  # Number of input active ingredients matched
                     "total_ingredients": len(product_ingredients),
-                    "match_percentage": round(match_percentage, 2),
-                    "match_score": round(match_score_percent, 2),  # Weighted match score (0-100)
+                    "match_percentage": round(active_match_percentage, 2),  # Active match percentage
+                    "match_score": round(active_match_percentage, 2),  # Use active match percentage as score
                     "active_match_count": active_match_count,  # Number of active ingredients matched
-                    "active_ingredients": active_ingredients  # List of matched active ingredients
+                    "active_ingredients": active_ingredients  # List of matched active ingredients (verified from INCI)
                 }
                 
-                # Add any other fields from the product
-                for key in ["category", "subcategory", "url", "countryOfOrigin", "manufacturer"]:
-                    if key in product:
+                # Add any other fields from the product (excluding unwanted fields)
+                # Exclude: countryOfOrigin, manufacturer, expiryDate, address, and similar fields
+                excluded_fields = {
+                    "countryOfOrigin", "manufacturer", "expiryDate", "expiry", 
+                    "address", "Address", "Expiry Date", "Country of Origin", 
+                    "Manufacturer", "Address:", "Expiry Date:", "Country of Origin:"
+                }
+                for key in ["category", "subcategory", "url"]:
+                    if key in product and key not in excluded_fields:
                         product_data[key] = product[key]
+                
+                # Also filter out any unwanted fields that might be in the product dict
+                # Clean description if it contains unwanted info
+                if "description" in product_data and product_data["description"]:
+                    desc = product_data["description"]
+                    # Remove patterns like "Expiry Date: ...", "Country of Origin: ...", etc.
+                    import re
+                    patterns_to_remove = [
+                        r"Expiry Date:\s*[^\n]*",
+                        r"Country of Origin:\s*[^\n]*",
+                        r"Manufacturer:\s*[^\n]*",
+                        r"Address:\s*[^\n]*",
+                        r"&nbsp;",
+                    ]
+                    for pattern in patterns_to_remove:
+                        desc = re.sub(pattern, "", desc, flags=re.IGNORECASE)
+                    # Clean up extra whitespace
+                    desc = re.sub(r"\s+", " ", desc).strip()
+                    if desc:
+                        product_data["description"] = desc
+                    else:
+                        # If description becomes empty after cleaning, remove it
+                        product_data.pop("description", None)
                 
                 matched_products.append(product_data)
         
-        # Sort by: 1) match_score (descending - weighted score), 2) active_match_count (descending), 3) match_percentage (descending), 4) match_count (descending)
-        # This prioritizes products with highest weighted scores, which considers actives, excipients, and overall match
+        # AI-Powered Product Ranking (optional enhancement)
+        # Use AI to re-rank products based on intelligent analysis
+        if claude_client and len(matched_products) > 0 and len(input_actives) > 0:
+            try:
+                print(f"\n{'='*60}")
+                print("AI-Powered Product Ranking...")
+                print(f"{'='*60}")
+                matched_products = await enhance_product_ranking_with_ai(
+                    matched_products,
+                    input_actives,
+                    ingredients
+                )
+                print(f"  ✓ AI-enhanced ranking completed")
+            except Exception as e:
+                print(f"  ⚠️  Error in AI ranking (using default ranking): {e}")
+        
+        # Sort by: 1) match_percentage (descending - active match percentage), 2) active_match_count (descending)
+        # This prioritizes products with highest active ingredient match percentage
         matched_products.sort(
             key=lambda x: (
-                x.get("match_score", 0),  # Primary sort: weighted match score
-                x.get("active_match_count", 0),  # Secondary: active ingredient matches
-                x.get("match_percentage", 0),  # Tertiary: overall match percentage
-                x.get("match_count", 0)  # Quaternary: raw match count
+                x.get("match_percentage", 0),  # Primary sort: active match percentage
+                x.get("active_match_count", 0),  # Secondary: number of active matches
             ),
             reverse=True
         )
         
+        # Limit to top 10 products
+        total_matched_count = len(matched_products)
+        matched_products = matched_products[:10]
+        
         processing_time = time.time() - start
         
         print(f"\n{'='*60}")
-        print(f"Market Research Summary:")
+        print(f"Market Research Summary (Active Ingredients Only):")
         print(f"  Input type: {input_type}")
         print(f"  Extracted ingredients: {len(ingredients)}")
-        print(f"  Normalized input ingredients: {len(normalized_input_ingredients)}")
-        print(f"  Sample input ingredients: {normalized_input_ingredients[:5]}")
+        print(f"  Active ingredients to match: {len(input_actives)}")
+        print(f"  Sample active ingredients: {input_actives[:5] if input_actives else 'None'}")
         print(f"  Products in database: {len(all_products)}")
-        print(f"  Products matched: {len(matched_products)}")
+        print(f"  Total products matched: {total_matched_count}")
+        print(f"  Showing top 10 products: {len(matched_products)}")
         if len(matched_products) > 0:
             top_match = matched_products[0]
             print(f"  Top match: {top_match.get('productName', 'Unknown')[:50]}")
-            print(f"    - Match count: {top_match.get('match_count', 0)}/{len(normalized_input_ingredients)}")
-            print(f"    - Match percentage: {top_match.get('match_percentage', 0)}%")
-            print(f"    - Active matches: {top_match.get('active_match_count', 0)}")
-            print(f"    - Matched ingredients: {top_match.get('matched_ingredients', [])[:5]}")
+            print(f"    - Active match count: {top_match.get('active_match_count', 0)}/{len(input_actives)}")
+            print(f"    - Active match percentage: {top_match.get('match_percentage', 0)}%")
+            print(f"    - Matched active ingredients: {top_match.get('active_ingredients', [])[:5]}")
         else:
-            print(f"  ⚠️  WARNING: No products matched!")
+            print(f"  ⚠️  WARNING: No products matched with active ingredients!")
             if len(all_products) > 0:
                 print(f"  Debug: Checked {len(all_products)} products but found no matches")
-                print(f"  Debug: Sample input ingredients: {normalized_input_ingredients[:5]}")
-                # Show a sample product's ingredients for debugging
-                if len(all_products) > 0:
-                    sample = all_products[0]
-                    sample_ing = sample.get("ingredients", "")
-                    if isinstance(sample_ing, list) and len(sample_ing) > 0:
-                        print(f"  Debug: Sample product ingredients (first 5): {sample_ing[:5]}")
-                    elif isinstance(sample_ing, str):
-                        parsed = parse_inci_string(sample_ing[:200])
-                        print(f"  Debug: Sample product ingredients (parsed, first 5): {parsed[:5]}")
+                print(f"  Debug: Active ingredients searched: {input_actives[:5] if input_actives else 'None'}")
+                if len(input_actives) == 0:
+                    print(f"  Debug: No active ingredients found in input - market research requires active ingredients")
             else:
                 print(f"  Debug: No products found in database to check")
         print(f"  Processing time: {processing_time:.2f}s")
         print(f"{'='*60}\n")
         
+        # Debug: Log what we're returning
+        print(f"\n📤 Returning response with AI analysis:")
+        print(f"  ai_analysis: {ai_analysis_message}")
+        print(f"  ai_product_type: {ai_product_type}")
+        print(f"  ai_reasoning: {ai_reasoning}")
+        
         return MarketResearchResponse(
             products=matched_products,
             extracted_ingredients=ingredients,
-            total_matched=len(matched_products),
+            total_matched=total_matched_count,  # Show total matched, not just top 10
             processing_time=round(processing_time, 2),
-            input_type=input_type
+            input_type=input_type,
+            ai_analysis=ai_analysis_message,  # AI analysis message
+            ai_product_type=ai_product_type,  # Product type identified by AI
+            ai_reasoning=ai_reasoning  # AI reasoning for ingredient selection
         )
         
     except HTTPException:
