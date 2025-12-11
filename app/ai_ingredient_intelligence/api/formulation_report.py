@@ -741,7 +741,7 @@ REFORMATTED CAUTIONS:"""
             # Use Claude API to generate report
             message = claude_client.messages.create(
                 model="claude-3-opus-20240229",
-                max_tokens=8000,
+                max_tokens=4096,  # Maximum allowed for claude-3-opus-20240229
                 temperature=0.1,
                 system=SYSTEM_PROMPT,
                 messages=[
@@ -942,7 +942,7 @@ async def generate_report(payload: FormulationReportRequest, request: Request):
                 try:
                     retry_message = claude_client.messages.create(
                         model="claude-3-opus-20240229",
-                        max_tokens=8000,
+                        max_tokens=4096,  # Maximum allowed for claude-3-opus-20240229
                         temperature=0.1,
                         system=SYSTEM_PROMPT,
                         messages=[
