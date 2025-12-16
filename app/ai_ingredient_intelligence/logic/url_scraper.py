@@ -850,7 +850,7 @@ Product name:"""
             
             response = claude_client.messages.create(
                 model=model_name,
-                max_tokens=200,
+                max_tokens=8192,
                 temperature=0.1,
                 messages=[{"role": "user", "content": prompt}]
             )
@@ -911,7 +911,7 @@ Return only the JSON array of INCI names:"""
             
             response = claude_client.messages.create(
                 model=model_name,
-                max_tokens=2000,
+                max_tokens=8192,
                 temperature=0.2,
                 messages=[{"role": "user", "content": prompt}]
             )
@@ -981,7 +981,7 @@ Return only the JSON array:"""
             
             response = claude_client.messages.create(
                 model=model_name,
-                max_tokens=2000,
+                max_tokens=8192,
                 temperature=0.1,
                 messages=[
                     {

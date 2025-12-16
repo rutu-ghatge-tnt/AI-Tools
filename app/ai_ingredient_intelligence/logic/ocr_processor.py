@@ -114,7 +114,7 @@ Return only the JSON array:"""
             # Call Claude API
             response = self.claude_client.messages.create(
                 model=CLAUDE_MODEL if CLAUDE_MODEL else (os.getenv("CLAUDE_MODEL") or os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929"),
-                max_tokens=1000,
+                max_tokens=4096,
                 temperature=0.1,
                 messages=[
                     {

@@ -168,7 +168,7 @@ Be friendly, concise, and helpful. Always explain what the platform can do for t
             model="gpt-4o",  # Using GPT-4o for better understanding
             messages=messages,
             temperature=0.7,
-            max_tokens=500,
+            max_tokens=2000,
         )
         
         assistant_message = response.choices[0].message.content.strip()

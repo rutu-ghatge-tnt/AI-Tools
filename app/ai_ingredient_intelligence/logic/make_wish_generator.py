@@ -534,7 +534,7 @@ async def call_ai_with_claude(
             # Call Claude API
             response = claude_client.messages.create(
                 model=claude_model,
-                max_tokens=8000,
+                max_tokens=16384,
                 temperature=0.3,
                 system=system_prompt,
                 messages=[

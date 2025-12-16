@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict
 import anthropic
 from jinja2 import Environment, FileSystemLoader
-from app.ai_ingredient_intelligence.models.schemas import FormulationReportResponse, ReportTableRow
+from app.ai_ingredient_intelligence.models.schemas import FormulationReportResponse, FormulationSummary, ReportTableRow
 
 router = APIRouter(tags=["Formulation Reports"])
 
@@ -49,6 +49,26 @@ CRITICAL: Do NOT split ingredient names that contain hyphens, numbers, or parent
 CRITICAL: For BIS Cautions, if exact limits, percentages, or amounts are provided, you MUST include them EXACTLY as given. Do NOT use vague phrases like "see column" or "refer to table" - include the actual numbers, percentages, or limits.
 
 Generate a clean, structured report with these exact sections:
+
+0) Executive Summary
+   - Provide structured summary fields for the formulation analysis
+   - Format as a table with: Field | Value
+   - Use pipe (|) separators
+   - Required fields (MUST include all):
+     * Formulation Type: Overall formulation type (e.g., "Water-based Serum", "Oil-based Formula")
+     * Key Active Ingredients: Comma-separated list of main active ingredients (e.g., "Niacinamide, Hyaluronic Acid, Retinol")
+     * Primary Benefits: Comma-separated list of main benefits (e.g., "Brightening, Hydration, Anti-aging")
+     * Recommended pH Range: pH range value (e.g., "5.0-6.5")
+     * Compliance Status: Overall status (e.g., "Compliant", "Review Needed", "Non-compliant")
+     * Critical Concerns: List any critical concerns or warnings, or "None" if no concerns (comma-separated if multiple)
+   - Each field must be on a separate row
+   - Example format:
+     Formulation Type | Water-based Serum
+     Key Active Ingredients | Niacinamide, Hyaluronic Acid
+     Primary Benefits | Brightening, Hydration
+     Recommended pH Range | 5.0-6.5
+     Compliance Status | Compliant
+     Critical Concerns | None
 
 1) Submitted INCI List
    - List EVERY SINGLE ingredient on a separate line
@@ -136,7 +156,7 @@ Generate a clean, structured report with these exact sections:
 
 MANDATORY RULES:
 - Use pipe (|) for all table separators
-- Start each section with the exact header (e.g., "1) Submitted INCI List")
+- Start each section with the exact header (e.g., "0) Executive Summary", "1) Submitted INCI List")
 - Put ingredients on separate lines, no inline text
 - No dashes, bullets, or extra formatting
 - Keep tables consistent with same number of columns
@@ -145,7 +165,7 @@ MANDATORY RULES:
 - For the Functions/Notes column, provide brief but meaningful descriptions combining function and notes
 - For the BIS Cautions column, if cautions are provided, list them; if not, write "no bis cautions"
 - If you leave any cell empty, the report is incomplete and unusable
-- DO NOT include any introductory phrases like "I'll analyze", "Let me analyze", "I will analyze" - start directly with "1) Submitted INCI List"
+- DO NOT include any introductory phrases like "I'll analyze", "Let me analyze", "I will analyze" - start directly with "0) Executive Summary"
 - MOST IMPORTANT: INCLUDE ALL INGREDIENTS PROVIDED - DO NOT SKIP ANY INGREDIENT FROM THE INCI LIST
 """
 
@@ -202,7 +222,7 @@ def validate_report_content(report_text: str, expected_ingredient_count: int = N
                     ingredient_count += 1
             
             # Stop counting when we hit the next section
-            if in_table and line.strip() and line.startswith(('3)', '4)', '5)', '6)', '7)', '8)', '9)', '10)')):
+            if in_table and line.strip() and line.startswith(('0)', '3)', '4)', '5)', '6)', '7)', '8)', '9)', '10)')):
                 break
         
         # If we have an expected count, check if we're close
@@ -235,7 +255,7 @@ def clean_ai_response(text: str) -> str:
             # Find the first section header
             lines = text.split('\n')
             for i, line in enumerate(lines):
-                if line.strip().startswith('1) Submitted INCI List'):
+                if line.strip().startswith('0) Executive Summary') or line.strip().startswith('1) Submitted INCI List'):
                     text = '\n'.join(lines[i:])
                     break
     
@@ -297,6 +317,7 @@ def parse_report_to_json(report_text: str) -> FormulationReportResponse:
     if not report_text or not report_text.strip():
         print("⚠️ WARNING: Empty report text provided to parse_report_to_json")
         return FormulationReportResponse(
+            summary=None,
             inci_list=[],
             analysis_table=[],
             compliance_panel=[],
@@ -311,6 +332,14 @@ def parse_report_to_json(report_text: str) -> FormulationReportResponse:
     
     lines = report_text.split('\n')
     
+    summary_data = {
+        "formulation_type": None,
+        "key_active_ingredients": [],
+        "primary_benefits": [],
+        "recommended_ph_range": None,
+        "compliance_status": None,
+        "critical_concerns": []
+    }
     inci_list = []
     analysis_table = []
     compliance_panel = []
@@ -334,7 +363,54 @@ def parse_report_to_json(report_text: str) -> FormulationReportResponse:
             continue
         
         # Detect section headers
-        if line.startswith('1) Submitted INCI List'):
+        if line.startswith('0) Executive Summary'):
+            current_section = 'summary'
+            in_table = True
+            i += 1
+            # Skip header line if present
+            if i < len(lines) and '|' in lines[i]:
+                table_headers = [h.strip() for h in lines[i].split('|')]
+                i += 1
+            # Parse summary table rows
+            while i < len(lines) and not lines[i].strip().startswith('1)'):
+                line = lines[i].strip()
+                if '|' in line:
+                    cells = [cell.strip() for cell in line.split('|') if cell.strip()]
+                    if len(cells) >= 2:
+                        field_name = cells[0].strip().lower()
+                        field_value = cells[1].strip()
+                        
+                        # Map field names to summary data (case-insensitive matching)
+                        if 'formulation type' in field_name or 'formulation' in field_name and 'type' in field_name:
+                            summary_data["formulation_type"] = field_value
+                        elif 'key active' in field_name or ('active' in field_name and 'ingredient' in field_name):
+                            # Split comma-separated values
+                            ingredients = [ing.strip() for ing in field_value.split(',') if ing.strip()]
+                            summary_data["key_active_ingredients"] = ingredients
+                        elif 'primary benefit' in field_name or ('benefit' in field_name and 'primary' in field_name):
+                            # Split comma-separated values
+                            benefits = [ben.strip() for ben in field_value.split(',') if ben.strip()]
+                            summary_data["primary_benefits"] = benefits
+                        elif 'recommended ph' in field_name or 'ph range' in field_name or ('ph' in field_name and 'range' in field_name):
+                            # Extract just the pH range value (e.g., "5.0-6.5")
+                            import re
+                            ph_match = re.search(r'(\d+\.?\d*)\s*-\s*(\d+\.?\d*)', field_value)
+                            if ph_match:
+                                summary_data["recommended_ph_range"] = f"{ph_match.group(1)}-{ph_match.group(2)}"
+                            else:
+                                summary_data["recommended_ph_range"] = field_value
+                        elif 'compliance status' in field_name or ('compliance' in field_name and 'status' in field_name):
+                            summary_data["compliance_status"] = field_value
+                        elif 'critical concern' in field_name or ('concern' in field_name and 'critical' in field_name):
+                            # Split comma-separated values or handle "None"
+                            if field_value.lower() in ['none', 'no concerns', 'no critical concerns', 'n/a', 'na']:
+                                summary_data["critical_concerns"] = []
+                            else:
+                                concerns = [concern.strip() for concern in field_value.split(',') if concern.strip()]
+                                summary_data["critical_concerns"] = concerns
+                i += 1
+            continue
+        elif line.startswith('1) Submitted INCI List'):
             current_section = 'inci_list'
             in_table = False
             i += 1
@@ -436,7 +512,7 @@ def parse_report_to_json(report_text: str) -> FormulationReportResponse:
                         j += 1
                         continue
                     # If next line starts a new section, stop
-                    if next_line.startswith(('1)', '2)', '3)', '4)', '5)', '6)', '7)', '8)', '9)', '10)')):
+                    if next_line.startswith(('0)', '1)', '2)', '3)', '4)', '5)', '6)', '7)', '8)', '9)', '10)')):
                         break
                     # If next line is a complete table row (has | and enough columns), stop
                     if '|' in next_line:
@@ -577,7 +653,38 @@ def parse_report_to_json(report_text: str) -> FormulationReportResponse:
         if not is_header:
             expected_benefits_analysis.insert(0, ReportTableRow(cells=["Expected Benefit", "Can Be Achieved?", "Supporting Ingredients", "Evidence/Mechanism", "Limitations"]))
     
+    # Extract pH from section 8 if not in summary
+    if not summary_data["recommended_ph_range"] and recommended_ph_range:
+        # Try to extract pH range from the recommended_ph_range text
+        import re
+        ph_match = re.search(r'(\d+\.?\d*)\s*-\s*(\d+\.?\d*)', recommended_ph_range)
+        if ph_match:
+            summary_data["recommended_ph_range"] = f"{ph_match.group(1)}-{ph_match.group(2)}"
+        else:
+            # Use the full text if no range pattern found
+            summary_data["recommended_ph_range"] = recommended_ph_range
+    
+    # Create summary object if any fields are populated
+    summary_obj = None
+    if any([
+        summary_data["formulation_type"],
+        summary_data["key_active_ingredients"],
+        summary_data["primary_benefits"],
+        summary_data["recommended_ph_range"],
+        summary_data["compliance_status"],
+        summary_data["critical_concerns"]
+    ]):
+        summary_obj = FormulationSummary(
+            formulation_type=summary_data["formulation_type"],
+            key_active_ingredients=summary_data["key_active_ingredients"],
+            primary_benefits=summary_data["primary_benefits"],
+            recommended_ph_range=summary_data["recommended_ph_range"],
+            compliance_status=summary_data["compliance_status"],
+            critical_concerns=summary_data["critical_concerns"]
+        )
+    
     return FormulationReportResponse(
+        summary=summary_obj,
         inci_list=inci_list,
         analysis_table=analysis_table,
         compliance_panel=compliance_panel,
@@ -640,7 +747,7 @@ REFORMATTED CAUTIONS:"""
 
                         response = claude_client.messages.create(
                             model=os.getenv("CLAUDE_MODEL") or os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929",
-                            max_tokens=2000,
+                            max_tokens=8192,
                             temperature=0.1,
                             messages=[{"role": "user", "content": reformat_prompt}]
                         )
@@ -741,7 +848,7 @@ REFORMATTED CAUTIONS:"""
             # Use Claude API to generate report
             message = claude_client.messages.create(
                 model="claude-3-opus-20240229",
-                max_tokens=4096,  # Maximum allowed for claude-3-opus-20240229
+                max_tokens=8192,  # Increased token limit
                 temperature=0.1,
                 system=SYSTEM_PROMPT,
                 messages=[
@@ -753,12 +860,12 @@ REFORMATTED CAUTIONS:"""
             
             # Debug: Check if all sections are present
             sections_found = []
-            for i in range(1, 10):
+            for i in range(0, 10):
                 if f"{i})" in report_text:
                     sections_found.append(i)
             print(f"📋 Sections found in report: {sections_found}")
-            if len(sections_found) < 8:
-                print(f"⚠️ WARNING: Only {len(sections_found)} sections found, expected at least 8!")
+            if len(sections_found) < 9:
+                print(f"⚠️ WARNING: Only {len(sections_found)} sections found, expected at least 9 (including summary)!")
             
             # Debug: Check if BIS cautions are in the response
             if bis_cautions and len(bis_cautions) > 0:
@@ -935,14 +1042,14 @@ async def generate_report(payload: FormulationReportRequest, request: Request):
                 retry_expected_benefits = f"\n\nEXPECTED BENEFITS FROM USER:\n{payload.expectedBenefits.strip()}\n\nCRITICAL: You MUST add a section at the end of the report (after section 8) titled:\n\n9) Expected Benefits Analysis\n\nFor each expected benefit mentioned by the user, analyze:\n- Can this benefit be achieved from this formulation? (YES/NO/PARTIALLY)\n- Which ingredients support this benefit?\n- What is the evidence/mechanism?\n- Any limitations or concerns?\n\nFormat as a table with columns: Expected Benefit | Can Be Achieved? | Supporting Ingredients | Evidence/Mechanism | Limitations\n\nThis section should ONLY be included if expected benefits are provided above. If no expected benefits are provided, DO NOT include section 9 - end the report after section 8.\n"
             
             # Regenerate with stronger prompt
-            retry_prompt = f"{SYSTEM_PROMPT}\n\nCRITICAL: The previous response had empty table cells, missing notes, missing ingredients, missing BIS cautions, or was missing sections 3-9. Regenerate with NO EMPTY CELLS, MEANINGFUL NOTES, ALL INGREDIENTS INCLUDED, ALL BIS CAUTIONS INCLUDED, AND ALL 9 SECTIONS (or 8 if no expected benefits).\n\nGenerate report for this INCI list:\n{inci_str}{retry_categorization}{retry_bis_cautions}{retry_expected_benefits}\n\nEVERY SINGLE TABLE CELL MUST CONTAIN MEANINGFUL TEXT!\nINCLUDE ALL {ingredient_count} INGREDIENTS - DO NOT SKIP ANY!\n\nCRITICAL: You MUST generate ALL sections:\n- 1) Submitted INCI List\n- 2) Analysis\n- 3) Compliance Panel\n- 4) Preservative Efficacy Check\n- 5) Risk Panel\n- 6) Cumulative Benefit Panel\n- 7) Claim Panel\n- 8) Recommended pH Range\n- 9) Expected Benefits Analysis (if expected benefits provided)\n\nDO NOT stop after section 2. You MUST include sections 3-9!\n\nCRITICAL FOR BIS CAUTIONS:\n- If BIS cautions are provided above, you MUST include ALL of them for each ingredient\n- Count the cautions provided and ensure ALL are included - missing even one is an error\n- Each caution must be on a SEPARATE LINE with proper numbering (1., 2., 3., etc.)\n- Do NOT combine cautions into one line - each must be on its own line\n- Include the FULL text of each caution with exact numerical values\n\nExample of proper notes:\nAqua: Primary solvent, base ingredient\nGlycerin: Humectant, skin conditioning agent\nNiacinamide: Vitamin B3, brightening active\nProprietary Blend XYZ: Unknown proprietary ingredient, requires manufacturer clarification"
+            retry_prompt = f"{SYSTEM_PROMPT}\n\nCRITICAL: The previous response had empty table cells, missing notes, missing ingredients, missing BIS cautions, or was missing sections. Regenerate with NO EMPTY CELLS, MEANINGFUL NOTES, ALL INGREDIENTS INCLUDED, ALL BIS CAUTIONS INCLUDED, AND ALL SECTIONS.\n\nGenerate report for this INCI list:\n{inci_str}{retry_categorization}{retry_bis_cautions}{retry_expected_benefits}\n\nEVERY SINGLE TABLE CELL MUST CONTAIN MEANINGFUL TEXT!\nINCLUDE ALL {ingredient_count} INGREDIENTS - DO NOT SKIP ANY!\n\nCRITICAL: You MUST generate ALL sections starting with section 0:\n- 0) Executive Summary (MANDATORY - must be first, format as table with Field | Value)\n- 1) Submitted INCI List\n- 2) Analysis\n- 3) Compliance Panel\n- 4) Preservative Efficacy Check\n- 5) Risk Panel\n- 6) Cumulative Benefit Panel\n- 7) Claim Panel\n- 8) Recommended pH Range\n- 9) Expected Benefits Analysis (if expected benefits provided)\n\nDO NOT skip section 0 (Executive Summary). You MUST include ALL sections!\n\nCRITICAL FOR BIS CAUTIONS:\n- If BIS cautions are provided above, you MUST include ALL of them for each ingredient\n- Count the cautions provided and ensure ALL are included - missing even one is an error\n- Each caution must be on a SEPARATE LINE with proper numbering (1., 2., 3., etc.)\n- Do NOT combine cautions into one line - each must be on its own line\n- Include the FULL text of each caution with exact numerical values\n\nExample of proper notes:\nAqua: Primary solvent, base ingredient\nGlycerin: Humectant, skin conditioning agent\nNiacinamide: Vitamin B3, brightening active\nProprietary Blend XYZ: Unknown proprietary ingredient, requires manufacturer clarification"
             
             # Regenerate with Claude
             if claude_client:
                 try:
                     retry_message = claude_client.messages.create(
                         model="claude-3-opus-20240229",
-                        max_tokens=4096,  # Maximum allowed for claude-3-opus-20240229
+                        max_tokens=8192,  # Increased token limit
                         temperature=0.1,
                         system=SYSTEM_PROMPT,
                         messages=[
@@ -1073,7 +1180,7 @@ Return the JSON object now:"""
         print("🤖 Generating Presenton prompt with Claude...")
         message = claude_client.messages.create(
             model="claude-3-opus-20240229",
-            max_tokens=4000,
+            max_tokens=8192,
             temperature=0.3,
             messages=[
                 {"role": "user", "content": claude_prompt}
