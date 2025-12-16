@@ -7,6 +7,26 @@ import os
 import json
 import re
 
+# Claude API setup
+try:
+    import anthropic
+    ANTHROPIC_AVAILABLE = True
+except ImportError:
+    ANTHROPIC_AVAILABLE = False
+    anthropic = None
+
+claude_api_key = os.getenv("CLAUDE_API_KEY")
+claude_model = os.getenv("CLAUDE_MODEL") or os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929"
+
+if ANTHROPIC_AVAILABLE and claude_api_key:
+    try:
+        claude_client = anthropic.Anthropic(api_key=claude_api_key)
+    except Exception as e:
+        print(f"Warning: Could not initialize Claude client: {e}")
+        claude_client = None
+else:
+    claude_client = None
+
 
 async def fetch_product_from_url(url: str) -> Dict[str, Any]:
     """
@@ -34,8 +54,6 @@ async def fetch_product_from_url(url: str) -> Dict[str, Any]:
             "size": None,
             "unit": "ml",
             "category": None,
-            "rating": None,
-            "reviews": None,
             "image": "🧴",
             "ingredients": result.get("ingredients", []),
             "benefits": [],
@@ -61,13 +79,12 @@ async def fetch_product_from_url(url: str) -> Dict[str, Any]:
             product_data["brand"] = _extract_brand_from_text(extracted_text)
             product_data["price"] = _extract_price_from_text(extracted_text)
             product_data["size"] = _extract_size_from_text(extracted_text)
-            product_data["rating"] = _extract_rating_from_text(extracted_text)
-            product_data["reviews"] = _extract_reviews_from_text(extracted_text)
-            product_data["benefits"] = _extract_benefits_from_text(extracted_text)
-            # Extract tags and target audience using Claude
-            tags_and_audience = await _extract_tags_and_target_audience_with_claude(extracted_text, product_data.get("name", ""), product_data.get("ingredients", []))
-            product_data["tags"] = tags_and_audience.get("tags", [])
-            product_data["target_audience"] = tags_and_audience.get("target_audience", [])
+            # Extract category, benefits, tags and target audience using Claude
+            claude_data = await _extract_category_benefits_tags_with_claude(extracted_text, product_data.get("name", ""), product_data.get("ingredients", []))
+            product_data["category"] = claude_data.get("category")
+            product_data["benefits"] = claude_data.get("benefits", [])
+            product_data["tags"] = claude_data.get("tags", [])
+            product_data["target_audience"] = claude_data.get("target_audience", [])
         
         return product_data
         
@@ -81,8 +98,6 @@ async def fetch_product_from_url(url: str) -> Dict[str, Any]:
             "size": None,
             "unit": "ml",
             "category": None,
-            "rating": None,
-            "reviews": None,
             "image": "🧴",
             "ingredients": [],
             "benefits": [],
@@ -395,4 +410,220 @@ def _extract_benefits_from_text(text: str) -> list:
     
     # Limit to top 10 benefits to avoid clutter
     return benefits[:10]
+
+
+async def _extract_category_benefits_tags_with_claude(
+    extracted_text: str,
+    product_name: str,
+    ingredients: List[str]
+) -> Dict[str, Any]:
+    """
+    Extract product category, benefits, tags and target audience using Claude AI
+    
+    Args:
+        extracted_text: Scraped product text
+        product_name: Product name
+        ingredients: List of ingredient names
+        
+    Returns:
+        Dict with 'category', 'benefits', 'tags' and 'target_audience'
+    """
+    if not claude_client:
+        # Return defaults if Claude is not available
+        return {
+            "category": "Unknown",
+            "benefits": [],
+            "tags": [],
+            "target_audience": []
+        }
+    
+    try:
+        # Get available tags for reference
+        from app.ai_ingredient_intelligence.logic.product_tags import get_all_tags
+        tags_data = await get_all_tags()
+        
+        # Build list of all valid tags
+        all_valid_tags = []
+        for category in tags_data:
+            for tag_item in category.get("tags", []):
+                all_valid_tags.append(tag_item["tag"])
+        
+        # Common product categories
+        common_categories = [
+            "Moisturizer", "Serum", "Cleanser", "Toner", "Sunscreen", "Face Mask",
+            "Eye Cream", "Face Oil", "Exfoliant", "Treatment", "Essence", "Ampoule",
+            "Shampoo", "Conditioner", "Hair Mask", "Hair Oil", "Hair Serum",
+            "Body Lotion", "Body Wash", "Body Scrub", "Hand Cream", "Lip Balm",
+            "Foundation", "Concealer", "BB Cream", "CC Cream", "Primer", "Setting Spray"
+        ]
+        
+        # Prepare prompt for Claude
+        ingredients_text = ", ".join(ingredients[:20]) if ingredients else "Not available"
+        text_snippet = extracted_text[:4000] if len(extracted_text) > 4000 else extracted_text
+        
+        system_prompt = """You are an expert at analyzing cosmetic and skincare products. 
+Your task is to extract comprehensive product information including category, benefits, tags, and target audience.
+
+Return your response as a JSON object with these fields:
+- "category": string - Product category (e.g., "Moisturizer", "Serum", "Cleanser", "Shampoo", etc.). Must be a valid category name.
+- "benefits": array of strings - Key product benefits (e.g., "Hydrates skin", "Reduces fine lines", "Brightens complexion"). Extract 3-8 specific benefits.
+- "tags": array of tag strings - Must be from the provided valid tags list
+- "target_audience": array of strings - Who this product is for (e.g., "oily skin", "mature skin", "sensitive skin", "acne-prone", "dry hair", etc.)
+
+IMPORTANT: 
+- Category must NOT be null or empty - choose the most appropriate category from common categories or infer from product description
+- Benefits must NOT be empty - extract at least 3-5 specific benefits from the product description
+- Only use tags from the valid tags list provided. Do not invent new tags."""
+
+        user_prompt = f"""Analyze this product and extract category, benefits, tags, and target audience:
+
+Product Name: {product_name}
+
+Ingredients: {ingredients_text}
+
+Product Description:
+{text_snippet}
+
+Common Categories: {', '.join(common_categories)}
+
+Valid Tags (choose from these):
+{', '.join(all_valid_tags[:100])}
+
+Return JSON with "category" (string, required), "benefits" (array, at least 3 items), "tags" (array), and "target_audience" (array)."""
+
+        # Call Claude API
+        response = claude_client.messages.create(
+            model=claude_model,
+            max_tokens=2048,
+            temperature=0.3,
+            system=system_prompt,
+            messages=[
+                {"role": "user", "content": user_prompt}
+            ]
+        )
+        
+        if not response.content or len(response.content) == 0:
+            return {
+                "category": "Unknown",
+                "benefits": [],
+                "tags": [],
+                "target_audience": []
+            }
+        
+        content = response.content[0].text.strip()
+        
+        # Try to parse JSON from response
+        try:
+            # Extract JSON from response (might have markdown code blocks)
+            if '```json' in content:
+                json_start = content.find('```json') + 7
+                json_end = content.find('```', json_start)
+                content = content[json_start:json_end].strip()
+            elif '```' in content:
+                json_start = content.find('```') + 3
+                json_end = content.find('```', json_start)
+                content = content[json_start:json_end].strip()
+            elif '{' in content and '}' in content:
+                json_start = content.find('{')
+                json_end = content.rfind('}') + 1
+                content = content[json_start:json_end]
+            
+            result = json.loads(content)
+            
+            # Extract and validate category
+            category = result.get("category", "Unknown")
+            if not category or category.strip() == "":
+                category = "Unknown"
+            
+            # Extract and validate benefits
+            benefits = result.get("benefits", [])
+            if not isinstance(benefits, list):
+                benefits = []
+            # Ensure at least some benefits are extracted
+            if len(benefits) == 0:
+                # Fallback: try to extract from text using regex
+                benefits = _extract_benefits_from_text(extracted_text)
+            
+            # Validate tags against valid list
+            valid_tags = []
+            if "tags" in result and isinstance(result["tags"], list):
+                for tag in result["tags"]:
+                    if tag in all_valid_tags:
+                        valid_tags.append(tag)
+            
+            target_audience = result.get("target_audience", [])
+            if not isinstance(target_audience, list):
+                target_audience = []
+            
+            return {
+                "category": category.strip(),
+                "benefits": benefits[:10],  # Limit to 10 benefits
+                "tags": valid_tags,
+                "target_audience": target_audience
+            }
+        except json.JSONDecodeError as e:
+            print(f"Failed to parse Claude response as JSON: {e}")
+            print(f"Response content: {content[:500]}")
+            # Fallback: try to extract category and benefits from text
+            category = _extract_category_from_text(extracted_text, product_name)
+            benefits = _extract_benefits_from_text(extracted_text)
+            return {
+                "category": category,
+                "benefits": benefits,
+                "tags": [],
+                "target_audience": []
+            }
+            
+    except Exception as e:
+        print(f"Error calling Claude for product extraction: {e}")
+        # Fallback: try to extract category and benefits from text
+        category = _extract_category_from_text(extracted_text, product_name)
+        benefits = _extract_benefits_from_text(extracted_text)
+        return {
+            "category": category,
+            "benefits": benefits,
+            "tags": [],
+            "target_audience": []
+        }
+
+
+def _extract_category_from_text(text: str, product_name: str) -> str:
+    """Extract product category from text as fallback"""
+    import re
+    
+    # Common category keywords
+    category_keywords = {
+        "moisturizer": ["moisturizer", "moisturising", "moisturizing", "cream", "lotion"],
+        "serum": ["serum", "concentrate", "ampoule"],
+        "cleanser": ["cleanser", "face wash", "cleansing", "wash"],
+        "toner": ["toner", "astringent"],
+        "sunscreen": ["sunscreen", "sunblock", "spf", "sun protection"],
+        "face mask": ["mask", "face mask", "sheet mask"],
+        "eye cream": ["eye cream", "eye care", "under eye"],
+        "face oil": ["face oil", "facial oil", "oil"],
+        "exfoliant": ["exfoliant", "scrub", "peel"],
+        "shampoo": ["shampoo"],
+        "conditioner": ["conditioner"],
+        "hair mask": ["hair mask", "hair treatment"],
+        "hair oil": ["hair oil", "hair serum"],
+        "body lotion": ["body lotion", "body cream"],
+        "body wash": ["body wash", "shower gel"],
+        "lip balm": ["lip balm", "lip care"]
+    }
+    
+    # Check product name first
+    name_lower = product_name.lower()
+    for category, keywords in category_keywords.items():
+        for keyword in keywords:
+            if keyword in name_lower:
+                return category.title()
+    
+    # Check text
+    text_lower = text.lower()
+    for category, keywords in category_keywords.items():
+        for keyword in keywords:
+            if keyword in text_lower:
+                return category.title()
+    
+    return "Unknown"
 
