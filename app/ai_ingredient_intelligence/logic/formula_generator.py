@@ -968,7 +968,7 @@ async def select_ingredients_by_benefits(
         
         response = claude_client.messages.create(
             model=claude_model,
-            max_tokens=4000,
+            max_tokens=16384,
             temperature=0.3,
             messages=[{"role": "user", "content": full_prompt}]
         )
@@ -1658,7 +1658,7 @@ async def optimize_percentages_with_ai(
             
         response = claude_client.messages.create(
             model=claude_model,
-            max_tokens=4000,
+            max_tokens=16384,
             temperature=0.3,  # Lower temperature for more consistent results
             messages=[{"role": "user", "content": full_prompt}]
         )

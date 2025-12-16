@@ -163,6 +163,7 @@ async def match_inci_names(
                 "ingredient_name": 1,
                 "supplier_name": {"$arrayElemAt": ["$supplier_docs.supplierName", 0]},
                 "description": 1,
+                "enhanced_description": 1,  # Prefer enhanced_description for branded ingredients
                 "category_decided": 1,  # Include category_decided field
                 "functional_category_ids": 1,
                 "chemical_class_ids": 1,
@@ -202,11 +203,15 @@ async def match_inci_names(
                             "chemicalClassName"
                         )
                         
+                        # Use enhanced_description if available, otherwise fallback to description
+                        description = doc.get("enhanced_description") or doc.get("description")
+                        
                         matched_results.append({
                             "ingredient_name": doc["ingredient_name"],
                             "ingredient_id": str(doc["_id"]),
                             "supplier_name": doc.get("supplier_name"),
-                            "description": doc.get("description"),
+                            "description": description,  # Use enhanced_description if available
+                            "rephrased_description": doc.get("enhanced_description"),  # Keep for backward compatibility
                             "category_decided": doc.get("category_decided"),  # Include category_decided from MongoDB
                             "functionality_category_tree": func_tree,
                             "chemical_class_category_tree": chem_tree,
@@ -258,6 +263,7 @@ async def match_inci_names(
                 "ingredient_name": 1,
                 "supplier_name": {"$arrayElemAt": ["$supplier_docs.supplierName", 0]},
                 "description": 1,
+                "enhanced_description": 1,  # Prefer enhanced_description for branded ingredients
                 "category_decided": 1,  # Include category_decided field
                 "functional_category_ids": 1,
                 "chemical_class_ids": 1,
@@ -283,11 +289,15 @@ async def match_inci_names(
                 "chemicalClassName"
             )
 
+            # Use enhanced_description if available, otherwise fallback to description
+            description = doc.get("enhanced_description") or doc.get("description")
+            
             matched_results.append({
                 "ingredient_name": doc["ingredient_name"],
                 "ingredient_id": str(doc["_id"]),  # Add ingredient ID for distributor mapping
                 "supplier_name": doc.get("supplier_name"),
-                "description": doc.get("description"),
+                "description": description,  # Use enhanced_description if available
+                "rephrased_description": doc.get("enhanced_description"),  # Keep for backward compatibility
                 "category_decided": doc.get("category_decided"),  # Include category_decided from MongoDB
                 "functionality_category_tree": func_tree,
                 "chemical_class_category_tree": chem_tree,
@@ -369,11 +379,15 @@ async def match_inci_names(
                                     "chemicalClassName"
                                 )
                                 
+                                # Use enhanced_description if available, otherwise fallback to description
+                                description = doc.get("enhanced_description") or doc.get("description")
+                                
                                 matched_results.append({
                                     "ingredient_name": doc["ingredient_name"],
                                     "ingredient_id": str(doc["_id"]),  # Add ingredient ID for distributor mapping
                                     "supplier_name": doc.get("supplier_name"),
-                                    "description": doc.get("description"),
+                                    "description": description,  # Use enhanced_description if available
+                                    "rephrased_description": doc.get("enhanced_description"),  # Keep for backward compatibility
                                     "category_decided": doc.get("category_decided"),  # Include category_decided from MongoDB
                                     "functionality_category_tree": func_tree,
                                     "chemical_class_category_tree": chem_tree,
@@ -433,11 +447,15 @@ async def match_inci_names(
                         "chemicalClassName"
                     )
                     
+                    # Use enhanced_description if available, otherwise fallback to description
+                    description = doc.get("enhanced_description") or doc.get("description")
+                    
                     matched_results.append({
                         "ingredient_name": doc["ingredient_name"],
                         "ingredient_id": str(doc["_id"]),  # Add ingredient ID for distributor mapping
                         "supplier_name": doc.get("supplier_name"),
-                        "description": doc.get("description"),
+                        "description": description,  # Use enhanced_description if available
+                        "rephrased_description": doc.get("enhanced_description"),  # Keep for backward compatibility
                         "category_decided": doc.get("category_decided"),  # Include category_decided from MongoDB
                         "functionality_category_tree": func_tree,
                         "chemical_class_category_tree": chem_tree,

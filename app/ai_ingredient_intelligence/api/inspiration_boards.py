@@ -255,9 +255,16 @@ async def decode_product_endpoint(
         result = await decode_product(user_id, product_id)
         
         if not result.get("success"):
+            # Check if it's a timeout/cancellation error
+            error_msg = result.get("error", "Failed to decode product")
+            if "cancelled" in error_msg.lower() or "timeout" in error_msg.lower():
+                raise HTTPException(
+                    status_code=408,  # Request Timeout
+                    detail=error_msg
+                )
             raise HTTPException(
                 status_code=400,
-                detail=result.get("error", "Failed to decode product")
+                detail=error_msg
             )
         
         return {
@@ -269,7 +276,14 @@ async def decode_product_endpoint(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        error_msg = str(e)
+        # Handle operation cancelled errors
+        if "_OperationCancelled" in error_msg or "operation cancelled" in error_msg.lower():
+            raise HTTPException(
+                status_code=408,
+                detail="Operation was cancelled. This may happen if the request was interrupted. Please try again."
+            )
+        raise HTTPException(status_code=500, detail=error_msg)
 
 
 @router.post("/boards/{board_id}/decode-all", response_model=BatchDecodeResponse)
@@ -315,10 +329,22 @@ async def batch_decode_endpoint(
                 "decoded": False
             }
         
-        products_cursor = inspiration_products_col.find(query)
-        products = []
-        async for p in products_cursor:
-            products.append(p)
+        try:
+            products_cursor = inspiration_products_col.find(query)
+            products = []
+            async for p in products_cursor:
+                products.append(p)
+        except Exception as e:
+            error_msg = str(e)
+            if "_OperationCancelled" in error_msg or "operation cancelled" in error_msg.lower():
+                raise HTTPException(
+                    status_code=408,
+                    detail="Database operation was cancelled while fetching products. Please try again."
+                )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to fetch products: {error_msg}"
+            )
         
         # Decode each product
         results = []
@@ -352,7 +378,14 @@ async def batch_decode_endpoint(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        error_msg = str(e)
+        # Handle operation cancelled errors
+        if "_OperationCancelled" in error_msg or "operation cancelled" in error_msg.lower():
+            raise HTTPException(
+                status_code=408,
+                detail="Operation was cancelled. This may happen if the request was interrupted. Please try again."
+            )
+        raise HTTPException(status_code=500, detail=error_msg)
 
 
 # ============================================================================

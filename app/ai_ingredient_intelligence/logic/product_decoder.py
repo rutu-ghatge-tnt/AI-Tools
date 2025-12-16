@@ -7,6 +7,7 @@ from app.ai_ingredient_intelligence.db.collections import inspiration_products_c
 from bson import ObjectId
 import httpx
 import os
+from pymongo.errors import _OperationCancelled, NetworkTimeout, ServerSelectionTimeoutError
 
 
 async def decode_product(user_id: str, product_id: str) -> Dict[str, Any]:
@@ -26,10 +27,21 @@ async def decode_product(user_id: str, product_id: str) -> Dict[str, Any]:
         return {"success": False, "error": "Invalid product ID"}
     
     # Get product
-    product = await inspiration_products_col.find_one({
-        "_id": product_obj_id,
-        "user_id": user_id
-    })
+    try:
+        product = await inspiration_products_col.find_one({
+            "_id": product_obj_id,
+            "user_id": user_id
+        })
+    except (_OperationCancelled, NetworkTimeout, ServerSelectionTimeoutError) as e:
+        return {
+            "success": False,
+            "error": "Database operation was cancelled or timed out. Please try again."
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Failed to fetch product from database: {str(e)}"
+        }
     
     if not product:
         return {"success": False, "error": "Product not found"}
@@ -88,16 +100,22 @@ async def decode_product(user_id: str, product_id: str) -> Dict[str, Any]:
             )
             
             # Update product
-            await inspiration_products_col.update_one(
-                {"_id": product_obj_id},
-                {
-                    "$set": {
-                        "decoded": True,
-                        "decoded_data": decoded_data,
-                        "updated_at": datetime.utcnow()
+            try:
+                await inspiration_products_col.update_one(
+                    {"_id": product_obj_id},
+                    {
+                        "$set": {
+                            "decoded": True,
+                            "decoded_data": decoded_data,
+                            "updated_at": datetime.utcnow()
+                        }
                     }
+                )
+            except (_OperationCancelled, NetworkTimeout, ServerSelectionTimeoutError) as e:
+                return {
+                    "success": False,
+                    "error": "Database operation was cancelled or timed out while saving results. The analysis may have completed, but results were not saved. Please try again."
                 }
-            )
             
             return {
                 "success": True,
@@ -106,10 +124,27 @@ async def decode_product(user_id: str, product_id: str) -> Dict[str, Any]:
                 "decoded_data": decoded_data
             }
             
-    except Exception as e:
+    except httpx.TimeoutException:
         return {
             "success": False,
-            "error": f"Failed to decode product: {str(e)}"
+            "error": "Request timed out while analyzing ingredients. Please try again."
+        }
+    except (_OperationCancelled, NetworkTimeout, ServerSelectionTimeoutError) as e:
+        return {
+            "success": False,
+            "error": "Database operation was cancelled or timed out. Please try again."
+        }
+    except Exception as e:
+        error_msg = str(e)
+        # Check if it's an operation cancelled error
+        if "_OperationCancelled" in error_msg or "operation cancelled" in error_msg.lower():
+            return {
+                "success": False,
+                "error": "Operation was cancelled. This may happen if the request was interrupted. Please try again."
+            }
+        return {
+            "success": False,
+            "error": f"Failed to decode product: {error_msg}"
         }
 
 

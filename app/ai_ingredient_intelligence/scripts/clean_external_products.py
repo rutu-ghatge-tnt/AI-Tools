@@ -139,9 +139,9 @@ Example output: Water, Glycerin, Sodium Hyaluronate, Niacinamide, Xylitylglucosi
     primary_model = os.getenv("CLAUDE_MODEL") or os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929"
     
     models_to_try = [
-        {"name": primary_model, "max_tokens": 2000},
-        {"name": "claude-sonnet-4-5-20250929", "max_tokens": 2000},  # Claude Sonnet 4.5
-        {"name": "claude-3-5-haiku-20241022", "max_tokens": 2000},  # Fast fallback (this one works)
+        {"name": primary_model, "max_tokens": 8192},
+        {"name": "claude-sonnet-4-5-20250929", "max_tokens": 8192},  # Claude Sonnet 4.5
+        {"name": "claude-3-5-haiku-20241022", "max_tokens": 8192},  # Fast fallback (this one works)
     ]
     
     for model_config in models_to_try:

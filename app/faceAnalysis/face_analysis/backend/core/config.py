@@ -85,8 +85,8 @@ class Settings(BaseSettings):
     ]
     
     # Model Configuration
-    CLAUDE_MODEL: str = "claude-3-opus-20240229"
-    CLAUDE_MAX_TOKENS: int = 2000
+    CLAUDE_MODEL: str = "claude-sonnet-4-5-20250929"
+    CLAUDE_MAX_TOKENS: int = 8192
     CLAUDE_TEMPERATURE: float = 0.3
     
     # Image Processing

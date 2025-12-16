@@ -431,9 +431,18 @@ async def get_bis_cautions_for_ingredients(ingredient_names: List[str]) -> Dict[
                 # Clean up: Remove vague references like "column given" and replace with actual context
                 cleaned_cautions = []
                 
+                # Water-related ingredients should have NO cautions shown at all
+                water_related_ingredients = ['water', 'aqua']
+                is_water_related = any(water_term in ingredient_lower for water_term in water_related_ingredients)
+                
+                # If water-related, skip all cautions
+                if is_water_related:
+                    print(f"⚠️ Skipping BIS cautions for water-related ingredient: {ingredient}")
+                    continue
+                
                 # Common ingredients that shouldn't have generic safety cautions (unless they have specific numerical limits)
                 common_ingredients_no_generic_cautions = [
-                    'water', 'aqua', 'glycerin', 'glycerol', 'dimethicone', 
+                    'glycerin', 'glycerol', 'dimethicone', 
                     'propylene glycol', 'butylene glycol', 'squalane', 'squalene'
                 ]
                 

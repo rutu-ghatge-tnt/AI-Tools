@@ -5,7 +5,7 @@ import time
 import os
 import json
 import re
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 from collections import defaultdict
 
 from app.ai_ingredient_intelligence.logic.matcher import match_inci_names
@@ -66,6 +66,142 @@ from app.ai_ingredient_intelligence.db.mongodb import db
 from app.ai_ingredient_intelligence.db.collections import distributor_col, decode_history_col, compare_history_col, market_research_history_col, branded_ingredients_col, inci_col
 from datetime import datetime, timezone, timedelta
 from bson import ObjectId
+
+
+# ============================================================================
+# HELPER FUNCTIONS FOR CATEGORY COMPUTATION
+# ============================================================================
+
+async def compute_item_category(matched_inci: List[str], inci_categories: Dict[str, str]) -> Optional[str]:
+    """
+    Compute category for an item (handles both single and combination INCI)
+    
+    Logic:
+    - If ANY INCI in the combination is "Active" → whole combination is "Active"
+    - If ALL are "Excipient" (and no Active found) → combination is "Excipient"
+    - If no categories found → None
+    
+    Args:
+        matched_inci: List of INCI names (can be single or multiple for combinations)
+        inci_categories: Dict mapping normalized INCI name to category ("Active" or "Excipient")
+    
+    Returns:
+        "Active", "Excipient", or None
+    """
+    if not matched_inci:
+        return None
+    
+    has_active = False
+    has_excipient = False
+    
+    for inci in matched_inci:
+        normalized = inci.strip().lower()
+        category = inci_categories.get(normalized)
+        
+        if category:
+            if category.upper() == "ACTIVE":
+                has_active = True
+            elif category.upper() == "EXCIPIENT":
+                has_excipient = True
+    
+    # If ANY is active, whole combination is active
+    if has_active:
+        return "Active"
+    elif has_excipient:
+        # Only excipient if all are excipients (no active found)
+        return "Excipient"
+    
+    return None
+
+
+async def fetch_and_compute_categories(items: List[AnalyzeInciItem]) -> Tuple[Dict[str, str], List[AnalyzeInciItem]]:
+    """
+    Fetch categories for all INCI names and compute item-level categories
+    
+    Args:
+        items: List of AnalyzeInciItem objects
+    
+    Returns:
+        Tuple of:
+        - inci_categories: Dict mapping normalized INCI name to category
+        - items_processed: Items processed (category_decided for branded, category computed only for general INCI)
+    """
+    # Collect all unique INCI names from all items
+    all_inci_names = set()
+    for item in items:
+        for inci in item.matched_inci:
+            all_inci_names.add(inci.strip().lower())
+    
+    # Fetch categories from database
+    inci_categories = {}
+    if all_inci_names:
+        normalized_names = list(all_inci_names)
+        cursor = inci_col.find(
+            {"inciName_normalized": {"$in": normalized_names}},
+            {"inciName_normalized": 1, "category": 1}
+        )
+        results = await cursor.to_list(length=None)
+        
+        for doc in results:
+            normalized = doc.get("inciName_normalized", "").strip().lower()
+            category = doc.get("category")
+            if normalized and category:
+                inci_categories[normalized] = category
+    
+    # Process items: Compute category for bifurcation (actives/excipients tabs)
+    # For general INCI: Get from MongoDB first, compute if not found
+    # For combinations: Always compute based on individual INCI categories
+    items_processed = []
+    for item in items:
+        # The matcher already sets description to enhanced_description if available
+        display_description = item.description  # Already uses enhanced_description from matcher
+        
+        # Compute category for bifurcation (actives/excipients tabs)
+        item_category = None
+        
+        if len(item.matched_inci) > 1:
+            # COMBINATION: Always compute category based on individual INCI categories
+            # Logic: If ANY INCI is Active → combination is Active
+            item_category = await compute_item_category(item.matched_inci, inci_categories)
+        elif item.tag == "G":
+            # GENERAL INCI (single): Get from MongoDB first, compute if not found
+            if len(item.matched_inci) == 1:
+                inci_name = item.matched_inci[0].strip().lower()
+                # Try to get from MongoDB first
+                item_category = inci_categories.get(inci_name)
+                # If not found in MongoDB, compute it (though it should be there)
+                if not item_category:
+                    item_category = await compute_item_category(item.matched_inci, inci_categories)
+        elif item.tag == "B":
+            # BRANDED (single): Use category_decided from MongoDB, but also compute for bifurcation
+            # For single branded INCI, use category_decided if available, otherwise compute
+            if item.category_decided:
+                item_category = item.category_decided
+            elif len(item.matched_inci) == 1:
+                inci_name = item.matched_inci[0].strip().lower()
+                item_category = inci_categories.get(inci_name)
+                if not item_category:
+                    item_category = await compute_item_category(item.matched_inci, inci_categories)
+        
+        # Create new item with only necessary fields
+        item_dict = {
+            "ingredient_name": item.ingredient_name,
+            "ingredient_id": item.ingredient_id,
+            "supplier_name": item.supplier_name,
+            "description": display_description,  # Uses enhanced_description for branded ingredients
+            "category_decided": item.category_decided,  # Keep category_decided from MongoDB for branded
+            "category": item_category,  # Category for bifurcation (actives/excipients tabs)
+            "functionality_category_tree": item.functionality_category_tree,
+            "chemical_class_category_tree": item.chemical_class_category_tree,
+            "match_score": item.match_score,
+            "matched_inci": item.matched_inci,
+            "tag": item.tag,
+            "match_method": item.match_method
+        }
+        
+        items_processed.append(AnalyzeInciItem(**item_dict))
+    
+    return inci_categories, items_processed
 
 router = APIRouter(tags=["INCI Analysis"])
 
@@ -302,108 +438,12 @@ async def test_selenium():
 async def analyze_inci_form(
     inci_names: List[str] = Form(..., description="Raw INCI names from product label")
 ):
-    start = time.time()
-    
-    try:
-        if not inci_names:
-            raise HTTPException(status_code=400, detail="inci_names is required")
-        
-        # Parse INCI names - handles separators within each item (comma, pipe, hyphen, "and", etc.)
-        ingredients = parse_inci_string(inci_names)
-        
-        if not ingredients:
-            raise HTTPException(status_code=400, detail="No valid ingredients found after parsing. Please check your input format.")
-        
-        extracted_text = ", ".join(ingredients)
-        
-        if not ingredients:
-            raise HTTPException(status_code=400, detail="No ingredients provided")
-        
-        # 🔹 Get synonyms from CAS API for better matching
-        print("Retrieving synonyms from CAS API...")
-        synonyms_map = await get_synonyms_batch(ingredients)
-        print(f"Found synonyms for {len([k for k, v in synonyms_map.items() if v])} ingredients")
-        
-        # Match ingredients using new flow:
-        # 1. Direct MongoDB query (exact match)
-        # 2. Fuzzy matching (spelling mistakes)
-        # 3. CAS synonyms → check branded
-        # 4. General INCI collection
-        # 5. Unable to decode
-        matched_raw, general_ingredients, ingredient_tags, unable_to_decode = await match_inci_names(ingredients, synonyms_map)
-        
-        # 🔹 Get BIS cautions for all ingredients (runs in parallel with matching)
-        print("Retrieving BIS cautions...")
-        bis_cautions = await get_bis_cautions_for_ingredients(ingredients)
-        if bis_cautions:
-            print(f"[OK] Retrieved BIS cautions for {len(bis_cautions)} ingredients: {list(bis_cautions.keys())}")
-        else:
-            print("[WARNING] No BIS cautions retrieved - this may indicate an issue with the BIS retriever")
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Error in analyze_inci: {e}")
-        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
-
-    # Convert to objects
-    items: List[AnalyzeInciItem] = [AnalyzeInciItem(**m) for m in matched_raw]
-
-    # 🔹 Separate branded and general ingredients
-    branded_items = [item for item in items if item.tag == "B"]
-    general_items = [item for item in items if item.tag == "G"]
-
-    # 🔹 Group ALL ingredients by matched_inci (for backward compatibility)
-    grouped_dict = defaultdict(list)
-    for item in items:
-        key = tuple(sorted(item.matched_inci))
-        grouped_dict[key].append(item)
-
-    grouped: List[InciGroup] = [
-        InciGroup(
-            inci_list=list(key),
-            items=val,
-            count=len(val)
-        )
-        for key, val in grouped_dict.items()
-    ]
-    # Sort by number of INCI: more INCI first, then lower, single at last
-    grouped.sort(key=lambda x: len(x.inci_list), reverse=True)
-
-    # 🔹 Group BRANDED ingredients by matched_inci (so multiple branded options show per INCI)
-    branded_grouped_dict = defaultdict(list)
-    for item in branded_items:
-        key = tuple(sorted(item.matched_inci))
-        branded_grouped_dict[key].append(item)
-
-    branded_grouped: List[InciGroup] = [
-        InciGroup(
-            inci_list=list(key),
-            items=val,
-            count=len(val)
-        )
-        for key, val in branded_grouped_dict.items()
-    ]
-    # Sort by number of INCI: more INCI first, then lower, single at last
-    branded_grouped.sort(key=lambda x: len(x.inci_list), reverse=True)
-
-    # 🔹 Confidence (average of match scores across all items)
-    confidence = round(sum(i.match_score for i in items) / len(items), 2) if items else 0.0
-
-    return AnalyzeInciResponse(
-        grouped=grouped,  # All matched ingredients (for backward compatibility)
-        branded_ingredients=branded_items,  # Branded ingredients only - flat list
-        branded_grouped=branded_grouped,  # Branded ingredients grouped by INCI - shows all options per INCI
-        general_ingredients_list=general_items,  # General INCI ingredients only - shown at end in "Matched Ingredients" tab
-        unmatched=unable_to_decode,  # For backward compatibility
-        unable_to_decode=unable_to_decode,  # Ingredients that couldn't be decoded - for "Unable to Decode" tab
-        overall_confidence=confidence,
-        processing_time=round(time.time() - start, 3),
-        extracted_text=extracted_text,
-        input_type="text",
-        bis_cautions=bis_cautions if bis_cautions else None,
-        ingredient_tags=ingredient_tags  # Maps ingredient names to 'B' or 'G'
-    )
+    """
+    DEPRECATED: Use /api/analyze-inci instead (supports both JSON and form data).
+    This endpoint is kept for backward compatibility only.
+    """
+    # Convert form data to JSON payload format and call the main endpoint
+    return await analyze_inci({"inci_names": inci_names})
 
 
 # URL-based ingredient extraction endpoint (ONLY extracts, doesn't analyze)
@@ -546,8 +586,74 @@ async def extract_ingredients_from_url(payload: dict):
 
 # Simple JSON endpoint for frontend compatibility
 @router.post("/analyze-inci", response_model=AnalyzeInciResponse)
-async def analyze_inci(payload: dict):
+async def analyze_inci(payload: dict, user_id: Optional[str] = Header(None, alias="X-User-Id")):
+    """
+    Analyze INCI ingredients with automatic history saving.
+    
+    Auto-saving behavior:
+    - If user_id and name are provided, automatically saves to decode history
+    - Saves with "in_progress" status before analysis
+    - Updates with "completed" status and analysis_result after analysis
+    - Saving errors don't fail the analysis (graceful degradation)
+    
+    Request body:
+    {
+        "inci_names": ["ingredient1", "ingredient2", ...] or "ingredient1, ingredient2",
+        "name": "Product Name" (optional, for auto-saving),
+        "tag": "optional-tag" (optional),
+        "notes": "User notes" (optional),
+        "expected_benefits": "Expected benefits" (optional)
+    }
+    
+    Headers:
+    - X-User-Id: User ID (optional, can also be in payload)
+    """
     start = time.time()
+    history_id = None
+    
+    # Extract optional fields for auto-saving
+    user_id_value = user_id or payload.get("user_id")
+    name = payload.get("name", "").strip()
+    tag = payload.get("tag")
+    notes = payload.get("notes", "")
+    expected_benefits = payload.get("expected_benefits")
+    input_data = payload.get("input_data")  # Optional: explicit input data, otherwise will use parsed ingredients
+    
+    # 🔹 Auto-save: Save initial state with "in_progress" status if user_id provided
+    # Auto-save always happens if user_id is provided (name is optional, will use default if not provided)
+    if user_id_value:
+        try:
+            # Parse INCI names first to get input_data
+            if "inci_names" not in payload:
+                raise HTTPException(status_code=400, detail="Missing required field: inci_names")
+            
+            inci_input = payload["inci_names"]
+            ingredients_preview = parse_inci_string(inci_input)
+            input_data_value = input_data or (", ".join(ingredients_preview) if ingredients_preview else str(inci_input))
+            
+            # Use provided name or generate default name from ingredients
+            display_name = name if name else (ingredients_preview[0] + "..." if ingredients_preview else "Untitled Analysis")
+            if not display_name or len(display_name) > 100:
+                display_name = ingredients_preview[0] + "..." if ingredients_preview and len(ingredients_preview) > 0 else "Untitled Analysis"
+            
+            # Save initial state
+            history_doc = {
+                "user_id": user_id_value,
+                "name": display_name,
+                "tag": tag,
+                "input_type": "inci",
+                "input_data": input_data_value,
+                "status": "in_progress",
+                "notes": notes,
+                "expected_benefits": expected_benefits,
+                "created_at": (datetime.now(timezone(timedelta(hours=5, minutes=30)))).isoformat()
+            }
+            result = await decode_history_col.insert_one(history_doc)
+            history_id = str(result.inserted_id)
+            print(f"[AUTO-SAVE] Saved initial state with history_id: {history_id}")
+        except Exception as e:
+            print(f"[AUTO-SAVE] Warning: Failed to save initial state: {e}")
+            # Continue with analysis even if saving fails
     
     try:
         # Validate payload format: { inci_names: ["ingredient1", "ingredient2", ...] or "ingredient1, ingredient2" }
@@ -583,81 +689,120 @@ async def analyze_inci(payload: dict):
             print("[WARNING] No BIS cautions retrieved - this may indicate an issue with the BIS retriever")
         
     except HTTPException:
+        # Update history status to "failed" if we have history_id
+        if history_id and user_id_value:
+            try:
+                await decode_history_col.update_one(
+                    {"_id": ObjectId(history_id), "user_id": user_id_value},
+                    {"$set": {"status": "failed"}}
+                )
+            except:
+                pass
         raise
     except Exception as e:
+        # Update history status to "failed" if we have history_id
+        if history_id and user_id_value:
+            try:
+                await decode_history_col.update_one(
+                    {"_id": ObjectId(history_id), "user_id": user_id_value},
+                    {"$set": {"status": "failed"}}
+                )
+            except:
+                pass
         print(f"Error in analyze_inci_json: {e}")
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
     # Convert to objects
     items: List[AnalyzeInciItem] = [AnalyzeInciItem(**m) for m in matched_raw]
 
-    # 🔹 Separate branded and general ingredients
-    branded_items = [item for item in items if item.tag == "B"]
-    general_items = [item for item in items if item.tag == "G"]
+    # 🔹 Fetch categories for INCI-based bifurcation (only for general INCI, not branded)
+    print("Fetching ingredient categories for INCI-based bifurcation...")
+    inci_categories, items_processed = await fetch_and_compute_categories(items)
+    print(f"Found categories for {len(inci_categories)} INCI names")
 
-    # 🔹 Group ALL ingredients by matched_inci (for backward compatibility)
-    grouped_dict = defaultdict(list)
-    for item in items:
+    # 🔹 Group ALL detected ingredients (branded + general) by matched_inci
+    detected_dict = defaultdict(list)
+    for item in items_processed:
         key = tuple(sorted(item.matched_inci))
-        grouped_dict[key].append(item)
+        detected_dict[key].append(item)
 
-    grouped: List[InciGroup] = [
+    detected: List[InciGroup] = [
         InciGroup(
             inci_list=list(key),
             items=val,
             count=len(val)
         )
-        for key, val in grouped_dict.items()
+        for key, val in detected_dict.items()
     ]
     # Sort by number of INCI: more INCI first, then lower, single at last
-    grouped.sort(key=lambda x: len(x.inci_list), reverse=True)
+    detected.sort(key=lambda x: len(x.inci_list), reverse=True)
 
-    # 🔹 Group BRANDED ingredients by matched_inci (so multiple branded options show per INCI)
-    branded_grouped_dict = defaultdict(list)
-    for item in branded_items:
-        key = tuple(sorted(item.matched_inci))
-        branded_grouped_dict[key].append(item)
+    # Filter out water-related BIS cautions
+    filtered_bis_cautions = None
+    if bis_cautions:
+        filtered_bis_cautions = {}
+        water_related_keywords = ['water', 'aqua']
+        for ingredient, cautions in bis_cautions.items():
+            ingredient_lower = ingredient.lower()
+            is_water_related = any(water_term in ingredient_lower for water_term in water_related_keywords)
+            if not is_water_related:
+                filtered_bis_cautions[ingredient] = cautions
 
-    branded_grouped: List[InciGroup] = [
-        InciGroup(
-            inci_list=list(key),
-            items=val,
-            count=len(val)
-        )
-        for key, val in branded_grouped_dict.items()
-    ]
-    # Sort by number of INCI: more INCI first, then lower, single at last
-    branded_grouped.sort(key=lambda x: len(x.inci_list), reverse=True)
-
-    # 🔹 Confidence (average of match scores across all items)
-    confidence = round(sum(i.match_score for i in items) / len(items), 2) if items else 0.0
-
-    return AnalyzeInciResponse(
-        grouped=grouped,  # All matched ingredients (for backward compatibility)
-        branded_ingredients=branded_items,  # Branded ingredients only - flat list
-        branded_grouped=branded_grouped,  # Branded ingredients grouped by INCI - shows all options per INCI
-        general_ingredients_list=general_items,  # General INCI ingredients only - shown at end in "Matched Ingredients" tab
-        unmatched=unable_to_decode,  # For backward compatibility
-        unable_to_decode=unable_to_decode,  # Ingredients that couldn't be decoded - for "Unable to Decode" tab
-        overall_confidence=confidence,
+    # Build response (deprecated fields are not included - they will be excluded by exclude_none=True in schema)
+    response = AnalyzeInciResponse(
+        detected=detected,  # All detected ingredients (branded + general) grouped by INCI
+        unable_to_decode=unable_to_decode,
         processing_time=round(time.time() - start, 3),
-        extracted_text=extracted_text,
-        input_type="text",
-        bis_cautions=bis_cautions if bis_cautions else None,
-        ingredient_tags=ingredient_tags
+        bis_cautions=filtered_bis_cautions if filtered_bis_cautions else None,
+        categories=inci_categories if inci_categories else None,  # INCI categories for bifurcation
     )
+    
+    # 🔹 Auto-save: Update history with "completed" status and analysis_result
+    if history_id and user_id_value:
+        try:
+            # Convert response to dict for storage
+            analysis_result_dict = response.dict()
+            
+            update_doc = {
+                "status": "completed",
+                "analysis_result": analysis_result_dict
+            }
+            
+            await decode_history_col.update_one(
+                {"_id": ObjectId(history_id), "user_id": user_id_value},
+                {"$set": update_doc}
+            )
+            print(f"[AUTO-SAVE] Updated history {history_id} with completed status")
+        except Exception as e:
+            print(f"[AUTO-SAVE] Warning: Failed to update history: {e}")
+            # Don't fail the response if saving fails
+    
+    return response
 
 
 # URL-based ingredient analysis endpoint
 @router.post("/analyze-url", response_model=AnalyzeInciResponse)
-async def analyze_url(payload: dict):
+async def analyze_url(payload: dict, user_id: Optional[str] = Header(None, alias="X-User-Id")):
     """
-    Extract ingredients from a product URL and analyze them.
+    Extract ingredients from a product URL and analyze them with automatic history saving.
+    
+    Auto-saving behavior:
+    - If user_id and name are provided, automatically saves to decode history
+    - Saves with "in_progress" status before analysis
+    - Updates with "completed" status and analysis_result after analysis
+    - Saving errors don't fail the analysis (graceful degradation)
     
     Request body:
     {
-        "url": "https://example.com/product/..."
+        "url": "https://example.com/product/...",
+        "name": "Product Name" (optional, for auto-saving),
+        "tag": "optional-tag" (optional),
+        "notes": "User notes" (optional),
+        "expected_benefits": "Expected benefits" (optional)
     }
+    
+    Headers:
+    - X-User-Id: User ID (optional, can also be in payload)
     
     The endpoint will:
     1. Scrape the URL to extract text content
@@ -667,6 +812,14 @@ async def analyze_url(payload: dict):
     """
     start = time.time()
     scraper = None
+    history_id = None
+    
+    # Extract optional fields for auto-saving
+    user_id_value = user_id or payload.get("user_id")
+    name = payload.get("name", "").strip()
+    tag = payload.get("tag")
+    notes = payload.get("notes", "")
+    expected_benefits = payload.get("expected_benefits")
     
     try:
         # Validate payload
@@ -680,6 +833,33 @@ async def analyze_url(payload: dict):
         # Validate URL format
         if not url.startswith(("http://", "https://")):
             raise HTTPException(status_code=400, detail="Invalid URL format. Must start with http:// or https://")
+        
+        # 🔹 Auto-save: Save initial state with "in_progress" status if user_id provided
+        # Auto-save always happens if user_id is provided (name is optional, will use default if not provided)
+        if user_id_value:
+            try:
+                # Use provided name or generate default name from URL
+                display_name = name if name else (url.split('/')[-1] if url else "Untitled Analysis")
+                if not display_name or len(display_name) > 100:
+                    display_name = "Untitled Analysis"
+                
+                history_doc = {
+                    "user_id": user_id_value,
+                    "name": display_name,
+                    "tag": tag,
+                    "input_type": "url",
+                    "input_data": url,
+                    "status": "in_progress",
+                    "notes": notes,
+                    "expected_benefits": expected_benefits,
+                    "created_at": (datetime.now(timezone(timedelta(hours=5, minutes=30)))).isoformat()
+                }
+                result = await decode_history_col.insert_one(history_doc)
+                history_id = str(result.inserted_id)
+                print(f"[AUTO-SAVE] Saved initial state with history_id: {history_id}")
+            except Exception as e:
+                print(f"[AUTO-SAVE] Warning: Failed to save initial state: {e}")
+                # Continue with analysis even if saving fails
         
         # Initialize URL scraper
         scraper = URLScraper()
@@ -716,6 +896,15 @@ async def analyze_url(payload: dict):
         await scraper.close()
         
     except HTTPException:
+        # Update history status to "failed" if we have history_id
+        if history_id and user_id_value:
+            try:
+                await decode_history_col.update_one(
+                    {"_id": ObjectId(history_id), "user_id": user_id_value},
+                    {"$set": {"status": "failed"}}
+                )
+            except:
+                pass
         if scraper:
             try:
                 await scraper.close()
@@ -723,6 +912,15 @@ async def analyze_url(payload: dict):
                 pass
         raise
     except Exception as e:
+        # Update history status to "failed" if we have history_id
+        if history_id and user_id_value:
+            try:
+                await decode_history_col.update_one(
+                    {"_id": ObjectId(history_id), "user_id": user_id_value},
+                    {"$set": {"status": "failed"}}
+                )
+            except:
+                pass
         print(f"Error in analyze_url: {e}")
         # Try to close browser on error
         if scraper:
@@ -735,59 +933,69 @@ async def analyze_url(payload: dict):
     # Convert to objects
     items: List[AnalyzeInciItem] = [AnalyzeInciItem(**m) for m in matched_raw]
 
-    # 🔹 Separate branded and general ingredients
-    branded_items = [item for item in items if item.tag == "B"]
-    general_items = [item for item in items if item.tag == "G"]
+    # 🔹 Fetch categories for INCI-based bifurcation (only for general INCI, not branded)
+    print("Fetching ingredient categories for INCI-based bifurcation...")
+    inci_categories, items_processed = await fetch_and_compute_categories(items)
+    print(f"Found categories for {len(inci_categories)} INCI names")
 
-    # 🔹 Group ALL ingredients by matched_inci (for backward compatibility)
-    grouped_dict = defaultdict(list)
-    for item in items:
+    # 🔹 Group ALL detected ingredients (branded + general) by matched_inci
+    detected_dict = defaultdict(list)
+    for item in items_processed:
         key = tuple(sorted(item.matched_inci))
-        grouped_dict[key].append(item)
+        detected_dict[key].append(item)
 
-    grouped: List[InciGroup] = [
+    detected: List[InciGroup] = [
         InciGroup(
             inci_list=list(key),
             items=val,
             count=len(val)
         )
-        for key, val in grouped_dict.items()
+        for key, val in detected_dict.items()
     ]
     # Sort by number of INCI: more INCI first, then lower, single at last
-    grouped.sort(key=lambda x: len(x.inci_list), reverse=True)
+    detected.sort(key=lambda x: len(x.inci_list), reverse=True)
 
-    # 🔹 Group BRANDED ingredients by matched_inci (so multiple branded options show per INCI)
-    branded_grouped_dict = defaultdict(list)
-    for item in branded_items:
-        key = tuple(sorted(item.matched_inci))
-        branded_grouped_dict[key].append(item)
+    # Filter out water-related BIS cautions
+    filtered_bis_cautions = None
+    if bis_cautions:
+        filtered_bis_cautions = {}
+        water_related_keywords = ['water', 'aqua']
+        for ingredient, cautions in bis_cautions.items():
+            ingredient_lower = ingredient.lower()
+            is_water_related = any(water_term in ingredient_lower for water_term in water_related_keywords)
+            if not is_water_related:
+                filtered_bis_cautions[ingredient] = cautions
 
-    branded_grouped: List[InciGroup] = [
-        InciGroup(
-            inci_list=list(key),
-            items=val,
-            count=len(val)
-        )
-        for key, val in branded_grouped_dict.items()
-    ]
-
-    # Confidence (average of match scores across all items)
-    confidence = round(sum(i.match_score for i in items) / len(items), 2) if items else 0.0
-
-    return AnalyzeInciResponse(
-        grouped=grouped,  # All matched ingredients (for backward compatibility)
-        branded_ingredients=branded_items,  # Branded ingredients only - flat list
-        branded_grouped=branded_grouped,  # Branded ingredients grouped by INCI - shows all options per INCI
-        general_ingredients_list=general_items,  # General INCI ingredients only - shown at end in "Matched Ingredients" tab
-        unmatched=unable_to_decode,  # For backward compatibility
-        unable_to_decode=unable_to_decode,  # Ingredients that couldn't be decoded - for "Unable to Decode" tab
-        overall_confidence=confidence,
+    # Build response (deprecated fields are not included - they will be excluded by exclude_none=True in schema)
+    response = AnalyzeInciResponse(
+        detected=detected,  # All detected ingredients (branded + general) grouped by INCI
+        unable_to_decode=unable_to_decode,
         processing_time=round(time.time() - start, 3),
-        extracted_text=extracted_text,  # Full scraped text for display
-        input_type="url",
-        bis_cautions=bis_cautions if bis_cautions else None,
-        ingredient_tags=ingredient_tags
+        bis_cautions=filtered_bis_cautions if filtered_bis_cautions else None,
+        categories=inci_categories if inci_categories else None,  # INCI categories for bifurcation
     )
+    
+    # 🔹 Auto-save: Update history with "completed" status and analysis_result
+    if history_id and user_id_value:
+        try:
+            # Convert response to dict for storage
+            analysis_result_dict = response.dict()
+            
+            update_doc = {
+                "status": "completed",
+                "analysis_result": analysis_result_dict
+            }
+            
+            await decode_history_col.update_one(
+                {"_id": ObjectId(history_id), "user_id": user_id_value},
+                {"$set": update_doc}
+            )
+            print(f"[AUTO-SAVE] Updated history {history_id} with completed status")
+        except Exception as e:
+            print(f"[AUTO-SAVE] Warning: Failed to update history: {e}")
+            # Don't fail the response if saving fails
+    
+    return response
 
 
 @router.get("/suppliers")
@@ -1878,7 +2086,7 @@ Return the JSON comparison:"""
         print("Sending comparison request to Claude...")
         response = claude_client.messages.create(
             model=model_name,
-            max_tokens=4000,
+            max_tokens=8192,
             temperature=0.1,
             messages=[
                 {
@@ -2080,7 +2288,7 @@ CRITICAL: NEVER use null. Always provide a value (even if it's "Unknown" for tex
             try:
                 fill_response1 = claude_client.messages.create(
                     model=model_name,
-                    max_tokens=2000,
+                    max_tokens=8192,
                     temperature=0.2,
                     messages=[
                         {
@@ -2174,7 +2382,7 @@ CRITICAL: NEVER use null. Always provide a value (even if it's "Unknown" for tex
             try:
                 fill_response2 = claude_client.messages.create(
                     model=model_name,
-                    max_tokens=2000,
+                    max_tokens=8192,
                     temperature=0.2,
                     messages=[
                         {
@@ -2993,7 +3201,7 @@ Return your analysis as JSON with the structure specified in the system prompt."
     try:
         response = claude_client.messages.create(
             model=claude_model,
-            max_tokens=2000,
+            max_tokens=8192,
             temperature=0.2,  # Lower temperature for more consistent classification
             system=system_prompt,
             messages=[
@@ -3134,7 +3342,7 @@ Return your ranking as JSON with the structure specified in the system prompt.""
     try:
         response = claude_client.messages.create(
             model=claude_model,
-            max_tokens=1500,
+            max_tokens=8192,
             temperature=0.2,
             system=system_prompt,
             messages=[

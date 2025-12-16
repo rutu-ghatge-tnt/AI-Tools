@@ -14,36 +14,31 @@ class AnalyzeInciItem(BaseModel):
     ingredient_name: str
     ingredient_id: Optional[str] = Field(None, description="Ingredient ID from branded ingredients collection (for distributor mapping)")
     supplier_name: Optional[str] = None
-    description: Optional[str] = None
-    rephrased_description: Optional[str] = None   # ✅ new
-    category_decided: Optional[str] = None        # ✅ new
+    description: Optional[str] = Field(None, description="Description (uses enhanced_description from MongoDB for branded ingredients)")
+    category_decided: Optional[str] = Field(None, description="Category from MongoDB for branded ingredients: 'Active' or 'Excipient'")
+    category: Optional[str] = Field(None, description="Computed category for general INCI and combinations: 'Active' or 'Excipient' (handles combinations automatically)")
     functionality_category_tree: Optional[List[List[str]]] = []
     chemical_class_category_tree: Optional[List[List[str]]] = []
     match_score: float
     matched_inci: List[str]
-    matched_count: int
-    total_brand_inci: int
     tag: Optional[str] = Field(None, description="Tag: 'B' for branded, 'G' for general INCI")
-    match_method: Optional[str] = Field(None, description="Match method: 'exact', 'fuzzy', or 'synonym'")
+    match_method: Optional[str] = Field(None, description="Match method: 'exact', 'fuzzy', 'synonym', or 'combination'")
 
 class InciGroup(BaseModel):
     inci_list: List[str]                  # the set of INCI names matched
     items: List[AnalyzeInciItem]          # all branded ingredients that matched this INCI set
-    count: int    
+    count: int = Field(..., description="Number of items (can be computed as len(items))")    
     
 class AnalyzeInciResponse(BaseModel):
-    grouped: List[InciGroup] = Field(default_factory=list, description="All matched ingredients (branded + general) - for backward compatibility")
-    branded_ingredients: List[AnalyzeInciItem] = Field(default_factory=list, description="Branded ingredients only (tag='B') - flat list")
-    branded_grouped: List[InciGroup] = Field(default_factory=list, description="Branded ingredients grouped by INCI - shows all branded options for each INCI")
-    general_ingredients_list: List[AnalyzeInciItem] = Field(default_factory=list, description="General INCI ingredients only (tag='G') - shown at end in Matched Ingredients tab")
+    detected: List[InciGroup] = Field(default_factory=list, description="All detected ingredients (branded + general) grouped by INCI")
     unable_to_decode: List[str] = Field(default_factory=list, description="Ingredients that couldn't be decoded - for 'Unable to Decode' tab")
-    unmatched: List[str] = Field(default_factory=list, description="DEPRECATED: Use unable_to_decode instead")
-    overall_confidence: float
-    processing_time: float
-    extracted_text: Optional[str] = Field(None, description="Text extracted from input")
-    input_type: str = Field(..., description="Type of input processed")
+    processing_time: float = Field(..., description="Time taken to process (in seconds)")
     bis_cautions: Optional[Dict[str, List[str]]] = Field(None, description="BIS cautions for ingredients")
-    ingredient_tags: Optional[Dict[str, str]] = Field(None, description="Mapping of ingredient names to tags: 'B' for branded, 'G' for general")
+    categories: Optional[Dict[str, str]] = Field(None, description="Individual INCI categories mapping for bifurcation: { 'inci_name': 'Active' | 'Excipient' }")
+    
+    class Config:
+        # Exclude None values from JSON serialization to remove deprecated fields
+        exclude_none = True
 
                         # how many branded ingredients matched
 
@@ -194,8 +189,18 @@ class ReportSection(BaseModel):
     type: str = Field(..., description="Section type: 'list', 'table', or 'text'")
     content: Union[List[str], List[ReportTableRow], str] = Field(..., description="Section content - list of strings for lists, list of rows for tables, or string for text")
 
+class FormulationSummary(BaseModel):
+    """Summary fields for formulation report"""
+    formulation_type: Optional[str] = Field(None, description="Overall formulation type (e.g., Water-based Serum)")
+    key_active_ingredients: List[str] = Field(default_factory=list, description="List of key active ingredients")
+    primary_benefits: List[str] = Field(default_factory=list, description="List of primary benefits")
+    recommended_ph_range: Optional[str] = Field(None, description="Recommended pH range (e.g., 5.0-6.5)")
+    compliance_status: Optional[str] = Field(None, description="Overall compliance status (e.g., Compliant, Review Needed)")
+    critical_concerns: List[str] = Field(default_factory=list, description="List of critical concerns or warnings")
+
 class FormulationReportResponse(BaseModel):
     """Response schema for formulation report as JSON"""
+    summary: Optional[FormulationSummary] = Field(None, description="Executive summary fields of the formulation analysis")
     inci_list: List[str] = Field(..., description="List of submitted INCI ingredients")
     analysis_table: List[ReportTableRow] = Field(..., description="Analysis table with columns: Ingredient | Category | Functions/Notes | BIS Cautions")
     compliance_panel: List[ReportTableRow] = Field(default_factory=list, description="Compliance panel table")

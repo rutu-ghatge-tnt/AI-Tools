@@ -137,22 +137,22 @@ IMPORTANT:
     # 🔹 Speed-optimized model priority (fastest models first for bulk processing)
     models_to_try = [
         # Fastest models first for maximum speed
-        {"name": "gpt-3.5-turbo-instruct", "max_tokens": 1000, "endpoint": "completions", "rpm": 3500, "tpm": 90000},
-        {"name": "gpt-3.5-turbo", "max_tokens": 1000, "endpoint": "chat", "rpm": 500, "tpm": 200000},
+        {"name": "gpt-3.5-turbo-instruct", "max_tokens": 4000, "endpoint": "completions", "rpm": 3500, "tpm": 90000},
+        {"name": "gpt-3.5-turbo", "max_tokens": 4000, "endpoint": "chat", "rpm": 500, "tpm": 200000},
         
         # GPT-5 models (high quality, good speed)
-        {"name": "gpt-5-mini", "max_tokens": 1000, "endpoint": "chat", "rpm": 500, "tpm": 200000},
-        {"name": "gpt-5-mini-2025-08-07", "max_tokens": 1000, "endpoint": "chat", "rpm": 500, "tpm": 200000},
-        {"name": "gpt-5-nano", "max_tokens": 1000, "endpoint": "chat", "rpm": 500, "tpm": 200000},
-        {"name": "gpt-5", "max_tokens": 1000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
-        {"name": "gpt-5-chat-latest", "max_tokens": 1000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
-        {"name": "gpt-5-2025-08-07", "max_tokens": 1000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
+        {"name": "gpt-5-mini", "max_tokens": 4000, "endpoint": "chat", "rpm": 500, "tpm": 200000},
+        {"name": "gpt-5-mini-2025-08-07", "max_tokens": 4000, "endpoint": "chat", "rpm": 500, "tpm": 200000},
+        {"name": "gpt-5-nano", "max_tokens": 4000, "endpoint": "chat", "rpm": 500, "tpm": 200000},
+        {"name": "gpt-5", "max_tokens": 4000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
+        {"name": "gpt-5-chat-latest", "max_tokens": 4000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
+        {"name": "gpt-5-2025-08-07", "max_tokens": 4000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
         
         # GPT-4 models as fallback
-        {"name": "gpt-4o", "max_tokens": 1000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
-        {"name": "gpt-4.1", "max_tokens": 1000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
-        {"name": "gpt-4o-2024-11-20", "max_tokens": 1000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
-        {"name": "chatgpt-4o-latest", "max_tokens": 1000, "endpoint": "chat", "rpm": 200, "tpm": 500000}
+        {"name": "gpt-4o", "max_tokens": 4000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
+        {"name": "gpt-4.1", "max_tokens": 4000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
+        {"name": "gpt-4o-2024-11-20", "max_tokens": 4000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
+        {"name": "chatgpt-4o-latest", "max_tokens": 4000, "endpoint": "chat", "rpm": 200, "tpm": 500000}
     ]
     
     for model_config in models_to_try:
