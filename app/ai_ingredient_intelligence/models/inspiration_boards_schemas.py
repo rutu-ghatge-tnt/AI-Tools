@@ -216,8 +216,6 @@ class FetchProductResponse(BaseModel):
     size: Optional[float]
     unit: Optional[str]
     category: Optional[str]
-    rating: Optional[float]
-    reviews: Optional[int]
     image: Optional[str]
     ingredients: Optional[List[str]] = Field(default_factory=list)
     benefits: Optional[List[str]] = Field(default_factory=list)
