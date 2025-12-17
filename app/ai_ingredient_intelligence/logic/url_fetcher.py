@@ -45,6 +45,11 @@ async def fetch_product_from_url(url: str) -> Dict[str, Any]:
         result = await scraper.extract_ingredients_from_url(url)
         
         # Parse the result
+        # Extract product image from result, fallback to emoji if not found
+        product_image = result.get("product_image")
+        if not product_image:
+            product_image = "🧴"
+        
         product_data = {
             "name": None,
             "brand": None,
@@ -54,7 +59,7 @@ async def fetch_product_from_url(url: str) -> Dict[str, Any]:
             "size": None,
             "unit": "ml",
             "category": None,
-            "image": "🧴",
+            "image": product_image,
             "ingredients": result.get("ingredients", []),
             "benefits": [],
             "tags": [],
