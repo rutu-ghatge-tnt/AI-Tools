@@ -1,5 +1,5 @@
 # app/api/analyze_inci.py
-from fastapi import APIRouter, HTTPException, Form, Request, Header, Depends
+from fastapi import APIRouter, HTTPException, Form, Request, Depends
 from fastapi.responses import Response
 import time
 import os
@@ -607,14 +607,13 @@ async def extract_ingredients_from_url(
 @router.post("/analyze-inci", response_model=AnalyzeInciResponse)
 async def analyze_inci(
     payload: dict,
-    user_id: Optional[str] = Header(None, alias="X-User-Id"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
     Analyze INCI ingredients with automatic history saving.
     
     Auto-saving behavior:
-    - If user_id and name are provided, automatically saves to decode history
+    - If name is provided, automatically saves to decode history
     - Saves with "in_progress" status before analysis
     - Updates with "completed" status and analysis_result after analysis
     - Saving errors don't fail the analysis (graceful degradation)
@@ -628,14 +627,15 @@ async def analyze_inci(
         "expected_benefits": "Expected benefits" (optional)
     }
     
-    Headers:
-    - X-User-Id: User ID (optional, can also be in payload)
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
     """
     start = time.time()
     history_id = None
     
-    # Extract optional fields for auto-saving
-    user_id_value = user_id or payload.get("user_id")
+    # Extract user_id from JWT token (already verified by verify_jwt_token)
+    user_id_value = current_user.get("user_id") or current_user.get("_id") or payload.get("user_id")
     name = payload.get("name", "").strip()
     tag = payload.get("tag")
     notes = payload.get("notes", "")
@@ -807,14 +807,13 @@ async def analyze_inci(
 @router.post("/analyze-url", response_model=AnalyzeInciResponse)
 async def analyze_url(
     payload: dict,
-    user_id: Optional[str] = Header(None, alias="X-User-Id"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
     Extract ingredients from a product URL and analyze them with automatic history saving.
     
     Auto-saving behavior:
-    - If user_id and name are provided, automatically saves to decode history
+    - If name is provided, automatically saves to decode history
     - Saves with "in_progress" status before analysis
     - Updates with "completed" status and analysis_result after analysis
     - Saving errors don't fail the analysis (graceful degradation)
@@ -828,8 +827,9 @@ async def analyze_url(
         "expected_benefits": "Expected benefits" (optional)
     }
     
-    Headers:
-    - X-User-Id: User ID (optional, can also be in payload)
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
     
     The endpoint will:
     1. Scrape the URL to extract text content
@@ -841,8 +841,8 @@ async def analyze_url(
     scraper = None
     history_id = None
     
-    # Extract optional fields for auto-saving
-    user_id_value = user_id or payload.get("user_id")
+    # Extract user_id from JWT token (already verified by verify_jwt_token)
+    user_id_value = current_user.get("user_id") or current_user.get("_id") or payload.get("user_id")
     name = payload.get("name", "").strip()
     tag = payload.get("tag")
     notes = payload.get("notes", "")
@@ -2439,7 +2439,6 @@ CRITICAL: NEVER use null. Always provide a value (even if it's "Unknown" for tex
 @router.post("/save-decode-history")
 async def save_decode_history(
     payload: dict,
-    user_id: Optional[str] = Header(None, alias="X-User-Id"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
@@ -2464,8 +2463,9 @@ async def save_decode_history(
         "status": "in_progress" | "completed" | "failed" (default: "completed")
     }
     
-    Headers:
-    - X-User-Id: User ID (optional, can also be in payload)
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
     """
     try:
         # Validate payload
@@ -2494,10 +2494,10 @@ async def save_decode_history(
         if status == "completed" and analysis_result is None:
             raise HTTPException(status_code=400, detail="analysis_result is required when status is 'completed'")
         
-        # Get user_id from header or payload
-        user_id_value = user_id or payload.get("user_id")
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id_value = current_user.get("user_id") or current_user.get("_id") or payload.get("user_id")
         if not user_id_value:
-            raise HTTPException(status_code=400, detail="User ID is required. Please provide X-User-Id header or user_id in payload")
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
         
         # Create history document
         history_doc = {
@@ -2547,7 +2547,6 @@ async def get_decode_history(
     search: Optional[str] = None,
     limit: int = 50,
     skip: int = 0,
-    user_id: Optional[str] = Header(None, alias="X-User-Id"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
@@ -2567,13 +2566,15 @@ async def get_decode_history(
     - limit: Number of results (default: 50)
     - skip: Number of results to skip (default: 0)
     
-    Headers:
-    - X-User-Id: User ID (required)
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
     """
     try:
-        # Validate user_id
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
         if not user_id:
-            raise HTTPException(status_code=400, detail="User ID is required. Please provide X-User-Id header")
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
         
         # Build query - ALWAYS filter by user_id
         query = {"user_id": user_id}
@@ -2651,7 +2652,6 @@ async def options_decode_history(history_id: str):
 async def update_decode_history(
     history_id: str,
     payload: dict,
-    user_id: Optional[str] = Header(None, alias="X-User-Id"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
@@ -2678,13 +2678,15 @@ async def update_decode_history(
     - user_id: Cannot be changed
     - created_at: Cannot be changed
     
-    Headers:
-    - X-User-Id: User ID (required)
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
     """
     try:
-        # Validate user_id
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
         if not user_id:
-            raise HTTPException(status_code=400, detail="User ID is required. Please provide X-User-Id header")
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
         
         # Validate ObjectId
         if not ObjectId.is_valid(history_id):
@@ -2749,7 +2751,6 @@ async def update_decode_history(
 @router.delete("/decode-history/{history_id}")
 async def delete_decode_history(
     history_id: str,
-    user_id: Optional[str] = Header(None, alias="X-User-Id"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
@@ -2761,13 +2762,15 @@ async def delete_decode_history(
     - Deletion is permanent and cannot be undone
     - Useful for cleaning up old or unwanted history items
     
-    Headers:
-    - X-User-Id: User ID (required)
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
     """
     try:
-        # Validate user_id
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
         if not user_id:
-            raise HTTPException(status_code=400, detail="User ID is required. Please provide X-User-Id header")
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
         
         # Validate ObjectId
         if not ObjectId.is_valid(history_id):
@@ -2804,7 +2807,6 @@ async def delete_decode_history(
 @router.post("/save-compare-history")
 async def save_compare_history(
     payload: dict,
-    user_id: Optional[str] = Header(None, alias="X-User-Id"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
@@ -2830,8 +2832,9 @@ async def save_compare_history(
         "status": "in_progress" | "completed" | "failed" (default: "completed")
     }
     
-    Headers:
-    - X-User-Id: User ID (optional, can also be in payload)
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
     """
     try:
         # Validate payload
@@ -2860,10 +2863,10 @@ async def save_compare_history(
         if status == "completed" and comparison_result is None:
             raise HTTPException(status_code=400, detail="comparison_result is required when status is 'completed'")
         
-        # Get user_id from header or payload
-        user_id_value = user_id or payload.get("user_id")
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id_value = current_user.get("user_id") or current_user.get("_id") or payload.get("user_id")
         if not user_id_value:
-            raise HTTPException(status_code=400, detail="User ID is required. Please provide X-User-Id header or user_id in payload")
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
         
         # Create history document
         history_doc = {
@@ -2910,7 +2913,6 @@ async def get_compare_history(
     search: Optional[str] = None,
     limit: int = 50,
     skip: int = 0,
-    user_id: Optional[str] = Header(None, alias="X-User-Id"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
@@ -2930,13 +2932,15 @@ async def get_compare_history(
     - limit: Number of results (default: 50)
     - skip: Number of results to skip (default: 0)
     
-    Headers:
-    - X-User-Id: User ID (required)
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
     """
     try:
-        # Validate user_id
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
         if not user_id:
-            raise HTTPException(status_code=400, detail="User ID is required. Please provide X-User-Id header")
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
         
         # Build query - ALWAYS filter by user_id
         query = {"user_id": user_id}
@@ -2990,17 +2994,23 @@ async def get_compare_history(
 
 
 @router.patch("/compare-history/{history_id}")
-async def update_compare_history(history_id: str, payload: dict, user_id: Optional[str] = Header(None, alias="X-User-Id")):
+async def update_compare_history(
+    history_id: str, 
+    payload: dict, 
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Update a compare history item (e.g., add notes)
     
-    Headers:
-    - X-User-Id: User ID (required)
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
     """
     try:
-        # Validate user_id
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
         if not user_id:
-            raise HTTPException(status_code=400, detail="User ID is required. Please provide X-User-Id header")
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
         
         # Validate ObjectId
         if not ObjectId.is_valid(history_id):
@@ -3050,19 +3060,20 @@ async def update_compare_history(history_id: str, payload: dict, user_id: Option
 @router.delete("/compare-history/{history_id}")
 async def delete_compare_history(
     history_id: str,
-    user_id: Optional[str] = Header(None, alias="X-User-Id"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
     Delete a compare history item by ID (user-specific)
     
-    Headers:
-    - X-User-Id: User ID (required)
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
     """
     try:
-        # Validate user_id
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
         if not user_id:
-            raise HTTPException(status_code=400, detail="User ID is required. Please provide X-User-Id header")
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
         
         # Validate ObjectId
         if not ObjectId.is_valid(history_id):
@@ -3393,7 +3404,6 @@ Return your ranking as JSON with the structure specified in the system prompt.""
 @router.post("/save-market-research-history")
 async def save_market_research_history(
     payload: dict,
-    user_id: Optional[str] = Header(None, alias="X-User-Id"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
@@ -3412,8 +3422,9 @@ async def save_market_research_history(
         "notes": "User notes"
     }
     
-    Headers:
-    - X-User-Id: User ID (optional, can also be in payload)
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
     """
     try:
         if "name" not in payload:
@@ -3423,9 +3434,10 @@ async def save_market_research_history(
         if "input_data" not in payload:
             raise HTTPException(status_code=400, detail="input_data is required")
         
-        user_id_value = user_id or payload.get("user_id")
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id_value = current_user.get("user_id") or current_user.get("_id") or payload.get("user_id")
         if not user_id_value:
-            raise HTTPException(status_code=400, detail="user_id is required (provide in header or payload)")
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
         
         name = payload.get("name", "").strip()
         tag = payload.get("tag", "").strip() or None
@@ -3479,7 +3491,6 @@ async def get_market_research_history(
     search: Optional[str] = None,
     limit: int = 50,
     skip: int = 0,
-    user_id: Optional[str] = Header(None, alias="X-User-Id"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
@@ -3490,12 +3501,15 @@ async def get_market_research_history(
     - limit: Number of results (default: 50)
     - skip: Number of results to skip (default: 0)
     
-    Headers:
-    - X-User-Id: User ID (required)
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
     """
     try:
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
         if not user_id:
-            raise HTTPException(status_code=400, detail="User ID is required. Please provide X-User-Id header")
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
         
         query = {"user_id": user_id}
         
@@ -3531,14 +3545,24 @@ async def get_market_research_history(
 
 
 @router.patch("/market-research-history/{history_id}")
-async def update_market_research_history(history_id: str, payload: dict, user_id: Optional[str] = Header(None, alias="X-User-Id")):
+async def update_market_research_history(
+    history_id: str, 
+    payload: dict, 
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Update market research history item (user-specific)
     Allows editing name, tag, and notes
+    
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
     """
     try:
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
         if not user_id:
-            raise HTTPException(status_code=400, detail="User ID is required. Please provide X-User-Id header")
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
         
         update_data = {}
         if "name" in payload:
@@ -3579,15 +3603,20 @@ async def update_market_research_history(history_id: str, payload: dict, user_id
 @router.delete("/market-research-history/{history_id}")
 async def delete_market_research_history(
     history_id: str,
-    user_id: Optional[str] = Header(None, alias="X-User-Id"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
     Delete market research history item (user-specific)
+    
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
     """
     try:
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
         if not user_id:
-            raise HTTPException(status_code=400, detail="User ID is required. Please provide X-User-Id header")
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
         
         result = await market_research_history_col.delete_one({
             "_id": ObjectId(history_id),
