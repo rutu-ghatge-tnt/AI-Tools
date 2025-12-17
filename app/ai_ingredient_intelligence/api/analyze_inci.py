@@ -1895,9 +1895,18 @@ async def compare_products(
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
-    Compare two products based on URLs or INCI strings.
+    Compare multiple products based on URLs or INCI strings.
     
-    Request body:
+    Request body (new format):
+    {
+        "products": [
+            {"input": "https://example.com/product1", "input_type": "url"},
+            {"input": "Water, Glycerin, ...", "input_type": "inci"},
+            ...
+        ]
+    }
+    
+    Request body (backward compatible):
     {
         "input1": "https://example.com/product1" or "Water, Glycerin, ...",
         "input2": "https://example.com/product2" or "Water, Hyaluronic Acid, ...",
@@ -1908,98 +1917,97 @@ async def compare_products(
     The endpoint will:
     1. If URL: Scrape the URL to extract product data
     2. If INCI: Use the INCI string directly
-    3. Send both to Claude for structured comparison
+    3. Send all products to Claude for structured comparison
     4. Return comparison data with INCI, benefits, claims, price, and attributes
     """
     start = time.time()
     scraper = None
     
     try:
-        # Validate payload
-        if "input1" not in payload or "input2" not in payload:
-            raise HTTPException(status_code=400, detail="Missing required fields: input1 and input2")
+        # Parse products from payload - support both new format and backward compatibility
+        products_list = []
         
-        if "input1_type" not in payload or "input2_type" not in payload:
-            raise HTTPException(status_code=400, detail="Missing required fields: input1_type and input2_type")
+        if "products" in payload and payload["products"]:
+            # New format: array of products
+            products_list = payload["products"]
+            if not isinstance(products_list, list):
+                raise HTTPException(status_code=400, detail="products must be an array")
+            if len(products_list) < 2:
+                raise HTTPException(status_code=400, detail="At least 2 products are required for comparison")
+        elif "input1" in payload and "input2" in payload:
+            # Backward compatible format: input1/input2
+            if "input1_type" not in payload or "input2_type" not in payload:
+                raise HTTPException(status_code=400, detail="Missing required fields: input1_type and input2_type")
+            products_list = [
+                {"input": payload["input1"], "input_type": payload["input1_type"]},
+                {"input": payload["input2"], "input_type": payload["input2_type"]}
+            ]
+        else:
+            raise HTTPException(status_code=400, detail="Missing required fields: either 'products' array or 'input1' and 'input2'")
         
-        input1 = payload["input1"]
-        input2 = payload["input2"]
-        input1_type = payload["input1_type"].lower()
-        input2_type = payload["input2_type"].lower()
+        # Validate all products
+        for i, product in enumerate(products_list):
+            if "input" not in product or "input_type" not in product:
+                raise HTTPException(status_code=400, detail=f"Product {i+1} is missing 'input' or 'input_type' field")
+            product["input_type"] = product["input_type"].lower()
+            if product["input_type"] not in ["url", "inci"]:
+                raise HTTPException(status_code=400, detail=f"Product {i+1} input_type must be 'url' or 'inci'")
         
-        if input1_type not in ["url", "inci"] or input2_type not in ["url", "inci"]:
-            raise HTTPException(status_code=400, detail="input1_type and input2_type must be 'url' or 'inci'")
-        
-        # Initialize scraper if needed
-        if input1_type == "url" or input2_type == "url":
+        # Initialize scraper if any product is a URL
+        needs_scraper = any(p["input_type"] == "url" for p in products_list)
+        if needs_scraper:
             scraper = URLScraper()
         
         # Use the shared INCI parser utility
         from app.ai_ingredient_intelligence.utils.inci_parser import parse_inci_string
         
-        # Store URLs for Claude context
-        url1_context = None
-        url2_context = None
+        # Process all products
+        processed_products = []
         
-        # Process input1
-        print(f"Processing input1 (type: {input1_type})...")
-        if input1_type == "url":
-            if not input1.startswith(("http://", "https://")):
-                raise HTTPException(status_code=400, detail="input1 must be a valid URL when input1_type is 'url'")
-            url1_context = input1  # Store URL for Claude
-            extraction_result1 = await scraper.extract_ingredients_from_url(input1)
-            text1 = extraction_result1.get("extracted_text", "")
-            inci1 = extraction_result1.get("ingredients", [])
-            product_name1 = extraction_result1.get("product_name")
-            # Try to detect product name from text if not already extracted
-            if not product_name1 and text1:
-                try:
-                    product_name1 = await scraper.detect_product_name(text1, input1)
-                except:
-                    pass
-        else:
-            # INCI input - parse directly first, then use Claude to clean if needed
-            text1 = input1
-            inci1 = parse_inci_string(input1)
-            # Use Claude to clean and validate INCI list if we have a scraper
-            if scraper and inci1:
-                try:
-                    cleaned_inci = await scraper.extract_ingredients_from_text(input1)
-                    if cleaned_inci:
-                        inci1 = cleaned_inci
-                except:
-                    pass  # Fall back to parsed list
-            product_name1 = None
-        
-        # Process input2
-        print(f"Processing input2 (type: {input2_type})...")
-        if input2_type == "url":
-            if not input2.startswith(("http://", "https://")):
-                raise HTTPException(status_code=400, detail="input2 must be a valid URL when input2_type is 'url'")
-            url2_context = input2  # Store URL for Claude
-            extraction_result2 = await scraper.extract_ingredients_from_url(input2)
-            text2 = extraction_result2.get("extracted_text", "")
-            inci2 = extraction_result2.get("ingredients", [])
-            product_name2 = extraction_result2.get("product_name")
-            # Try to detect product name from text if not already extracted
-            if not product_name2 and text2:
-                try:
-                    product_name2 = await scraper.detect_product_name(text2, input2)
-                except:
-                    pass
-        else:
-            # INCI input - parse directly first, then use Claude to clean if needed
-            text2 = input2
-            inci2 = parse_inci_string(input2)
-            # Use Claude to clean and validate INCI list if we have a scraper
-            if scraper and inci2:
-                try:
-                    cleaned_inci = await scraper.extract_ingredients_from_text(input2)
-                    if cleaned_inci:
-                        inci2 = cleaned_inci
-                except:
-                    pass  # Fall back to parsed list
-            product_name2 = None
+        # Process all products
+        for idx, product in enumerate(products_list):
+            product_input = product["input"]
+            product_type = product["input_type"]
+            product_num = idx + 1
+            
+            print(f"Processing product {product_num} (type: {product_type})...")
+            
+            product_data = {
+                "url_context": None,
+                "text": "",
+                "inci": [],
+                "product_name": None
+            }
+            
+            if product_type == "url":
+                if not product_input.startswith(("http://", "https://")):
+                    raise HTTPException(status_code=400, detail=f"Product {product_num} must be a valid URL when input_type is 'url'")
+                product_data["url_context"] = product_input  # Store URL for Claude
+                extraction_result = await scraper.extract_ingredients_from_url(product_input)
+                product_data["text"] = extraction_result.get("extracted_text", "")
+                product_data["inci"] = extraction_result.get("ingredients", [])
+                product_data["product_name"] = extraction_result.get("product_name")
+                # Try to detect product name from text if not already extracted
+                if not product_data["product_name"] and product_data["text"]:
+                    try:
+                        product_data["product_name"] = await scraper.detect_product_name(product_data["text"], product_input)
+                    except:
+                        pass
+            else:
+                # INCI input - parse directly first, then use Claude to clean if needed
+                product_data["text"] = product_input
+                product_data["inci"] = parse_inci_string(product_input)
+                # Use Claude to clean and validate INCI list if we have a scraper
+                if scraper and product_data["inci"]:
+                    try:
+                        cleaned_inci = await scraper.extract_ingredients_from_text(product_input)
+                        if cleaned_inci:
+                            product_data["inci"] = cleaned_inci
+                    except:
+                        pass  # Fall back to parsed list
+                product_data["product_name"] = None
+            
+            processed_products.append(product_data)
         
         # If scraper wasn't initialized but we need Claude for comparison
         if not scraper:
@@ -2019,76 +2027,53 @@ async def compare_products(
         model_name = CLAUDE_MODEL if CLAUDE_MODEL else (os.getenv("CLAUDE_MODEL") or os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929")
         
         # Prepare full text for better extraction (use more context to capture price, ratings, etc.)
-        # Use more characters to ensure we capture price, ratings, and other product details
-        # Increase limit to capture all available information
-        text1_full = text1[:10000] if len(text1) > 10000 else text1
-        text2_full = text2[:10000] if len(text2) > 10000 else text2
+        for idx, product_data in enumerate(processed_products):
+            product_data["text_full"] = product_data["text"][:10000] if len(product_data["text"]) > 10000 else product_data["text"]
+            print(f"Product {idx+1} extracted text length: {len(product_data['text'])} chars")
+            print(f"Product {idx+1} text preview (first 500 chars): {product_data['text'][:500]}")
+            if product_data["url_context"]:
+                print(f"Product {idx+1} URL: {product_data['url_context']}")
         
-        # Debug: Print what we're extracting
-        print(f"Input1 extracted text length: {len(text1)} chars")
-        print(f"Input1 text preview (first 500 chars): {text1[:500]}")
-        if url1_context:
-            print(f"Input1 URL: {url1_context}")
+        # Build product data sections for prompt
+        product_sections = []
+        for idx, product_data in enumerate(processed_products):
+            product_num = idx + 1
+            url_info = f"\n- Source URL: {product_data['url_context']}" if product_data["url_context"] else "\n- Source: INCI text input (no URL)"
+            product_sections.append(f"""Product {product_num} Data:
+- Product Name (if known): {product_data['product_name'] or 'Not specified'}{url_info}
+- INCI Ingredients: {', '.join(product_data['inci']) if product_data['inci'] else 'Not available'}
+- Full Extracted Text:
+{product_data['text_full']}""")
         
-        print(f"Input2 extracted text length: {len(text2)} chars")
-        print(f"Input2 text preview (first 500 chars): {text2[:500]}")
-        if url2_context:
-            print(f"Input2 URL: {url2_context}")
+        products_section = "\n\n".join(product_sections)
         
-        # Build URL context strings
-        url1_info = f"\n- Source URL: {url1_context}" if url1_context else "\n- Source: INCI text input (no URL)"
-        url2_info = f"\n- Source URL: {url2_context}" if url2_context else "\n- Source: INCI text input (no URL)"
+        # Build JSON structure for response
+        products_json_structure = ",\n".join([f'''  "product{i+1}": {{
+    "product_name": "extract the full product name from text, or null if not found",
+    "brand_name": "extract the brand/manufacturer name from text, or null if not found",
+    "inci": ["list", "of", "all", "ingredients"],
+    "benefits": ["list", "of", "all", "benefits", "mentioned"],
+    "claims": ["list", "of", "all", "claims", "mentioned"],
+    "price": "extract price in format like '₹999' or '$29.99' or 'INR 1,299', or null if not found",
+    "cruelty_free": true/false/null,
+    "sulphate_free": true/false/null,
+    "paraben_free": true/false/null,
+    "vegan": true/false/null,
+    "organic": true/false/null,
+    "fragrance_free": true/false/null,
+    "non_comedogenic": true/false/null,
+    "hypoallergenic": true/false/null
+  }}''' for i in range(len(processed_products))])
         
-        comparison_prompt = f"""You are an expert cosmetic product analyst. Compare two cosmetic products and provide a structured comparison.
+        comparison_prompt = f"""You are an expert cosmetic product analyst. Compare {len(processed_products)} cosmetic products and provide a structured comparison.
 
 IMPORTANT: If a URL is provided, use it as context to verify and extract information. The URL may contain additional product details like price, ratings, and specifications that might not be fully captured in the scraped text.
 
-Product 1 Data:
-- Product Name (if known): {product_name1 or 'Not specified'}{url1_info}
-- INCI Ingredients: {', '.join(inci1) if inci1 else 'Not available'}
-- Full Extracted Text:
-{text1_full}
+{products_section}
 
-Product 2 Data:
-- Product Name (if known): {product_name2 or 'Not specified'}{url2_info}
-- INCI Ingredients: {', '.join(inci2) if inci2 else 'Not available'}
-- Full Extracted Text:
-{text2_full}
-
-Please analyze both products CAREFULLY and extract ALL available information from the extracted text. Return a JSON object with the following structure:
+Please analyze all {len(processed_products)} products CAREFULLY and extract ALL available information from the extracted text. Return a JSON object with the following structure:
 {{
-  "product1": {{
-    "product_name": "extract the full product name from text, or null if not found",
-    "brand_name": "extract the brand/manufacturer name from text, or null if not found",
-    "inci": ["list", "of", "all", "ingredients"],
-    "benefits": ["list", "of", "all", "benefits", "mentioned"],
-    "claims": ["list", "of", "all", "claims", "mentioned"],
-    "price": "extract price in format like '₹999' or '$29.99' or 'INR 1,299', or null if not found",
-    "cruelty_free": true/false/null,
-    "sulphate_free": true/false/null,
-    "paraben_free": true/false/null,
-    "vegan": true/false/null,
-    "organic": true/false/null,
-    "fragrance_free": true/false/null,
-    "non_comedogenic": true/false/null,
-    "hypoallergenic": true/false/null
-  }},
-  "product2": {{
-    "product_name": "extract the full product name from text, or null if not found",
-    "brand_name": "extract the brand/manufacturer name from text, or null if not found",
-    "inci": ["list", "of", "all", "ingredients"],
-    "benefits": ["list", "of", "all", "benefits", "mentioned"],
-    "claims": ["list", "of", "all", "claims", "mentioned"],
-    "price": "extract price in format like '₹999' or '$29.99' or 'INR 1,299', or null if not found",
-    "cruelty_free": true/false/null,
-    "sulphate_free": true/false/null,
-    "paraben_free": true/false/null,
-    "vegan": true/false/null,
-    "organic": true/false/null,
-    "fragrance_free": true/false/null,
-    "non_comedogenic": true/false/null,
-    "hypoallergenic": true/false/null
-  }}
+{products_json_structure}
 }}
 
 CRITICAL INSTRUCTIONS:
@@ -2166,6 +2151,16 @@ Return the JSON comparison:"""
                 detail=f"Failed to parse comparison response from AI: {str(e)}"
             )
         
+        # Extract product data from Claude response
+        all_products_data = []
+        for idx in range(len(processed_products)):
+            product_key = f"product{idx+1}"
+            if product_key in comparison_data:
+                all_products_data.append(comparison_data[product_key])
+            else:
+                # Fallback: create empty product data
+                all_products_data.append({})
+        
         # Helper function to determine boolean attributes from INCI list
         def determine_attributes_from_inci(inci_list: List[str], text: str = "") -> Dict[str, Optional[bool]]:
             """Determine boolean attributes from INCI ingredients and text"""
@@ -2218,34 +2213,31 @@ Return the JSON comparison:"""
             
             return attributes
         
-        # Build response with extracted text
-        product1_data = comparison_data.get("product1", {})
-        product2_data = comparison_data.get("product2", {})
+        # Build response with extracted text for all products
+        final_products_data = []
+        all_attrs = []
         
-        # Merge with actual INCI if we extracted it (prefer our extraction if available)
-        final_inci1 = product1_data.get("inci", []) if product1_data.get("inci") else inci1
-        final_inci2 = product2_data.get("inci", []) if product2_data.get("inci") else inci2
-        
-        product1_data["inci"] = final_inci1
-        product2_data["inci"] = final_inci2
-        
-        # Add extracted text
-        product1_data["extracted_text"] = text1
-        product2_data["extracted_text"] = text2
-        
-        # Fallback: Determine boolean attributes from INCI if Claude didn't extract them
-        # Only override if Claude returned null
-        attrs1 = determine_attributes_from_inci(final_inci1, text1)
-        attrs2 = determine_attributes_from_inci(final_inci2, text2)
-        
-        # Update attributes only if they're null in Claude's response
-        for attr in ["sulphate_free", "paraben_free", "fragrance_free"]:
-            if product1_data.get(attr) is None and attrs1.get(attr) is not None:
-                product1_data[attr] = attrs1[attr]
-                print(f"Fallback: Set product1.{attr} = {attrs1[attr]} from INCI analysis")
-            if product2_data.get(attr) is None and attrs2.get(attr) is not None:
-                product2_data[attr] = attrs2[attr]
-                print(f"Fallback: Set product2.{attr} = {attrs2[attr]} from INCI analysis")
+        for idx, product_data in enumerate(processed_products):
+            claude_product_data = all_products_data[idx] if idx < len(all_products_data) else {}
+            
+            # Merge with actual INCI if we extracted it (prefer our extraction if available)
+            final_inci = claude_product_data.get("inci", []) if claude_product_data.get("inci") else product_data["inci"]
+            claude_product_data["inci"] = final_inci
+            
+            # Add extracted text
+            claude_product_data["extracted_text"] = product_data["text"]
+            
+            # Fallback: Determine boolean attributes from INCI if Claude didn't extract them
+            attrs = determine_attributes_from_inci(final_inci, product_data["text"])
+            all_attrs.append(attrs)
+            
+            # Update attributes only if they're null in Claude's response
+            for attr in ["sulphate_free", "paraben_free", "fragrance_free"]:
+                if claude_product_data.get(attr) is None and attrs.get(attr) is not None:
+                    claude_product_data[attr] = attrs[attr]
+                    print(f"Fallback: Set product{idx+1}.{attr} = {attrs[attr]} from INCI analysis")
+            
+            final_products_data.append(claude_product_data)
         
         # SECOND PASS: Fill missing fields using deep analysis
         print("\n=== SECOND PASS: Filling Missing Fields ===")
@@ -2277,26 +2269,27 @@ Return the JSON comparison:"""
                 print(f"Product {product_num} missing fields: {', '.join(missing)}")
             return missing
         
-        # Check for missing fields in both products
-        missing_fields1 = identify_missing_fields(product1_data, 1)
-        missing_fields2 = identify_missing_fields(product2_data, 2)
-        
-        # Fill missing fields for product 1
-        if missing_fields1:
-            print(f"Attempting to fill {len(missing_fields1)} missing fields for Product 1...")
-            fill_prompt1 = f"""You are an expert cosmetic product researcher. Use your knowledge base, web search capabilities, and deep analysis to find missing information about this product.
+        # Fill missing fields for all products
+        for idx, product_data in enumerate(final_products_data):
+            product_num = idx + 1
+            missing_fields = identify_missing_fields(product_data, product_num)
+            
+            if missing_fields:
+                print(f"Attempting to fill {len(missing_fields)} missing fields for Product {product_num}...")
+                current_product = processed_products[idx]
+                fill_prompt = f"""You are an expert cosmetic product researcher. Use your knowledge base, web search capabilities, and deep analysis to find missing information about this product.
 
 Product Information:
-- Product Name: {product1_data.get('product_name') or 'Unknown'}
-- Brand Name: {product1_data.get('brand_name') or 'Unknown'}
-- INCI Ingredients: {', '.join(final_inci1) if final_inci1 else 'Not available'}
-- Current Extracted Text: {text1[:5000] if text1 else 'Not available'}
-- Source URL: {url1_context or 'Not provided'}
-- Current Benefits: {', '.join(product1_data.get('benefits', [])) or 'None'}
-- Current Claims: {', '.join(product1_data.get('claims', [])) or 'None'}
+- Product Name: {product_data.get('product_name') or 'Unknown'}
+- Brand Name: {product_data.get('brand_name') or 'Unknown'}
+- INCI Ingredients: {', '.join(product_data.get('inci', [])) if product_data.get('inci') else 'Not available'}
+- Current Extracted Text: {current_product['text'][:5000] if current_product['text'] else 'Not available'}
+- Source URL: {current_product['url_context'] or 'Not provided'}
+- Current Benefits: {', '.join(product_data.get('benefits', [])) or 'None'}
+- Current Claims: {', '.join(product_data.get('claims', [])) or 'None'}
 
 MISSING FIELDS TO FILL:
-{', '.join(missing_fields1)}
+{', '.join(missing_fields)}
 
 INSTRUCTIONS:
 1. Use your knowledge base and reasoning to find information about this specific product
@@ -2334,146 +2327,49 @@ IMPORTANT: Only include fields that were in the MISSING FIELDS list above. For f
 CRITICAL: NEVER use null. Always provide a value (even if it's "Unknown" for text fields or false for booleans when uncertain).
 """
             
-            try:
-                # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
-                max_tokens = 4096 if "claude-3-opus-20240229" in model_name else 8192
-                
-                fill_response1 = claude_client.messages.create(
-                    model=model_name,
-                    max_tokens=max_tokens,
-                    temperature=0.2,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": fill_prompt1
-                        }
-                    ]
-                )
-                
-                fill_content1 = fill_response1.content[0].text.strip()
-                if '{' in fill_content1 and '}' in fill_content1:
-                    json_start = fill_content1.find('{')
-                    json_end = fill_content1.rfind('}') + 1
-                    json_str = fill_content1[json_start:json_end]
-                    fill_data1 = json.loads(json_str)
+                try:
+                    # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
+                    max_tokens = 4096 if "claude-3-opus-20240229" in model_name else 8192
                     
-                    # Merge filled fields into product1_data
-                    for field in missing_fields1:
-                        if field in fill_data1 and fill_data1[field] is not None:
-                            # Handle list fields
-                            if field in ["benefits", "claims"]:
-                                if isinstance(fill_data1[field], list) and len(fill_data1[field]) > 0:
-                                    product1_data[field] = fill_data1[field]
-                                    print(f"✓ Filled product1.{field} with {len(fill_data1[field])} items")
-                            # Handle boolean fields - never allow null
-                            elif field in ["cruelty_free", "sulphate_free", "paraben_free", "vegan", "organic", "fragrance_free", "non_comedogenic", "hypoallergenic"]:
-                                if fill_data1[field] is not None:
-                                    product1_data[field] = fill_data1[field]
-                                    print(f"✓ Filled product1.{field} = {fill_data1[field]}")
-                            # Handle string fields
-                            else:
-                                if fill_data1[field] and fill_data1[field] != "null":
-                                    product1_data[field] = fill_data1[field]
-                                    print(f"✓ Filled product1.{field} = {fill_data1[field]}")
-            except Exception as e:
-                print(f"Warning: Failed to fill missing fields for Product 1: {e}")
-        
-        # Fill missing fields for product 2
-        if missing_fields2:
-            print(f"Attempting to fill {len(missing_fields2)} missing fields for Product 2...")
-            fill_prompt2 = f"""You are an expert cosmetic product researcher. Use your knowledge base, web search capabilities, and deep analysis to find missing information about this product.
-
-Product Information:
-- Product Name: {product2_data.get('product_name') or 'Unknown'}
-- Brand Name: {product2_data.get('brand_name') or 'Unknown'}
-- INCI Ingredients: {', '.join(final_inci2) if final_inci2 else 'Not available'}
-- Current Extracted Text: {text2[:5000] if text2 else 'Not available'}
-- Source URL: {url2_context or 'Not provided'}
-- Current Benefits: {', '.join(product2_data.get('benefits', [])) or 'None'}
-- Current Claims: {', '.join(product2_data.get('claims', [])) or 'None'}
-
-MISSING FIELDS TO FILL:
-{', '.join(missing_fields2)}
-
-INSTRUCTIONS:
-1. Use your knowledge base and reasoning to find information about this specific product
-2. If a URL is provided, use it to understand the product context
-3. For PRODUCT_NAME: If currently null, try to infer from brand name, INCI list, or URL
-4. For BRAND_NAME: If currently null, try to extract from product name, URL, or text
-5. For PRICE: Search for current market price. If not findable, use "Price not available" (not null)
-6. For BENEFITS: If empty, infer from INCI ingredients (e.g., hyaluronic acid = hydration, vitamin C = brightening)
-7. For CLAIMS: If empty, infer common claims based on ingredients and product type
-8. For BOOLEAN ATTRIBUTES (cruelty_free, vegan, organic, etc.):
-   - Use ingredient analysis: Check INCI list for indicators
-   - Use brand knowledge: Many brands have known policies (e.g., The Ordinary = cruelty-free)
-   - Use product type inference: Organic products often indicate organic status
-   - If truly cannot determine, use reasonable defaults based on product category
-   - NEVER return null - always provide true or false based on best available information
-
-Return ONLY a JSON object with the missing fields filled. Use this exact structure:
-{{
-  "product_name": "value or keep existing if not missing",
-  "brand_name": "value or keep existing if not missing",
-  "price": "value or 'Price not available' if not findable",
-  "benefits": ["list", "of", "benefits"],
-  "claims": ["list", "of", "claims"],
-  "cruelty_free": true/false,
-  "sulphate_free": true/false,
-  "paraben_free": true/false,
-  "vegan": true/false,
-  "organic": true/false,
-  "fragrance_free": true/false,
-  "non_comedogenic": true/false,
-  "hypoallergenic": true/false
-}}
-
-IMPORTANT: Only include fields that were in the MISSING FIELDS list above. For fields not in the missing list, you can omit them or use the existing values.
-CRITICAL: NEVER use null. Always provide a value (even if it's "Unknown" for text fields or false for booleans when uncertain).
-"""
-            
-            try:
-                # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
-                max_tokens = 4096 if "claude-3-opus-20240229" in model_name else 8192
-                
-                fill_response2 = claude_client.messages.create(
-                    model=model_name,
-                    max_tokens=max_tokens,
-                    temperature=0.2,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": fill_prompt2
-                        }
-                    ]
-                )
-                
-                fill_content2 = fill_response2.content[0].text.strip()
-                if '{' in fill_content2 and '}' in fill_content2:
-                    json_start = fill_content2.find('{')
-                    json_end = fill_content2.rfind('}') + 1
-                    json_str = fill_content2[json_start:json_end]
-                    fill_data2 = json.loads(json_str)
+                    fill_response = claude_client.messages.create(
+                        model=model_name,
+                        max_tokens=max_tokens,
+                        temperature=0.2,
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": fill_prompt
+                            }
+                        ]
+                    )
                     
-                    # Merge filled fields into product2_data
-                    for field in missing_fields2:
-                        if field in fill_data2 and fill_data2[field] is not None:
-                            # Handle list fields
-                            if field in ["benefits", "claims"]:
-                                if isinstance(fill_data2[field], list) and len(fill_data2[field]) > 0:
-                                    product2_data[field] = fill_data2[field]
-                                    print(f"✓ Filled product2.{field} with {len(fill_data2[field])} items")
-                            # Handle boolean fields - never allow null
-                            elif field in ["cruelty_free", "sulphate_free", "paraben_free", "vegan", "organic", "fragrance_free", "non_comedogenic", "hypoallergenic"]:
-                                if fill_data2[field] is not None:
-                                    product2_data[field] = fill_data2[field]
-                                    print(f"✓ Filled product2.{field} = {fill_data2[field]}")
-                            # Handle string fields
-                            else:
-                                if fill_data2[field] and fill_data2[field] != "null":
-                                    product2_data[field] = fill_data2[field]
-                                    print(f"✓ Filled product2.{field} = {fill_data2[field]}")
-            except Exception as e:
-                print(f"Warning: Failed to fill missing fields for Product 2: {e}")
+                    fill_content = fill_response.content[0].text.strip()
+                    if '{' in fill_content and '}' in fill_content:
+                        json_start = fill_content.find('{')
+                        json_end = fill_content.rfind('}') + 1
+                        json_str = fill_content[json_start:json_end]
+                        fill_data = json.loads(json_str)
+                        
+                        # Merge filled fields into product_data
+                        for field in missing_fields:
+                            if field in fill_data and fill_data[field] is not None:
+                                # Handle list fields
+                                if field in ["benefits", "claims"]:
+                                    if isinstance(fill_data[field], list) and len(fill_data[field]) > 0:
+                                        product_data[field] = fill_data[field]
+                                        print(f"✓ Filled product{product_num}.{field} with {len(fill_data[field])} items")
+                                # Handle boolean fields - never allow null
+                                elif field in ["cruelty_free", "sulphate_free", "paraben_free", "vegan", "organic", "fragrance_free", "non_comedogenic", "hypoallergenic"]:
+                                    if fill_data[field] is not None:
+                                        product_data[field] = fill_data[field]
+                                        print(f"✓ Filled product{product_num}.{field} = {fill_data[field]}")
+                                # Handle string fields
+                                else:
+                                    if fill_data[field] and fill_data[field] != "null":
+                                        product_data[field] = fill_data[field]
+                                        print(f"✓ Filled product{product_num}.{field} = {fill_data[field]}")
+                except Exception as e:
+                    print(f"Warning: Failed to fill missing fields for Product {product_num}: {e}")
         
         # Final pass: Ensure no null values remain
         print("\n=== FINAL PASS: Ensuring No Null Values ===")
@@ -2505,17 +2401,28 @@ CRITICAL: NEVER use null. Always provide a value (even if it's "Unknown" for tex
                         product_data[field] = False  # Default to False if truly unknown
                     print(f"✓ Final fallback: Set product{product_num}.{field} = {product_data[field]}")
         
-        ensure_no_nulls(product1_data, 1, attrs1)
-        ensure_no_nulls(product2_data, 2, attrs2)
+        # Final pass: Ensure no null values remain for all products
+        for idx, product_data in enumerate(final_products_data):
+            ensure_no_nulls(product_data, idx + 1, all_attrs[idx])
         
-        # Calculate processing time (fix: use the start variable from the beginning)
+        # Calculate processing time
         processing_time = time.time() - start
         
-        return CompareProductsResponse(
-            product1=ProductComparisonItem(**product1_data),
-            product2=ProductComparisonItem(**product2_data),
-            processing_time=processing_time
-        )
+        # Convert to ProductComparisonItem objects
+        product_items = [ProductComparisonItem(**product_data) for product_data in final_products_data]
+        
+        # Build response with backward compatibility
+        response_data = {
+            "products": product_items,
+            "processing_time": processing_time
+        }
+        
+        # Add backward compatibility fields if exactly 2 products
+        if len(product_items) == 2:
+            response_data["product1"] = product_items[0]
+            response_data["product2"] = product_items[1]
+        
+        return CompareProductsResponse(**response_data)
         
     except HTTPException:
         raise
