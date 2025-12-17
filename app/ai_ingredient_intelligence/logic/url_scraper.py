@@ -796,10 +796,14 @@ class URLScraper:
             
             print(f"Extracted {len(extracted_text)} characters of text")
             
+            # Extract product image
+            product_image = await self.extract_product_image(driver, url)
+            
             return {
                 "extracted_text": extracted_text,
                 "platform": platform,
-                "url": url
+                "url": url,
+                "product_image": product_image
             }
             
         except WebDriverException as e:
@@ -809,6 +813,96 @@ class URLScraper:
         finally:
             # Don't close driver here - keep it for reuse
             pass
+    
+    async def extract_product_image(self, driver: webdriver.Chrome, url: str) -> Optional[str]:
+        """
+        Extract product image URL from the page using Selenium
+        
+        Args:
+            driver: Selenium WebDriver instance
+            url: The product URL (for platform detection)
+            
+        Returns:
+            Image URL string or None if not found
+        """
+        try:
+            loop = asyncio.get_event_loop()
+            
+            def extract():
+                image_urls = set()
+                try:
+                    # Method 1: Comprehensive extraction for Nykaa and other platforms
+                    # Look for img elements with src or srcset attributes
+                    imgs = driver.find_elements(By.CSS_SELECTOR, 'img[src], img[srcset], source[srcset]')
+                    for img in imgs:
+                        try:
+                            src = img.get_attribute('src') or ''
+                            srcset = img.get_attribute('srcset') or ''
+                            
+                            # Collect all candidate URLs
+                            candidates = []
+                            if src:
+                                candidates.append(src)
+                            if srcset:
+                                # Parse srcset (format: "url1 size1, url2 size2")
+                                for item in srcset.split(','):
+                                    url_part = item.strip().split(' ')[0]
+                                    if url_part:
+                                        candidates.append(url_part)
+                            
+                            # Filter for product images
+                            for candidate_url in candidates:
+                                if candidate_url:
+                                    # For Nykaa: look for catalog/product in URL
+                                    if 'nykaa.com' in url and 'catalog/product' in candidate_url:
+                                        # Remove query parameters
+                                        clean_url = candidate_url.split('?')[0]
+                                        if clean_url:
+                                            image_urls.add(clean_url)
+                                    # For other platforms: check if it's a product image
+                                    elif 'product' in candidate_url.lower() or any(domain in candidate_url.lower() for domain in ['amazon', 'flipkart', 'myntra', 'purplle']):
+                                        # Filter out placeholders and logos
+                                        if not any(exclude in candidate_url.lower() for exclude in ['placeholder', 'logo', 'icon', 'avatar', 'banner']):
+                                            clean_url = candidate_url.split('?')[0]
+                                            if clean_url:
+                                                image_urls.add(clean_url)
+                        except Exception as e:
+                            continue
+                    
+                    # Method 2: Simpler extraction for product images
+                    if not image_urls:
+                        try:
+                            img_elements = driver.find_elements(By.CSS_SELECTOR, 'img[src*="product"], img[src*="nykaa"], img[src*="amazon"], img[src*="flipkart"]')
+                            for img in img_elements[:10]:  # Limit to first 10
+                                try:
+                                    src = img.get_attribute('src')
+                                    if src and not any(exclude in src.lower() for exclude in ['placeholder', 'logo', 'icon', 'avatar', 'banner']):
+                                        clean_url = src.split('?')[0]
+                                        if clean_url:
+                                            image_urls.add(clean_url)
+                                except Exception as e:
+                                    continue
+                        except Exception as e:
+                            pass
+                    
+                    # Return the first valid image URL found
+                    if image_urls:
+                        # Prefer images with 'product' in the URL
+                        product_images = [url for url in image_urls if 'product' in url.lower()]
+                        if product_images:
+                            return product_images[0]
+                        # Otherwise return the first one
+                        return list(image_urls)[0]
+                    
+                except Exception as e:
+                    print(f"Error extracting product image: {e}")
+                
+                return None
+            
+            return await loop.run_in_executor(None, extract)
+        except Exception as e:
+            print(f"Error in extract_product_image: {e}")
+            return None
     
     async def close(self):
         """Close the Selenium driver"""
@@ -1056,7 +1150,8 @@ Return only the JSON array:"""
                     "url": url,
                     "is_estimated": False,
                     "source": "url_extraction",
-                    "product_name": None
+                    "product_name": None,
+                    "product_image": scrape_result.get("product_image")
                 }
             
             # If extraction failed, try fallback: detect product name and search
@@ -1076,7 +1171,8 @@ Return only the JSON array:"""
                         "url": url,
                         "is_estimated": True,
                         "source": "ai_search",
-                        "product_name": product_name
+                        "product_name": product_name,
+                        "product_image": scrape_result.get("product_image")
                     }
             
             # If fallback also failed, return empty
@@ -1087,7 +1183,8 @@ Return only the JSON array:"""
                 "url": url,
                 "is_estimated": False,
                 "source": "url_extraction",
-                "product_name": product_name
+                "product_name": product_name,
+                "product_image": scrape_result.get("product_image")
             }
             
         except Exception as e:
@@ -1105,7 +1202,8 @@ Return only the JSON array:"""
                             "url": url,
                             "is_estimated": True,
                             "source": "ai_search",
-                            "product_name": product_name
+                            "product_name": product_name,
+                            "product_image": None
                         }
             except:
                 pass
