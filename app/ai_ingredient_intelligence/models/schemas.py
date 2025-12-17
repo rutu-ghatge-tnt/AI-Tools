@@ -74,19 +74,31 @@ class ProductComparisonItem(BaseModel):
     extracted_text: Optional[str] = Field(None, description="Raw extracted text from URL or INCI input")
 
 
+class ProductInput(BaseModel):
+    """Schema for a single product input"""
+    input: str = Field(..., description="URL or INCI string")
+    input_type: str = Field(..., description="Type of input: 'url' or 'inci'")
+
+
 class CompareProductsRequest(BaseModel):
-    """Request schema for product comparison"""
-    input1: str = Field(..., description="First input: URL or INCI string")
-    input2: str = Field(..., description="Second input: URL or INCI string")
-    input1_type: str = Field(..., description="Type of input1: 'url' or 'inci'")
-    input2_type: str = Field(..., description="Type of input2: 'url' or 'inci'")
+    """Request schema for product comparison - supports multiple products"""
+    products: Optional[List[ProductInput]] = Field(None, description="List of products to compare (minimum 2)")
+    
+    # Keep backward compatibility with input1/input2
+    input1: Optional[str] = Field(None, description="First input: URL or INCI string (deprecated, use products)")
+    input2: Optional[str] = Field(None, description="Second input: URL or INCI string (deprecated, use products)")
+    input1_type: Optional[str] = Field(None, description="Type of input1: 'url' or 'inci' (deprecated, use products)")
+    input2_type: Optional[str] = Field(None, description="Type of input2: 'url' or 'inci' (deprecated, use products)")
 
 
 class CompareProductsResponse(BaseModel):
-    """Response schema for product comparison"""
-    product1: ProductComparisonItem = Field(..., description="First product data")
-    product2: ProductComparisonItem = Field(..., description="Second product data")
+    """Response schema for product comparison - supports multiple products"""
+    products: List[ProductComparisonItem] = Field(..., description="List of compared products")
     processing_time: float = Field(..., description="Time taken for comparison (in seconds)")
+    
+    # Keep backward compatibility with product1/product2
+    product1: Optional[ProductComparisonItem] = Field(None, description="First product data (deprecated, use products)")
+    product2: Optional[ProductComparisonItem] = Field(None, description="Second product data (deprecated, use products)")
 
 
 # ============================================================================
