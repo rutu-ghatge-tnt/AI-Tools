@@ -2084,9 +2084,12 @@ CRITICAL INSTRUCTIONS:
 Return the JSON comparison:"""
 
         print("Sending comparison request to Claude...")
+        # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
+        max_tokens = 4096 if "claude-3-opus-20240229" in model_name else 8192
+        
         response = claude_client.messages.create(
             model=model_name,
-            max_tokens=8192,
+            max_tokens=max_tokens,
             temperature=0.1,
             messages=[
                 {
@@ -2286,9 +2289,12 @@ CRITICAL: NEVER use null. Always provide a value (even if it's "Unknown" for tex
 """
             
             try:
+                # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
+                max_tokens = 4096 if "claude-3-opus-20240229" in model_name else 8192
+                
                 fill_response1 = claude_client.messages.create(
                     model=model_name,
-                    max_tokens=8192,
+                    max_tokens=max_tokens,
                     temperature=0.2,
                     messages=[
                         {
@@ -2380,9 +2386,12 @@ CRITICAL: NEVER use null. Always provide a value (even if it's "Unknown" for tex
 """
             
             try:
+                # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
+                max_tokens = 4096 if "claude-3-opus-20240229" in model_name else 8192
+                
                 fill_response2 = claude_client.messages.create(
                     model=model_name,
-                    max_tokens=8192,
+                    max_tokens=max_tokens,
                     temperature=0.2,
                     messages=[
                         {
@@ -3199,9 +3208,12 @@ TASK:
 Return your analysis as JSON with the structure specified in the system prompt."""
 
     try:
+        # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
+        max_tokens = 4096 if "claude-3-opus-20240229" in claude_model else 8192
+        
         response = claude_client.messages.create(
             model=claude_model,
-            max_tokens=8192,
+            max_tokens=max_tokens,
             temperature=0.2,  # Lower temperature for more consistent classification
             system=system_prompt,
             messages=[
@@ -3340,9 +3352,12 @@ TASK:
 Return your ranking as JSON with the structure specified in the system prompt."""
 
     try:
+        # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
+        max_tokens = 4096 if "claude-3-opus-20240229" in claude_model else 8192
+        
         response = claude_client.messages.create(
             model=claude_model,
-            max_tokens=8192,
+            max_tokens=max_tokens,
             temperature=0.2,
             system=system_prompt,
             messages=[
