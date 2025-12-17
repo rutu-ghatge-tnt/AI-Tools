@@ -88,7 +88,9 @@ app.add_middleware(
         "http://localhost:3000",
         "http://localhost:8000",
         "http://localhost:8501",
-        "https://metaverse.skinbb.com"
+        "https://metaverse.skinbb.com",
+        "https://formulynx.in",
+        "https://www.formulynx.in"
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
