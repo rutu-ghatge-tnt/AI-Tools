@@ -18,9 +18,12 @@ ENDPOINTS:
 NO AI REQUIRED - Pure mathematical calculations
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from typing import Dict, Any, Optional
 import time
+
+# Import authentication
+from app.ai_ingredient_intelligence.auth import verify_jwt_token
 from app.ai_ingredient_intelligence.models.cost_calculator_schemas import (
     CostCalculatorRequest,
     CostAnalysisResponse,
@@ -45,7 +48,10 @@ router = APIRouter(prefix="/cost-calculator", tags=["Cost Calculator"])
 
 
 @router.get("/lookup-ingredient")
-async def lookup_ingredient(inci: str):
+async def lookup_ingredient(
+    inci: str,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Lookup ingredient details by INCI name
     
@@ -153,7 +159,10 @@ async def lookup_ingredient(inci: str):
 
 
 @router.post("/analyze", response_model=CostAnalysisResponse)
-async def analyze_cost(request: CostCalculatorRequest):
+async def analyze_cost(
+    request: CostCalculatorRequest,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Calculate detailed cost analysis
     
@@ -241,7 +250,10 @@ async def analyze_cost(request: CostCalculatorRequest):
 
 
 @router.post("/optimize", response_model=OptimizationResponse)
-async def optimize_cost_endpoint(request: OptimizationRequest):
+async def optimize_cost_endpoint(
+    request: OptimizationRequest,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Optimize formulation cost using linear programming
     
@@ -316,7 +328,10 @@ async def optimize_cost_endpoint(request: OptimizationRequest):
 
 
 @router.post("/pricing", response_model=PricingResponse)
-async def calculate_pricing(request: CostCalculatorRequest):
+async def calculate_pricing(
+    request: CostCalculatorRequest,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Calculate pricing scenarios for different multipliers
     
@@ -370,7 +385,10 @@ async def calculate_pricing(request: CostCalculatorRequest):
 
 
 @router.post("/cost-sheet", response_model=CostSheetResponse)
-async def generate_cost_sheet_endpoint(request: CostCalculatorRequest):
+async def generate_cost_sheet_endpoint(
+    request: CostCalculatorRequest,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Generate detailed cost sheet for export
     

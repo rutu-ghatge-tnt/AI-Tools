@@ -1,7 +1,10 @@
 """Ingredient Search API - Autocomplete for ingredient names"""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from typing import List, Dict
+
+# Import authentication
+from app.ai_ingredient_intelligence.auth import verify_jwt_token
 from app.ai_ingredient_intelligence.db.collections import (
     branded_ingredients_col, 
     inci_col,
@@ -12,7 +15,11 @@ router = APIRouter(prefix="/ingredients", tags=["Ingredient Search"])
 
 
 @router.get("/search")
-async def search_ingredients(query: str, limit: int = 10):
+async def search_ingredients(
+    query: str,
+    limit: int = 10,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """Search branded ingredients by name - for autocomplete"""
     if not query or len(query) < 2:
         return {"results": []}
@@ -112,7 +119,10 @@ async def search_ingredients(query: str, limit: int = 10):
 
 
 @router.get("/by-name/{name}")
-async def get_ingredient_by_name(name: str):
+async def get_ingredient_by_name(
+    name: str,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """Get ingredient details by name - returns full details including cost"""
     try:
         import re

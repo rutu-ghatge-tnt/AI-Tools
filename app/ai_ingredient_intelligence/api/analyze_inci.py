@@ -1,5 +1,5 @@
 # app/api/analyze_inci.py
-from fastapi import APIRouter, HTTPException, Form, Request, Header
+from fastapi import APIRouter, HTTPException, Form, Request, Header, Depends
 from fastapi.responses import Response
 import time
 import os
@@ -7,6 +7,9 @@ import json
 import re
 from typing import List, Optional, Dict, Tuple
 from collections import defaultdict
+
+# Import authentication - JWT
+from app.ai_ingredient_intelligence.auth import verify_jwt_token
 
 from app.ai_ingredient_intelligence.logic.matcher import match_inci_names
 from app.ai_ingredient_intelligence.logic.bis_rag import (
@@ -211,6 +214,12 @@ async def server_health():
     """
     Comprehensive server health check endpoint.
     Tests: Chrome availability, Claude API, environment variables.
+    
+    NOTE: This endpoint is PUBLIC (no authentication required) for monitoring purposes.
+    """
+    """
+    Comprehensive server health check endpoint.
+    Tests: Chrome availability, Claude API, environment variables.
     """
     health_status = {
         "status": "healthy",
@@ -288,6 +297,12 @@ async def server_health():
 
 @router.get("/bis-rag/health")
 async def bis_rag_health():
+    """
+    Health check endpoint for BIS RAG functionality.
+    Uses the comprehensive health check function from bis_rag module.
+    
+    NOTE: This endpoint is PUBLIC (no authentication required) for monitoring purposes.
+    """
     """
     Health check endpoint for BIS RAG functionality.
     Uses the comprehensive health check function from bis_rag module.
@@ -436,6 +451,7 @@ async def test_selenium():
 
 @router.post("/analyze-inci-form", response_model=AnalyzeInciResponse)
 async def analyze_inci_form(
+    current_user: dict = Depends(verify_jwt_token),  # JWT token validation
     inci_names: List[str] = Form(..., description="Raw INCI names from product label")
 ):
     """
@@ -448,7 +464,10 @@ async def analyze_inci_form(
 
 # URL-based ingredient extraction endpoint (ONLY extracts, doesn't analyze)
 @router.post("/extract-ingredients-from-url", response_model=ExtractIngredientsResponse)
-async def extract_ingredients_from_url(payload: dict):
+async def extract_ingredients_from_url(
+    payload: dict,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Extract ingredients from a product URL.
     
@@ -586,7 +605,11 @@ async def extract_ingredients_from_url(payload: dict):
 
 # Simple JSON endpoint for frontend compatibility
 @router.post("/analyze-inci", response_model=AnalyzeInciResponse)
-async def analyze_inci(payload: dict, user_id: Optional[str] = Header(None, alias="X-User-Id")):
+async def analyze_inci(
+    payload: dict,
+    user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Analyze INCI ingredients with automatic history saving.
     
@@ -782,7 +805,11 @@ async def analyze_inci(payload: dict, user_id: Optional[str] = Header(None, alia
 
 # URL-based ingredient analysis endpoint
 @router.post("/analyze-url", response_model=AnalyzeInciResponse)
-async def analyze_url(payload: dict, user_id: Optional[str] = Header(None, alias="X-User-Id")):
+async def analyze_url(
+    payload: dict,
+    user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Extract ingredients from a product URL and analyze them with automatic history saving.
     
@@ -999,7 +1026,7 @@ async def analyze_url(payload: dict, user_id: Optional[str] = Header(None, alias
 
 
 @router.get("/suppliers")
-async def get_suppliers():
+async def get_suppliers(current_user: dict = Depends(verify_jwt_token)):  # JWT token validation
     """
     Get all suppliers from ingre_suppliers collection
     Returns list of supplier names
@@ -1019,7 +1046,10 @@ async def get_suppliers():
 
 
 @router.post("/ingredients/categories")
-async def get_ingredient_categories(payload: dict):
+async def get_ingredient_categories(
+    payload: dict,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Get categories (Active/Excipient) for INCI ingredients from ingre_inci collection
     Accepts: { "inci_names": ["INCI1", "INCI2", ...] }
@@ -1108,7 +1138,10 @@ async def get_suppliers_paginated(skip: int = 0, limit: int = 50, search: Option
 
 
 @router.post("/distributor/register")
-async def register_distributor(payload: dict):
+async def register_distributor(
+    payload: dict,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Register a new distributor and save to distributor collection
     
@@ -1478,7 +1511,10 @@ async def register_distributor(payload: dict):
 
 
 @router.get("/distributor/verify-ingredient-id/{ingredient_id}")
-async def verify_ingredient_id(ingredient_id: str):
+async def verify_ingredient_id(
+    ingredient_id: str,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Debug endpoint to verify if an ingredient ID exists in the branded ingredients collection
     """
@@ -1538,7 +1574,11 @@ async def verify_ingredient_id(ingredient_id: str):
 
 
 @router.get("/distributor/by-ingredient/{ingredient_name}")
-async def get_distributor_by_ingredient(ingredient_name: str, ingredient_id: Optional[str] = None):
+async def get_distributor_by_ingredient(
+    ingredient_name: str,
+    ingredient_id: Optional[str] = None,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Get all distributor information for a specific ingredient
     
@@ -1646,7 +1686,10 @@ async def get_distributor_by_ingredient(ingredient_name: str, ingredient_id: Opt
 
 
 @router.post("/distributor/by-ingredients")
-async def get_distributors_by_ingredients(payload: dict):
+async def get_distributors_by_ingredients(
+    payload: dict,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Get distributor information for multiple ingredients in a single batch call
     
@@ -1847,7 +1890,10 @@ async def get_distributors_by_ingredients(payload: dict):
 
 
 @router.post("/compare-products", response_model=CompareProductsResponse)
-async def compare_products(payload: dict):
+async def compare_products(
+    payload: dict,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Compare two products based on URLs or INCI strings.
     
@@ -2484,7 +2530,11 @@ CRITICAL: NEVER use null. Always provide a value (even if it's "Unknown" for tex
 
 
 @router.post("/save-decode-history")
-async def save_decode_history(payload: dict, user_id: Optional[str] = Header(None, alias="X-User-Id")):
+async def save_decode_history(
+    payload: dict,
+    user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Save decode history with name and tag (user-specific)
     
@@ -2590,7 +2640,8 @@ async def get_decode_history(
     search: Optional[str] = None,
     limit: int = 50,
     skip: int = 0,
-    user_id: Optional[str] = Header(None, alias="X-User-Id")
+    user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
     Get decode history with optional unified search by name or tag (user-specific)
@@ -2690,7 +2741,12 @@ async def options_decode_history(history_id: str):
     )
 
 @router.patch("/decode-history/{history_id}")
-async def update_decode_history(history_id: str, payload: dict, user_id: Optional[str] = Header(None, alias="X-User-Id")):
+async def update_decode_history(
+    history_id: str,
+    payload: dict,
+    user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Update a decode history item - allows editing name and tags only
     
@@ -2784,7 +2840,11 @@ async def update_decode_history(history_id: str, payload: dict, user_id: Optiona
 
 
 @router.delete("/decode-history/{history_id}")
-async def delete_decode_history(history_id: str, user_id: Optional[str] = Header(None, alias="X-User-Id")):
+async def delete_decode_history(
+    history_id: str,
+    user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Delete a decode history item by ID (user-specific)
     
@@ -2835,7 +2895,11 @@ async def delete_decode_history(history_id: str, user_id: Optional[str] = Header
 # ========== COMPARE HISTORY ENDPOINTS ==========
 
 @router.post("/save-compare-history")
-async def save_compare_history(payload: dict, user_id: Optional[str] = Header(None, alias="X-User-Id")):
+async def save_compare_history(
+    payload: dict,
+    user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Save compare history with name and tag (user-specific)
     
@@ -2939,7 +3003,8 @@ async def get_compare_history(
     search: Optional[str] = None,
     limit: int = 50,
     skip: int = 0,
-    user_id: Optional[str] = Header(None, alias="X-User-Id")
+    user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
     Get compare history with optional unified search by name or tag (user-specific)
@@ -3076,7 +3141,11 @@ async def update_compare_history(history_id: str, payload: dict, user_id: Option
 
 
 @router.delete("/compare-history/{history_id}")
-async def delete_compare_history(history_id: str, user_id: Optional[str] = Header(None, alias="X-User-Id")):
+async def delete_compare_history(
+    history_id: str,
+    user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Delete a compare history item by ID (user-specific)
     
@@ -3415,7 +3484,11 @@ Return your ranking as JSON with the structure specified in the system prompt.""
 # ============================================================================
 
 @router.post("/save-market-research-history")
-async def save_market_research_history(payload: dict, user_id: Optional[str] = Header(None, alias="X-User-Id")):
+async def save_market_research_history(
+    payload: dict,
+    user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Save market research history (user-specific)
     
@@ -3499,7 +3572,8 @@ async def get_market_research_history(
     search: Optional[str] = None,
     limit: int = 50,
     skip: int = 0,
-    user_id: Optional[str] = Header(None, alias="X-User-Id")
+    user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
     Get market research history (user-specific)
@@ -3596,7 +3670,11 @@ async def update_market_research_history(history_id: str, payload: dict, user_id
 
 
 @router.delete("/market-research-history/{history_id}")
-async def delete_market_research_history(history_id: str, user_id: Optional[str] = Header(None, alias="X-User-Id")):
+async def delete_market_research_history(
+    history_id: str,
+    user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Delete market research history item (user-specific)
     """
@@ -3631,7 +3709,10 @@ async def delete_market_research_history(history_id: str, user_id: Optional[str]
 
 # Market Research endpoint - matches ingredients with externalProducts collection
 @router.post("/market-research", response_model=MarketResearchResponse)
-async def market_research(payload: dict):
+async def market_research(
+    payload: dict,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Market Research: Match products from URL or INCI list with externalProducts collection.
     

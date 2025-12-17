@@ -1,8 +1,11 @@
 """
 Inspiration Boards API Endpoints
 """
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import List, Optional
+
+# Import authentication
+from app.ai_ingredient_intelligence.auth import verify_jwt_token
 from app.ai_ingredient_intelligence.models.inspiration_boards_schemas import (
     CreateBoardRequest, UpdateBoardRequest, BoardResponse, BoardListResponse, BoardDetailResponse,
     AddProductFromURLRequest, AddProductManualRequest, UpdateProductRequest, ProductResponse,
@@ -33,7 +36,8 @@ router = APIRouter(prefix="/inspiration-boards", tags=["Inspiration Boards"])
 @router.post("/boards", response_model=BoardResponse)
 async def create_board_endpoint(
     request: CreateBoardRequest,
-    user_id: str = Query(..., description="User ID")
+    user_id: str = Query(..., description="User ID"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """Create a new inspiration board"""
     try:
@@ -49,7 +53,8 @@ async def create_board_endpoint(
 async def list_boards_endpoint(
     user_id: str = Query(..., description="User ID"),
     limit: int = Query(50, ge=1, le=100),
-    offset: int = Query(0, ge=0)
+    offset: int = Query(0, ge=0),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """List all boards for a user"""
     try:
@@ -62,7 +67,8 @@ async def list_boards_endpoint(
 @router.get("/boards/{board_id}", response_model=BoardDetailResponse)
 async def get_board_endpoint(
     board_id: str,
-    user_id: str = Query(..., description="User ID")
+    user_id: str = Query(..., description="User ID"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """Get board details with products"""
     try:
@@ -80,7 +86,8 @@ async def get_board_endpoint(
 async def update_board_endpoint(
     board_id: str,
     request: UpdateBoardRequest,
-    user_id: str = Query(..., description="User ID")
+    user_id: str = Query(..., description="User ID"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """Update a board"""
     try:
@@ -97,7 +104,8 @@ async def update_board_endpoint(
 @router.delete("/boards/{board_id}")
 async def delete_board_endpoint(
     board_id: str,
-    user_id: str = Query(..., description="User ID")
+    user_id: str = Query(..., description="User ID"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """Delete a board and all its products"""
     try:
@@ -119,7 +127,8 @@ async def delete_board_endpoint(
 async def add_product_from_url_endpoint(
     board_id: str,
     request: AddProductFromURLRequest,
-    user_id: str = Query(..., description="User ID")
+    user_id: str = Query(..., description="User ID"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """Add product to board from URL"""
     try:
@@ -153,6 +162,7 @@ async def add_product_from_url_endpoint(
 async def add_product_manual_endpoint(
     board_id: str,
     request: AddProductManualRequest,
+    current_user: dict = Depends(verify_jwt_token),  # JWT token validation
     user_id: str = Query(..., description="User ID")
 ):
     """Add product to board manually"""
@@ -200,6 +210,7 @@ async def get_product_endpoint(
 async def update_product_endpoint(
     product_id: str,
     request: UpdateProductRequest,
+    current_user: dict = Depends(verify_jwt_token),  # JWT token validation
     user_id: str = Query(..., description="User ID")
 ):
     """Update product (notes, tags, myRating)"""
@@ -227,7 +238,8 @@ async def update_product_endpoint(
 @router.delete("/products/{product_id}")
 async def delete_product_endpoint(
     product_id: str,
-    user_id: str = Query(..., description="User ID")
+    user_id: str = Query(..., description="User ID"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """Delete product"""
     try:
@@ -248,7 +260,8 @@ async def delete_product_endpoint(
 @router.post("/products/{product_id}/decode", response_model=DecodeProductResponse)
 async def decode_product_endpoint(
     product_id: str,
-    user_id: str = Query(..., description="User ID")
+    user_id: str = Query(..., description="User ID"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """Decode a product (analyze ingredients)"""
     try:
@@ -290,7 +303,8 @@ async def decode_product_endpoint(
 async def batch_decode_endpoint(
     board_id: str,
     request: BatchDecodeRequest,
-    user_id: str = Query(..., description="User ID")
+    user_id: str = Query(..., description="User ID"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """Batch decode all undecoded products in a board"""
     try:
@@ -393,7 +407,10 @@ async def batch_decode_endpoint(
 # ============================================================================
 
 @router.post("/fetch-product", response_model=FetchProductResponse)
-async def fetch_product_endpoint(request: FetchProductRequest):
+async def fetch_product_endpoint(
+    request: FetchProductRequest,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """Fetch product data from e-commerce URL"""
     try:
         result = await fetch_product_from_url(request.url)
@@ -409,7 +426,8 @@ async def fetch_product_endpoint(request: FetchProductRequest):
 @router.post("/analyze", response_model=AnalysisResponse)
 async def analyze_competitors_endpoint(
     request: AnalysisRequest,
-    user_id: str = Query(..., description="User ID")
+    user_id: str = Query(..., description="User ID"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """Generate competitor analysis"""
     try:
@@ -451,7 +469,7 @@ async def analyze_competitors_endpoint(
 # ============================================================================
 
 @router.get("/tags", response_model=TagsResponse)
-async def get_tags_endpoint():
+async def get_tags_endpoint(current_user: dict = Depends(verify_jwt_token)):  # JWT token validation
     """Get all available tags organized by category"""
     try:
         await initialize_tags()  # Ensure tags are initialized
@@ -462,7 +480,10 @@ async def get_tags_endpoint():
 
 
 @router.post("/tags/validate")
-async def validate_tags_endpoint(tags: List[str]):
+async def validate_tags_endpoint(
+    tags: List[str],
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """Validate tags against available tags"""
     try:
         result = await validate_tags(tags)

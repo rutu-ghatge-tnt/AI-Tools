@@ -69,3 +69,6 @@ anthropic>=0.18.0
 
 # Fuzzy Matching for ingredient name matching
 rapidfuzz>=3.0.0
+
+# JWT Authentication
+PyJWT>=2.8.0
