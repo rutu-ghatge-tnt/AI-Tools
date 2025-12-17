@@ -139,6 +139,14 @@ except ImportError as e:
     print(f"Warning: Could not import inspiration_boards router: {e}")
     print("   Inspiration Boards API will not be available. This is not critical.")
 
+# ✅ Add Dashboard Stats API
+try:
+    from app.ai_ingredient_intelligence.api.dashboard_stats import router as dashboard_stats_router
+    app.include_router(dashboard_stats_router, prefix="/api")
+except ImportError as e:
+    print(f"Warning: Could not import dashboard_stats router: {e}")
+    print("   Dashboard Stats API will not be available. This is not critical.")
+
 # ✅ Add Authentication API (JWT login, refresh, etc.)
 try:
     from app.ai_ingredient_intelligence.auth import auth_router
