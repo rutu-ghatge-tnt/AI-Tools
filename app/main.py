@@ -137,6 +137,14 @@ except ImportError as e:
     print(f"Warning: Could not import inspiration_boards router: {e}")
     print("   Inspiration Boards API will not be available. This is not critical.")
 
+# ✅ Add Authentication API (JWT login, refresh, etc.)
+try:
+    from app.ai_ingredient_intelligence.auth import auth_router
+    app.include_router(auth_router, prefix="/api")
+except ImportError as e:
+    print(f"Warning: Could not import auth router: {e}")
+    print("   Authentication API will not be available.")
+
 # ✅ New image-to-JSON API - Commented out - module doesn't exist
 # app.include_router(image_extractor_router, prefix="/api")
 

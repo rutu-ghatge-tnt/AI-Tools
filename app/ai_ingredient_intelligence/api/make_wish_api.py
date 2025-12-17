@@ -19,10 +19,13 @@ STAGES:
 5. Compliance Check
 """
 
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, HTTPException, Header, Depends
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone, timedelta
 import time
+
+# Import authentication - Using JWT tokens
+from app.ai_ingredient_intelligence.auth import verify_jwt_token
 
 from app.ai_ingredient_intelligence.logic.make_wish_generator import (
     generate_formula_from_wish
@@ -36,7 +39,10 @@ router = APIRouter(prefix="/make-wish", tags=["Make a Wish"])
 
 
 @router.post("/generate", response_model=MakeWishResponse)
-async def generate_make_wish_formula(request: MakeWishRequest):
+async def generate_make_wish_formula(
+    request: MakeWishRequest,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Generate a cosmetic formulation using the complete 5-stage "Make a Wish" AI pipeline.
     

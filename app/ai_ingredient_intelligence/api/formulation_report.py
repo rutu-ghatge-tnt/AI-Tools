@@ -5,12 +5,15 @@ import os
 import re
 import httpx
 import asyncio
-from fastapi import APIRouter, HTTPException, Response, Request, Body
+from fastapi import APIRouter, HTTPException, Response, Request, Body, Depends
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 import anthropic
 from jinja2 import Environment, FileSystemLoader
 from app.ai_ingredient_intelligence.models.schemas import FormulationReportResponse, FormulationSummary, ReportTableRow
+
+# Import authentication
+from app.ai_ingredient_intelligence.auth import verify_jwt_token
 
 router = APIRouter(tags=["Formulation Reports"])
 
@@ -898,7 +901,10 @@ REFORMATTED CAUTIONS:"""
     raise HTTPException(status_code=500, detail="Claude API not available. Please check your CLAUDE_API_KEY environment variable.")
 
 @router.post("/formulation-report-json", response_model=FormulationReportResponse)
-async def generate_report_json(payload: FormulationReportRequest):
+async def generate_report_json(
+    payload: FormulationReportRequest,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """Generate report and return as structured JSON"""
     try:
         # Validate input
@@ -950,7 +956,11 @@ async def generate_report_json(payload: FormulationReportRequest):
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")
 
 @router.post("/formulation-report")
-async def generate_report(payload: FormulationReportRequest, request: Request):
+async def generate_report(
+    payload: FormulationReportRequest,
+    request: Request,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     try:
         inci_str = ", ".join(payload.inciList)
 
@@ -1124,7 +1134,7 @@ async def generate_report(payload: FormulationReportRequest, request: Request):
 
 
 @router.get("/formulation-report/status")
-async def get_report_status():
+async def get_report_status(current_user: dict = Depends(verify_jwt_token)):  # JWT token validation
     """Get the status of the last generated report"""
     return {
         "has_report": bool(last_report["text"]),
@@ -1220,7 +1230,10 @@ Return the JSON object now:"""
         raise HTTPException(status_code=500, detail=f"Error generating Presenton prompt: {str(e)}")
 
 @router.post("/formulation-report/ppt")
-async def generate_ppt(body: dict = Body(...)):
+async def generate_ppt(
+    body: dict = Body(...),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """Generate PPT presentation using Presenton API from report JSON data"""
     try:
         if not presenton_api_key:
@@ -1374,7 +1387,7 @@ async def generate_ppt(body: dict = Body(...)):
         raise HTTPException(status_code=500, detail=f"PPT generation failed: {str(e)}")
 
 @router.post("/formulation-report/test-ppt")
-async def test_generate_ppt():
+async def test_generate_ppt(current_user: dict = Depends(verify_jwt_token)):  # JWT token validation
     """Test endpoint to generate PPT with sample data - for Swagger testing"""
     # Sample formulation report data based on your example
     sample_report_data = FormulationReportResponse(
@@ -1421,7 +1434,7 @@ async def test_generate_ppt():
     return await generate_ppt(body)
 
 @router.post("/formulation-report/test-pdf")
-async def test_generate_pdf():
+async def test_generate_pdf(current_user: dict = Depends(verify_jwt_token)):  # JWT token validation
     """Test endpoint to generate PDF with sample data - for Swagger testing"""
     # Sample formulation report data based on your example
     sample_report_data = FormulationReportResponse(
@@ -1468,7 +1481,10 @@ async def test_generate_pdf():
     return await generate_pdf(body)
 
 @router.post("/formulation-report/pdf")
-async def generate_pdf(body: dict = Body(...)):
+async def generate_pdf(
+    body: dict = Body(...),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """Generate PDF presentation using Presenton API from report JSON data"""
     try:
         if not presenton_api_key:

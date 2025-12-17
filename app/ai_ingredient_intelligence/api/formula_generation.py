@@ -23,11 +23,14 @@ WHAT WE USE:
 - BIS RAG: Compliance checking
 """
 
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, HTTPException, Header, Depends
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone, timedelta
 from bson import ObjectId
 import time
+
+# Import authentication
+from app.ai_ingredient_intelligence.auth import verify_jwt_token
 from app.ai_ingredient_intelligence.models.schemas import (
     CreateWishRequest,
     GenerateFormulaResponse
@@ -313,7 +316,10 @@ def get_phase_color(phase_id: str) -> str:
 
 
 @router.post("/generate", response_model=GenerateFormulaResponse)
-async def generate_formula_endpoint(request: CreateWishRequest):
+async def generate_formula_endpoint(
+    request: CreateWishRequest,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Generate a cosmetic formulation based on user wish data
     
@@ -507,7 +513,8 @@ async def generate_formula_endpoint(request: CreateWishRequest):
 @router.post("/save-wish-history")
 async def save_wish_history(
     payload: dict,
-    user_id: Optional[str] = Header(None, alias="X-User-Id")
+    user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
     Save wish history with formula data (user-specific)
@@ -602,7 +609,8 @@ async def get_wish_history(
     search: Optional[str] = None,
     limit: int = 50,
     skip: int = 0,
-    user_id: Optional[str] = Header(None, alias="X-User-Id")
+    user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
     Get wish history for a user
@@ -675,7 +683,8 @@ async def get_wish_history(
 @router.delete("/wish-history/{history_id}")
 async def delete_wish_history(
     history_id: str,
-    user_id: Optional[str] = Header(None, alias="X-User-Id")
+    user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
     Delete a wish history item
