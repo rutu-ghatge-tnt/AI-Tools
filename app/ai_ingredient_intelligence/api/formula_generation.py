@@ -23,7 +23,7 @@ WHAT WE USE:
 - BIS RAG: Compliance checking
 """
 
-from fastapi import APIRouter, HTTPException, Header, Depends
+from fastapi import APIRouter, HTTPException, Depends
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone, timedelta
 from bson import ObjectId
@@ -513,7 +513,6 @@ async def generate_formula_endpoint(
 @router.post("/save-wish-history")
 async def save_wish_history(
     payload: dict,
-    user_id: Optional[str] = Header(None, alias="X-User-Id"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
@@ -536,12 +535,12 @@ async def save_wish_history(
         "notes": "Optional notes"
     }
     
-    Headers:
-    - X-User-Id: User ID (required)
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
     """
     try:
         print(f"📝 Save wish history request received")
-        print(f"   User ID from header: {user_id}")
         print(f"   Payload keys: {list(payload.keys())}")
         
         # Validate payload
@@ -555,13 +554,13 @@ async def save_wish_history(
             print("❌ Missing required field: formula_result")
             raise HTTPException(status_code=400, detail="Missing required field: formula_result")
         
-        # Get user_id from header or payload
-        user_id_value = user_id or payload.get("user_id")
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id_value = current_user.get("user_id") or current_user.get("_id") or payload.get("user_id")
         if not user_id_value:
-            print("❌ User ID not provided")
+            print("❌ User ID not found in JWT token")
             raise HTTPException(
                 status_code=400,
-                detail="User ID is required. Please provide X-User-Id header or user_id in payload"
+                detail="User ID not found in JWT token"
             )
         
         print(f"✅ Validating data for user: {user_id_value}")
@@ -609,7 +608,6 @@ async def get_wish_history(
     search: Optional[str] = None,
     limit: int = 50,
     skip: int = 0,
-    user_id: Optional[str] = Header(None, alias="X-User-Id"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
@@ -628,14 +626,17 @@ async def get_wish_history(
     - limit: Number of results (default 50)
     - skip: Number of results to skip (default 0)
     
-    Headers:
-    - X-User-Id: User ID (required)
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
     """
     try:
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
         if not user_id:
             raise HTTPException(
                 status_code=400,
-                detail="User ID is required. Please provide X-User-Id header"
+                detail="User ID not found in JWT token"
             )
         
         # Build query
@@ -683,20 +684,22 @@ async def get_wish_history(
 @router.delete("/wish-history/{history_id}")
 async def delete_wish_history(
     history_id: str,
-    user_id: Optional[str] = Header(None, alias="X-User-Id"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
     Delete a wish history item
     
-    Headers:
-    - X-User-Id: User ID (required)
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
     """
     try:
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
         if not user_id:
             raise HTTPException(
                 status_code=400,
-                detail="User ID is required. Please provide X-User-Id header"
+                detail="User ID not found in JWT token"
             )
         
         # Validate ObjectId
