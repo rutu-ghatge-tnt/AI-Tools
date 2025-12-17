@@ -848,9 +848,12 @@ Product name:"""
             from app.config import CLAUDE_MODEL
             model_name = CLAUDE_MODEL if CLAUDE_MODEL else (os.getenv("CLAUDE_MODEL") or os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929")
             
+            # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
+            max_tokens = 4096 if "claude-3-opus-20240229" in model_name else 8192
+            
             response = claude_client.messages.create(
                 model=model_name,
-                max_tokens=8192,
+                max_tokens=max_tokens,
                 temperature=0.1,
                 messages=[{"role": "user", "content": prompt}]
             )
@@ -909,9 +912,12 @@ Return only the JSON array of INCI names:"""
             from app.config import CLAUDE_MODEL
             model_name = CLAUDE_MODEL if CLAUDE_MODEL else (os.getenv("CLAUDE_MODEL") or os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929")
             
+            # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
+            max_tokens = 4096 if "claude-3-opus-20240229" in model_name else 8192
+            
             response = claude_client.messages.create(
                 model=model_name,
-                max_tokens=8192,
+                max_tokens=max_tokens,
                 temperature=0.2,
                 messages=[{"role": "user", "content": prompt}]
             )
@@ -975,13 +981,16 @@ Return only the JSON array:"""
             # Get Claude client (lazy-loaded)
             claude_client = self._get_claude_client()
             
-            # Call Claude API - use config model (defaults to claude-3-opus-20240229)
+            # Call Claude API - use config model (defaults to claude-sonnet-4-5-20250929)
             from app.config import CLAUDE_MODEL
             model_name = CLAUDE_MODEL if CLAUDE_MODEL else (os.getenv("CLAUDE_MODEL") or os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929")
             
+            # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
+            max_tokens = 4096 if "claude-3-opus-20240229" in model_name else 8192
+            
             response = claude_client.messages.create(
                 model=model_name,
-                max_tokens=8192,
+                max_tokens=max_tokens,
                 temperature=0.1,
                 messages=[
                     {

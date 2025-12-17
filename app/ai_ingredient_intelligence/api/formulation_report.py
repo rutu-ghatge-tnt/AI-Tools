@@ -747,7 +747,7 @@ REFORMATTED CAUTIONS:"""
 
                         response = claude_client.messages.create(
                             model=os.getenv("CLAUDE_MODEL") or os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929",
-                            max_tokens=8192,
+                            max_tokens=4096,  # Maximum allowed for claude-3-opus-20240229
                             temperature=0.1,
                             messages=[{"role": "user", "content": reformat_prompt}]
                         )
@@ -848,7 +848,7 @@ REFORMATTED CAUTIONS:"""
             # Use Claude API to generate report
             message = claude_client.messages.create(
                 model="claude-3-opus-20240229",
-                max_tokens=8192,  # Increased token limit
+                max_tokens=4096,  # Maximum allowed for claude-3-opus-20240229
                 temperature=0.1,
                 system=SYSTEM_PROMPT,
                 messages=[
@@ -1049,7 +1049,7 @@ async def generate_report(payload: FormulationReportRequest, request: Request):
                 try:
                     retry_message = claude_client.messages.create(
                         model="claude-3-opus-20240229",
-                        max_tokens=8192,  # Increased token limit
+                        max_tokens=4096,  # Maximum allowed for claude-3-opus-20240229
                         temperature=0.1,
                         system=SYSTEM_PROMPT,
                         messages=[
@@ -1180,7 +1180,7 @@ Return the JSON object now:"""
         print("🤖 Generating Presenton prompt with Claude...")
         message = claude_client.messages.create(
             model="claude-3-opus-20240229",
-            max_tokens=8192,
+            max_tokens=4096,  # Maximum allowed for claude-3-opus-20240229
             temperature=0.3,
             messages=[
                 {"role": "user", "content": claude_prompt}
