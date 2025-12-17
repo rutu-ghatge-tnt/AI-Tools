@@ -171,3 +171,4 @@ app/chroma_db_bis/**/*.bin
 app/chroma_db_bis/**/*.sqlite3
 app/chroma_db_bis/*.bin
 app/chroma_db_bis/*.sqlite3
+output_specialChem_1765800534743.json
