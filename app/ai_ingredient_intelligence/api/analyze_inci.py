@@ -603,6 +603,92 @@ async def extract_ingredients_from_url(
             )
 
 
+# Core analysis function that can be called directly (without HTTP/authentication)
+async def analyze_ingredients_core(ingredients: List[str]) -> AnalyzeInciResponse:
+    """
+    Core ingredient analysis logic that can be called directly.
+    This function performs the analysis without history saving or authentication.
+    
+    Args:
+        ingredients: List of ingredient names to analyze
+        
+    Returns:
+        AnalyzeInciResponse with analysis results
+    """
+    start = time.time()
+    
+    try:
+        if not ingredients:
+            raise ValueError("No ingredients provided")
+        
+        # 🔹 Get synonyms from CAS API for better matching
+        print("Retrieving synonyms from CAS API...")
+        synonyms_map = await get_synonyms_batch(ingredients)
+        print(f"Found synonyms for {len([k for k, v in synonyms_map.items() if v])} ingredients")
+        
+        # Match ingredients using new flow
+        matched_raw, general_ingredients, ingredient_tags, unable_to_decode = await match_inci_names(ingredients, synonyms_map)
+        
+        # 🔹 Get BIS cautions for all ingredients (runs in parallel with matching)
+        print("Retrieving BIS cautions...")
+        bis_cautions = await get_bis_cautions_for_ingredients(ingredients)
+        if bis_cautions:
+            print(f"[OK] Retrieved BIS cautions for {len(bis_cautions)} ingredients: {list(bis_cautions.keys())}")
+        else:
+            print("[WARNING] No BIS cautions retrieved - this may indicate an issue with the BIS retriever")
+        
+    except Exception as e:
+        print(f"Error in analyze_ingredients_core: {e}")
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+
+    # Convert to objects
+    items: List[AnalyzeInciItem] = [AnalyzeInciItem(**m) for m in matched_raw]
+
+    # 🔹 Fetch categories for INCI-based bifurcation (only for general INCI, not branded)
+    print("Fetching ingredient categories for INCI-based bifurcation...")
+    inci_categories, items_processed = await fetch_and_compute_categories(items)
+    print(f"Found categories for {len(inci_categories)} INCI names")
+
+    # 🔹 Group ALL detected ingredients (branded + general) by matched_inci
+    detected_dict = defaultdict(list)
+    for item in items_processed:
+        key = tuple(sorted(item.matched_inci))
+        detected_dict[key].append(item)
+
+    detected: List[InciGroup] = [
+        InciGroup(
+            inci_list=list(key),
+            items=val,
+            count=len(val)
+        )
+        for key, val in detected_dict.items()
+    ]
+    # Sort by number of INCI: more INCI first, then lower, single at last
+    detected.sort(key=lambda x: len(x.inci_list), reverse=True)
+
+    # Filter out water-related BIS cautions
+    filtered_bis_cautions = None
+    if bis_cautions:
+        filtered_bis_cautions = {}
+        water_related_keywords = ['water', 'aqua']
+        for ingredient, cautions in bis_cautions.items():
+            ingredient_lower = ingredient.lower()
+            is_water_related = any(water_term in ingredient_lower for water_term in water_related_keywords)
+            if not is_water_related:
+                filtered_bis_cautions[ingredient] = cautions
+
+    # Build response (deprecated fields are not included - they will be excluded by exclude_none=True in schema)
+    response = AnalyzeInciResponse(
+        detected=detected,  # All detected ingredients (branded + general) grouped by INCI
+        unable_to_decode=unable_to_decode,
+        processing_time=round(time.time() - start, 3),
+        bis_cautions=filtered_bis_cautions if filtered_bis_cautions else None,
+        categories=inci_categories if inci_categories else None,  # INCI categories for bifurcation
+    )
+    
+    return response
+
+
 # Simple JSON endpoint for frontend compatibility
 @router.post("/analyze-inci", response_model=AnalyzeInciResponse)
 async def analyze_inci(
@@ -735,26 +821,8 @@ async def analyze_inci(
         if not ingredients:
             raise HTTPException(status_code=400, detail="No valid ingredients found after parsing. Please check your input format.")
         
-        extracted_text = ", ".join(ingredients)
-        
-        if not ingredients:
-            raise HTTPException(status_code=400, detail="No ingredients provided")
-        
-        # 🔹 Get synonyms from CAS API for better matching
-        print("Retrieving synonyms from CAS API...")
-        synonyms_map = await get_synonyms_batch(ingredients)
-        print(f"Found synonyms for {len([k for k, v in synonyms_map.items() if v])} ingredients")
-        
-        # Match ingredients using new flow
-        matched_raw, general_ingredients, ingredient_tags, unable_to_decode = await match_inci_names(ingredients, synonyms_map)
-        
-        # 🔹 Get BIS cautions for all ingredients (runs in parallel with matching)
-        print("Retrieving BIS cautions...")
-        bis_cautions = await get_bis_cautions_for_ingredients(ingredients)
-        if bis_cautions:
-            print(f"[OK] Retrieved BIS cautions for {len(bis_cautions)} ingredients: {list(bis_cautions.keys())}")
-        else:
-            print("[WARNING] No BIS cautions retrieved - this may indicate an issue with the BIS retriever")
+        # Call core analysis function
+        response = await analyze_ingredients_core(ingredients)
         
     except HTTPException:
         # Update history status to "failed" if we have history_id
@@ -779,51 +847,6 @@ async def analyze_inci(
                 pass
         print(f"Error in analyze_inci_json: {e}")
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
-
-    # Convert to objects
-    items: List[AnalyzeInciItem] = [AnalyzeInciItem(**m) for m in matched_raw]
-
-    # 🔹 Fetch categories for INCI-based bifurcation (only for general INCI, not branded)
-    print("Fetching ingredient categories for INCI-based bifurcation...")
-    inci_categories, items_processed = await fetch_and_compute_categories(items)
-    print(f"Found categories for {len(inci_categories)} INCI names")
-
-    # 🔹 Group ALL detected ingredients (branded + general) by matched_inci
-    detected_dict = defaultdict(list)
-    for item in items_processed:
-        key = tuple(sorted(item.matched_inci))
-        detected_dict[key].append(item)
-
-    detected: List[InciGroup] = [
-        InciGroup(
-            inci_list=list(key),
-            items=val,
-            count=len(val)
-        )
-        for key, val in detected_dict.items()
-    ]
-    # Sort by number of INCI: more INCI first, then lower, single at last
-    detected.sort(key=lambda x: len(x.inci_list), reverse=True)
-
-    # Filter out water-related BIS cautions
-    filtered_bis_cautions = None
-    if bis_cautions:
-        filtered_bis_cautions = {}
-        water_related_keywords = ['water', 'aqua']
-        for ingredient, cautions in bis_cautions.items():
-            ingredient_lower = ingredient.lower()
-            is_water_related = any(water_term in ingredient_lower for water_term in water_related_keywords)
-            if not is_water_related:
-                filtered_bis_cautions[ingredient] = cautions
-
-    # Build response (deprecated fields are not included - they will be excluded by exclude_none=True in schema)
-    response = AnalyzeInciResponse(
-        detected=detected,  # All detected ingredients (branded + general) grouped by INCI
-        unable_to_decode=unable_to_decode,
-        processing_time=round(time.time() - start, 3),
-        bis_cautions=filtered_bis_cautions if filtered_bis_cautions else None,
-        categories=inci_categories if inci_categories else None,  # INCI categories for bifurcation
-    )
     
     # 🔹 Auto-save: Update history with "completed" status and analysis_result
     if history_id and user_id_value:
