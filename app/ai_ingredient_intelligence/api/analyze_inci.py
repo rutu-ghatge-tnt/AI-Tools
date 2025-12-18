@@ -1987,7 +1987,7 @@ async def compare_products(
     """
     Compare multiple products based on URLs or INCI strings.
     
-    Request body (new format):
+    Request body:
     {
         "products": [
             {"input": "https://example.com/product1", "input_type": "url"},
@@ -1996,44 +1996,31 @@ async def compare_products(
         ]
     }
     
-    Request body (backward compatible):
-    {
-        "input1": "https://example.com/product1" or "Water, Glycerin, ...",
-        "input2": "https://example.com/product2" or "Water, Hyaluronic Acid, ...",
-        "input1_type": "url" or "inci",
-        "input2_type": "url" or "inci"
-    }
-    
     The endpoint will:
     1. If URL: Scrape the URL to extract product data
     2. If INCI: Use the INCI string directly
     3. Send all products to Claude for structured comparison
     4. Return comparison data with INCI, benefits, claims, price, and attributes
+    
+    Response:
+    {
+        "products": [ProductComparisonItem, ...],
+        "processing_time": float
+    }
     """
     start = time.time()
     scraper = None
     
     try:
-        # Parse products from payload - support both new format and backward compatibility
-        products_list = []
+        # Parse products from payload
+        if "products" not in payload or not payload["products"]:
+            raise HTTPException(status_code=400, detail="Missing required field: 'products' array")
         
-        if "products" in payload and payload["products"]:
-            # New format: array of products
-            products_list = payload["products"]
-            if not isinstance(products_list, list):
-                raise HTTPException(status_code=400, detail="products must be an array")
-            if len(products_list) < 2:
-                raise HTTPException(status_code=400, detail="At least 2 products are required for comparison")
-        elif "input1" in payload and "input2" in payload:
-            # Backward compatible format: input1/input2
-            if "input1_type" not in payload or "input2_type" not in payload:
-                raise HTTPException(status_code=400, detail="Missing required fields: input1_type and input2_type")
-            products_list = [
-                {"input": payload["input1"], "input_type": payload["input1_type"]},
-                {"input": payload["input2"], "input_type": payload["input2_type"]}
-            ]
-        else:
-            raise HTTPException(status_code=400, detail="Missing required fields: either 'products' array or 'input1' and 'input2'")
+        products_list = payload["products"]
+        if not isinstance(products_list, list):
+            raise HTTPException(status_code=400, detail="products must be an array")
+        if len(products_list) < 2:
+            raise HTTPException(status_code=400, detail="At least 2 products are required for comparison")
         
         # Validate all products
         for i, product in enumerate(products_list):
@@ -2501,16 +2488,11 @@ CRITICAL: NEVER use null. Always provide a value (even if it's "Unknown" for tex
         # Convert to ProductComparisonItem objects
         product_items = [ProductComparisonItem(**product_data) for product_data in final_products_data]
         
-        # Build response with backward compatibility
+        # Build response
         response_data = {
             "products": product_items,
             "processing_time": processing_time
         }
-        
-        # Add backward compatibility fields if exactly 2 products
-        if len(product_items) == 2:
-            response_data["product1"] = product_items[0]
-            response_data["product2"] = product_items[1]
         
         return CompareProductsResponse(**response_data)
         
