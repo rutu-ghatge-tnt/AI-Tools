@@ -2358,6 +2358,11 @@ Return the JSON comparison:"""
             # Add extracted text
             claude_product_data["extracted_text"] = product_data["text"]
             
+            # Add selected_method (input_type) and url from original request
+            original_product = products_list[idx]
+            claude_product_data["selected_method"] = original_product.get("input_type", "inci")
+            claude_product_data["url"] = product_data.get("url_context") if original_product.get("input_type") == "url" else None
+            
             # Fallback: Determine boolean attributes from INCI if Claude didn't extract them
             attrs = determine_attributes_from_inci(final_inci, product_data["text"])
             all_attrs.append(attrs)
@@ -2754,13 +2759,17 @@ async def get_decode_history(
             del item["_id"]
             
             # Map status for frontend: "in_progress" -> "pending", "completed" -> "analyzed"
-            status = item.get("status", "analyzed")
-            if status in ["in_progress", "pending"]:
-                status = "pending"
-            elif status == "completed":
-                status = "analyzed"
-            elif status == "failed":
-                status = "failed"
+            status_mapping = {
+                "in_progress": "pending",
+                "pending": "pending",  # Handle if already mapped
+                "completed": "analyzed",
+                "failed": "failed"
+            }
+            raw_status = item.get("status")
+            if raw_status:
+                status = status_mapping.get(raw_status, raw_status)  # Keep original if not in mapping
+            else:
+                status = "pending"  # Default to pending if status is missing (likely in progress)
             
             # Truncate input_data for preview (max 100 chars)
             input_data = item.get("input_data", "")
@@ -2848,15 +2857,17 @@ async def get_decode_history_detail(
             item["analysis_result"] = None
         
         # Map status for frontend
-        if "status" in item:
-            status_mapping = {
-                "in_progress": "pending",
-                "completed": "analyzed",
-                "failed": "failed"
-            }
-            item["status"] = status_mapping.get(item["status"], item["status"])
+        status_mapping = {
+            "in_progress": "pending",
+            "pending": "pending",  # Handle if already mapped
+            "completed": "analyzed",
+            "failed": "failed"
+        }
+        raw_status = item.get("status")
+        if raw_status:
+            item["status"] = status_mapping.get(raw_status, raw_status)  # Keep original if not in mapping
         else:
-            item["status"] = "analyzed"
+            item["status"] = "pending"  # Default to pending if status is missing (likely in progress)
         
         # Ensure analysis_result is None if status is pending or failed
         if item.get("status") in ["pending", "failed"]:
@@ -3250,13 +3261,17 @@ async def get_compare_history(
             del item["_id"]
             
             # Map status for frontend: "in_progress" -> "pending", "completed" -> "analyzed"
-            status = item.get("status", "analyzed")
-            if status == "in_progress":
-                status = "pending"
-            elif status == "completed":
-                status = "analyzed"
-            elif status == "failed":
-                status = "failed"
+            status_mapping = {
+                "in_progress": "pending",
+                "pending": "pending",  # Handle if already mapped
+                "completed": "analyzed",
+                "failed": "failed"
+            }
+            raw_status = item.get("status")
+            if raw_status:
+                status = status_mapping.get(raw_status, raw_status)  # Keep original if not in mapping
+            else:
+                status = "pending"  # Default to pending if status is missing (likely in progress)
             
             # Normalize to products array format (convert input1/input2 if present)
             products = item.get("products")
@@ -3387,15 +3402,17 @@ async def get_compare_history_detail(
         item.pop("input2_type", None)
         
         # Map status for frontend
-        if "status" in item:
-            status_mapping = {
-                "in_progress": "pending",
-                "completed": "analyzed",
-                "failed": "failed"
-            }
-            item["status"] = status_mapping.get(item["status"], item["status"])
+        status_mapping = {
+            "in_progress": "pending",
+            "pending": "pending",  # Handle if already mapped
+            "completed": "analyzed",
+            "failed": "failed"
+        }
+        raw_status = item.get("status")
+        if raw_status:
+            item["status"] = status_mapping.get(raw_status, raw_status)  # Keep original if not in mapping
         else:
-            item["status"] = "analyzed"
+            item["status"] = "pending"  # Default to pending if status is missing (likely in progress)
         
         # Ensure comparison_result is None if status is pending or failed
         if item.get("status") in ["pending", "failed"]:

@@ -72,6 +72,8 @@ class ProductComparisonItem(BaseModel):
     non_comedogenic: Optional[bool] = Field(None, description="Whether product is non-comedogenic")
     hypoallergenic: Optional[bool] = Field(None, description="Whether product is hypoallergenic")
     extracted_text: Optional[str] = Field(None, description="Raw extracted text from URL or INCI input")
+    selected_method: Optional[str] = Field(None, description="Input method used: 'url' or 'inci'")
+    url: Optional[str] = Field(None, description="URL of the product (if input_type was 'url')")
 
 
 class ProductInput(BaseModel):
