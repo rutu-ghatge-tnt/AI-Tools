@@ -67,15 +67,78 @@ except ImportError as e:
     face_analysis_router = None
 from fastapi.middleware.cors import CORSMiddleware
 from app.ai_ingredient_intelligence.db.collections import distributor_col
+from fastapi.openapi.utils import get_openapi
 
 app = FastAPI(
-    title="SkinBB AI Skincare Chatbot",
-    description="An AI assistant for skincare queries with document retrieval and web search fallback",
-    version="1.0",
+    title="SkinBB API Documentation",
+    description="API documentation for SkinBB - An AI assistant for skincare queries with document retrieval and web search fallback",
+    version="1.0.0",
     docs_url="/docs",  # Swagger UI - explicitly enabled
     redoc_url="/redoc",  # ReDoc alternative - explicitly enabled
     openapi_url="/openapi.json"  # OpenAPI JSON schema - explicitly enabled
 )
+
+# Custom OpenAPI schema configuration
+def custom_openapi():
+    """
+    Custom OpenAPI schema with servers, security schemes, and enhanced metadata.
+    Similar to swagger-jsdoc configuration but for FastAPI.
+    """
+    if app.openapi_schema:
+        return app.openapi_schema
+    
+    # Get environment variables for server configuration
+    import os
+    server_url = os.getenv("SERVER_URL", "http://localhost:8000")
+    node_env = os.getenv("NODE_ENV", "development")
+    
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    
+    # Add servers configuration
+    openapi_schema["servers"] = [
+        {
+            "url": server_url,
+            "description": "Production server" if node_env == "production" else "Development server",
+        },
+        {
+            "url": "https://capi.skintruth.in",
+            "description": "Production server",
+        },
+        {
+            "url": "http://localhost:8000",
+            "description": "Local development server",
+        },
+    ]
+    
+    # Add security schemes
+    openapi_schema["components"]["securitySchemes"] = {
+        "bearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+            "description": "JWT token authentication. Include the token in the Authorization header as: Bearer <token>"
+        }
+    }
+    
+    # Set default security (optional - can be overridden per route)
+    # Note: This makes all endpoints require authentication by default in the docs
+    # Individual routes can opt out by not using the security dependency
+    openapi_schema["security"] = [
+        {
+            "bearerAuth": []
+        }
+    ]
+    
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+# Override the default OpenAPI function
+app.openapi = custom_openapi
 
 # ✅ CORS - Updated for production
 app.add_middleware(
