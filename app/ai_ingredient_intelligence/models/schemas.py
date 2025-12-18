@@ -257,19 +257,14 @@ class CompareHistoryItemSummary(BaseModel):
     user_id: Optional[str] = Field(None, description="User ID who created this history")
     name: str = Field(..., description="Name for this comparison")
     tag: Optional[str] = Field(None, description="Tag for categorization")
-    # Legacy fields for 2-product comparisons (backward compatibility)
-    input1: Optional[str] = Field(None, description="First input preview (truncated) - for 2-product comparisons")
-    input2: Optional[str] = Field(None, description="Second input preview (truncated) - for 2-product comparisons")
-    input1_type: Optional[str] = Field(None, description="Type of input1: 'url' or 'inci' - for 2-product comparisons")
-    input2_type: Optional[str] = Field(None, description="Type of input2: 'url' or 'inci' - for 2-product comparisons")
-    # New field for multi-product comparisons
-    products: Optional[List[Dict[str, str]]] = Field(None, description="List of products with 'input' and 'input_type' (inputs truncated) - for multi-product comparisons")
+    # Products array - unified format for all comparisons (2-product or multi-product)
+    products: List[Dict[str, str]] = Field(..., description="List of products with 'input' and 'input_type' (inputs truncated for preview)")
     status: str = Field(..., description="Status: 'pending' (comparison in progress), 'analyzed' (completed), or 'failed'")
     notes: Optional[str] = Field(None, description="User notes for this comparison")
     created_at: Optional[str] = Field(None, description="Creation timestamp")
     # Summary fields
     has_comparison: bool = Field(False, description="Whether comparison_result exists")
-    product_count: Optional[int] = Field(None, description="Number of products being compared")
+    product_count: int = Field(..., description="Number of products being compared")
 
 
 class CompareHistoryItem(BaseModel):
@@ -278,13 +273,8 @@ class CompareHistoryItem(BaseModel):
     user_id: Optional[str] = Field(None, description="User ID who created this history")
     name: str = Field(..., description="Name for this comparison")
     tag: Optional[str] = Field(None, description="Tag for categorization")
-    # Legacy fields for 2-product comparisons (backward compatibility)
-    input1: Optional[str] = Field(None, description="First input (URL or INCI) - for 2-product comparisons")
-    input2: Optional[str] = Field(None, description="Second input (URL or INCI) - for 2-product comparisons")
-    input1_type: Optional[str] = Field(None, description="Type of input1: 'url' or 'inci' - for 2-product comparisons")
-    input2_type: Optional[str] = Field(None, description="Type of input2: 'url' or 'inci' - for 2-product comparisons")
-    # New field for multi-product comparisons
-    products: Optional[List[Dict[str, str]]] = Field(None, description="List of products with 'input' and 'input_type' - for multi-product comparisons")
+    # Products array - unified format for all comparisons (2-product or multi-product)
+    products: List[Dict[str, str]] = Field(..., description="List of products with 'input' and 'input_type' - unified format for all comparisons")
     status: str = Field(..., description="Status: 'pending' (comparison in progress), 'analyzed' (completed), or 'failed'")
     comparison_result: Optional[Dict] = Field(None, description="Full comparison result (only present when status is 'analyzed')")
     notes: Optional[str] = Field(None, description="User notes for this comparison")

@@ -3123,7 +3123,7 @@ async def save_compare_history(
                 "created_at": (datetime.now(timezone(timedelta(hours=5, minutes=30)))).isoformat()
             }
         elif "input1" in payload and "input2" in payload:
-            # 2-product format (backward compatible)
+            # 2-product format (backward compatible) - convert to products array
             if "input1_type" not in payload or "input2_type" not in payload:
                 raise HTTPException(status_code=400, detail="Missing required fields: input1_type and input2_type")
             
@@ -3132,15 +3132,18 @@ async def save_compare_history(
             input1_type = payload["input1_type"]
             input2_type = payload["input2_type"]
             
-            # Create history document with input1/input2
+            # Normalize to products array format (unified format)
+            products = [
+                {"input": input1, "input_type": input1_type},
+                {"input": input2, "input_type": input2_type}
+            ]
+            
+            # Create history document with products array (unified format)
             history_doc = {
                 "user_id": user_id_value,
                 "name": name,
                 "tag": tag,
-                "input1": input1,
-                "input2": input2,
-                "input1_type": input1_type,
-                "input2_type": input2_type,
+                "products": products,  # Store in unified format
                 "status": status,
                 "notes": notes,
                 "created_at": (datetime.now(timezone(timedelta(hours=5, minutes=30)))).isoformat()
@@ -3245,7 +3248,7 @@ async def get_compare_history(
         ).sort("created_at", -1).skip(skip).limit(limit)
         items = await cursor.to_list(length=limit)
         
-        # Convert to summary format (exclude large fields)
+        # Convert to summary format (exclude large fields and normalize to products array)
         summary_items = []
         for item in items:
             item_id = str(item["_id"])
@@ -3260,42 +3263,40 @@ async def get_compare_history(
             elif status == "failed":
                 status = "failed"
             
-            # Truncate input1 and input2 for preview (max 100 chars)
-            input1 = item.get("input1")
-            if input1 and len(input1) > 100:
-                input1 = input1[:100] + "..."
-            
-            input2 = item.get("input2")
-            if input2 and len(input2) > 100:
-                input2 = input2[:100] + "..."
-            
-            # Truncate products inputs if present
+            # Normalize to products array format (convert input1/input2 if present)
             products = item.get("products")
-            product_count = None
-            if products and isinstance(products, list):
-                product_count = len(products)
-                # Truncate each product's input
-                truncated_products = []
-                for product in products:
-                    if isinstance(product, dict):
-                        truncated_product = product.copy()
-                        if "input" in truncated_product and truncated_product["input"]:
-                            input_val = truncated_product["input"]
-                            if len(input_val) > 100:
-                                truncated_product["input"] = input_val[:100] + "..."
-                        truncated_products.append(truncated_product)
-                products = truncated_products
+            if not products or not isinstance(products, list):
+                # Convert legacy input1/input2 to products array
+                products = []
+                if item.get("input1") and item.get("input1_type"):
+                    products.append({
+                        "input": item["input1"],
+                        "input_type": item["input1_type"]
+                    })
+                if item.get("input2") and item.get("input2_type"):
+                    products.append({
+                        "input": item["input2"],
+                        "input_type": item["input2_type"]
+                    })
+            
+            # Truncate products inputs for preview (max 100 chars)
+            product_count = len(products) if products else 0
+            truncated_products = []
+            for product in products:
+                if isinstance(product, dict):
+                    truncated_product = product.copy()
+                    if "input" in truncated_product and truncated_product["input"]:
+                        input_val = truncated_product["input"]
+                        if len(input_val) > 100:
+                            truncated_product["input"] = input_val[:100] + "..."
+                    truncated_products.append(truncated_product)
             
             summary_item = {
                 "id": item_id,
                 "user_id": item.get("user_id"),
                 "name": item.get("name", ""),
                 "tag": item.get("tag"),
-                "input1": input1,
-                "input2": input2,
-                "input1_type": item.get("input1_type"),
-                "input2_type": item.get("input2_type"),
-                "products": products,
+                "products": truncated_products,
                 "status": status,
                 "notes": item.get("notes"),
                 "created_at": item.get("created_at"),
@@ -3365,6 +3366,30 @@ async def get_compare_history_detail(
         # Ensure all fields are included
         if "comparison_result" not in item:
             item["comparison_result"] = None
+        
+        # Normalize to products array format (convert input1/input2 if present)
+        products = item.get("products")
+        if not products or not isinstance(products, list):
+            # Convert legacy input1/input2 to products array
+            products = []
+            if item.get("input1") and item.get("input1_type"):
+                products.append({
+                    "input": item["input1"],
+                    "input_type": item["input1_type"]
+                })
+            if item.get("input2") and item.get("input2_type"):
+                products.append({
+                    "input": item["input2"],
+                    "input_type": item["input2_type"]
+                })
+        
+        # Remove legacy fields and set normalized products array
+        item["products"] = products
+        # Remove input1/input2 fields from response (redundant)
+        item.pop("input1", None)
+        item.pop("input2", None)
+        item.pop("input1_type", None)
+        item.pop("input2_type", None)
         
         # Map status for frontend
         if "status" in item:
