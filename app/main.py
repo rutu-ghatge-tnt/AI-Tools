@@ -106,8 +106,12 @@ def custom_openapi():
             "description": "Production server" if node_env == "production" else "Development server",
         },
         {
-            "url": "https://capi.skintruth.in",
+            "url": "https://metaverse.skinbb.com",
             "description": "Production server",
+        },
+        {
+            "url": "https://capi.skintruth.in",
+            "description": "Development server",
         },
         {
             "url": "http://localhost:8000",

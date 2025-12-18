@@ -8,6 +8,7 @@ Provides JWT token validation and authentication dependencies for FastAPI endpoi
 # JWT Authentication (Primary)
 from .jwt_auth import (
     verify_jwt_token,
+    verify_jwt_token_optional,
     create_access_token,
     create_refresh_token,
     refresh_access_token,
@@ -25,6 +26,7 @@ from .auth_routes import router as auth_router
 __all__ = [
     # JWT Authentication
     "verify_jwt_token",
+    "verify_jwt_token_optional",
     "create_access_token",
     "create_refresh_token",
     "refresh_access_token",
