@@ -5,9 +5,9 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 from app.ai_ingredient_intelligence.db.collections import inspiration_products_col
 from bson import ObjectId
+from pymongo.errors import _OperationCancelled, NetworkTimeout, ServerSelectionTimeoutError
 import httpx
 import os
-from pymongo.errors import _OperationCancelled, NetworkTimeout, ServerSelectionTimeoutError
 
 
 async def decode_product(user_id: str, product_id: str) -> Dict[str, Any]:
@@ -70,69 +70,52 @@ async def decode_product(user_id: str, product_id: str) -> Dict[str, Any]:
             "error": "No ingredients found. Please ensure product URL is valid and contains ingredient information."
         }
     
-    # Call analyze-inci endpoint
-    base_url = os.getenv("API_BASE_URL", "http://localhost:8000")
-    analyze_url = f"{base_url}/api/analyze-inci"
-    
+    # Call analyze-inci core function directly (no HTTP request needed)
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
-                analyze_url,
-                json={
-                    "inci_names": ingredients,
-                    "input_type": "text"
-                }
-            )
-            
-            if response.status_code != 200:
-                return {
-                    "success": False,
-                    "error": f"Failed to analyze ingredients: {response.text}"
-                }
-            
-            analyze_result = response.json()
-            
-            # Get formulation report to extract summary (pH, formulation type, etc.)
-            report_summary = await _get_formulation_report_summary(ingredients, analyze_result)
-            
-            # Generate decoded_data from analyze result
-            decoded_data = await _generate_decoded_data(
-                ingredients,
-                analyze_result,
-                product,
-                report_summary
-            )
-            
-            # Update product
-            try:
-                await inspiration_products_col.update_one(
-                    {"_id": product_obj_id},
-                    {
-                        "$set": {
-                            "decoded": True,
-                            "decoded_data": decoded_data,
-                            "updated_at": datetime.utcnow()
-                        }
+        from app.ai_ingredient_intelligence.api.analyze_inci import analyze_ingredients_core
+        
+        # Call the core analysis function directly
+        analyze_response = await analyze_ingredients_core(ingredients)
+        
+        # Convert response to dict format
+        analyze_result = analyze_response.dict()
+        
+        # Get formulation report to extract summary (pH, formulation type, etc.)
+        report_summary = await _get_formulation_report_summary(ingredients, analyze_result)
+        
+        # Generate decoded_data from analyze result
+        decoded_data = await _generate_decoded_data(
+            ingredients,
+            analyze_result,
+            product,
+            report_summary
+        )
+        
+        # Update product
+        try:
+            await inspiration_products_col.update_one(
+                {"_id": product_obj_id},
+                {
+                    "$set": {
+                        "decoded": True,
+                        "decoded_data": decoded_data,
+                        "updated_at": datetime.utcnow()
                     }
-                )
-            except (_OperationCancelled, NetworkTimeout, ServerSelectionTimeoutError) as e:
-                return {
-                    "success": False,
-                    "error": "Database operation was cancelled or timed out while saving results. The analysis may have completed, but results were not saved. Please try again."
                 }
-            
+            )
+        except (_OperationCancelled, NetworkTimeout, ServerSelectionTimeoutError) as e:
             return {
-                "success": True,
-                "product_id": product_id,
-                "decoded": True,
-                "decoded_data": decoded_data
+                "success": False,
+                "error": "Database operation was cancelled or timed out while saving results. The analysis may have completed, but results were not saved. Please try again."
             }
-            
-    except httpx.TimeoutException:
+        
         return {
-            "success": False,
-            "error": "Request timed out while analyzing ingredients. Please try again."
+            "success": True,
+            "product_id": product_id,
+            "decoded": True,
+            "decoded_data": decoded_data
         }
+            
     except (_OperationCancelled, NetworkTimeout, ServerSelectionTimeoutError) as e:
         return {
             "success": False,
@@ -167,9 +150,15 @@ async def _generate_decoded_data(
     ingredient_details = []
     total_concentration = 0
     
-    # Get grouped ingredients
-    grouped = analyze_result.get("grouped", [])
-    branded = analyze_result.get("branded_ingredients", [])
+    # Get detected ingredients (new structure)
+    detected = analyze_result.get("detected", [])
+    
+    # Extract branded ingredients from detected groups
+    branded_items = []
+    for group in detected:
+        for item in group.get("items", []):
+            if item.get("tag") == "B":  # Branded ingredient
+                branded_items.append(item)
     
     # Process ingredients to create ingredient_details
     # This is simplified - in production, you'd use AI to estimate concentrations
@@ -183,10 +172,11 @@ async def _generate_decoded_data(
         function = "Ingredient"
         
         # Try to find in branded ingredients
-        for brand_ing in branded:
+        for brand_ing in branded_items:
             if brand_ing.get("ingredient_name", "").lower() == ing_name.lower():
-                inci_name = brand_ing.get("matched_inci", [ing_name])[0] if brand_ing.get("matched_inci") else ing_name
-                function = brand_ing.get("description", "Ingredient")[:50]  # Truncate
+                matched_inci = brand_ing.get("matched_inci", [])
+                inci_name = matched_inci[0] if matched_inci else ing_name
+                function = (brand_ing.get("description") or "Ingredient")[:50]  # Truncate
                 break
         
         # Determine phase
@@ -413,18 +403,30 @@ async def _get_formulation_report_summary(ingredients: List[str], analyze_result
         not_branded_ingredients = []
         bis_cautions = analyze_result.get("bis_cautions", {})
         
-        # Get branded ingredients
-        if analyze_result.get("branded_grouped"):
-            for group in analyze_result.get("branded_grouped", []):
-                branded_ingredients.extend(group.get("inci_list", []))
-        elif analyze_result.get("branded_ingredients"):
-            for item in analyze_result.get("branded_ingredients", []):
-                branded_ingredients.extend(item.get("matched_inci", []))
+        # Get detected groups (new structure)
+        detected = analyze_result.get("detected", [])
         
-        # Get not branded ingredients
-        if analyze_result.get("general_ingredients_list"):
-            for item in analyze_result.get("general_ingredients_list", []):
-                not_branded_ingredients.extend(item.get("matched_inci", []))
+        # Extract branded and general ingredients from detected groups
+        for group in detected:
+            for item in group.get("items", []):
+                matched_inci = item.get("matched_inci", [])
+                if item.get("tag") == "B":  # Branded ingredient
+                    branded_ingredients.extend(matched_inci)
+                elif item.get("tag") == "G":  # General INCI ingredient
+                    not_branded_ingredients.extend(matched_inci)
+        
+        # Fallback to old structure if detected is not available
+        if not detected:
+            if analyze_result.get("branded_grouped"):
+                for group in analyze_result.get("branded_grouped", []):
+                    branded_ingredients.extend(group.get("inci_list", []))
+            elif analyze_result.get("branded_ingredients"):
+                for item in analyze_result.get("branded_ingredients", []):
+                    branded_ingredients.extend(item.get("matched_inci", []))
+            
+            if analyze_result.get("general_ingredients_list"):
+                for item in analyze_result.get("general_ingredients_list", []):
+                    not_branded_ingredients.extend(item.get("matched_inci", []))
         
         # Call formulation report JSON API
         base_url = os.getenv("API_BASE_URL", "http://localhost:8000")
