@@ -28,6 +28,15 @@ from app.ai_ingredient_intelligence.logic.make_wish_prompts import (
     COMPLIANCE_CHECK_SYSTEM_PROMPT
 )
 
+# Import cache manager
+from app.ai_ingredient_intelligence.logic.prompt_cache_manager import get_cache_manager
+
+# Import rules engine
+from app.ai_ingredient_intelligence.logic.make_wish_rules_engine import (
+    get_rules_engine,
+    ValidationSeverity
+)
+
 # Claude API setup
 try:
     import anthropic
@@ -516,11 +525,18 @@ Return the complete compliance analysis as JSON following the specified format.
 async def call_ai_with_claude(
     system_prompt: str,
     user_prompt: str,
+    prompt_type: str = "general",
     max_retries: int = 3
 ) -> Dict[str, Any]:
     """
-    Call Claude API for Make a Wish pipeline.
+    Call Claude API for Make a Wish pipeline with prompt caching support.
     Uses Claude as per project preference.
+    
+    Args:
+        system_prompt: The system prompt (will be cached)
+        user_prompt: The user prompt (dynamic content)
+        prompt_type: Type of prompt for cache tracking (e.g., "ingredient_selection")
+        max_retries: Maximum number of retry attempts
     """
     
     if not claude_client:
@@ -529,18 +545,38 @@ async def call_ai_with_claude(
     if not claude_model:
         raise RuntimeError("Claude model not configured. Check CLAUDE_MODEL environment variable.")
     
+    # Get cache manager and check if we should use caching
+    cache_manager = get_cache_manager(claude_client)
+    cache_block_id = await cache_manager.get_or_create_cache(
+        prompt_type=prompt_type,
+        system_prompt=system_prompt,
+        claude_client=claude_client
+    )
+    
+    # Prepare API call parameters
+    api_params = {
+        "model": claude_model,
+        "max_tokens": 16384,
+        "temperature": 0.3,
+        "system": system_prompt,
+        "messages": [
+            {"role": "user", "content": user_prompt}
+        ]
+    }
+    
+    # Use cache_control if caching is enabled
+    # Claude's ephemeral cache automatically caches system prompts when cache_control is used
+    # This reduces costs by ~90% on system prompt tokens after the first call
+    if cache_block_id:
+        api_params["cache_control"] = {"type": "ephemeral"}
+        print(f"💾 Using cached system prompt for {prompt_type}")
+    else:
+        print(f"📝 Using uncached system prompt for {prompt_type} (first call)")
+    
     for attempt in range(max_retries):
         try:
-            # Call Claude API
-            response = claude_client.messages.create(
-                model=claude_model,
-                max_tokens=16384,
-                temperature=0.3,
-                system=system_prompt,
-                messages=[
-                    {"role": "user", "content": user_prompt}
-                ]
-            )
+            # Call Claude API with caching support
+            response = claude_client.messages.create(**api_params)
             
             if not response.content or len(response.content) == 0:
                 if attempt < max_retries - 1:
@@ -613,12 +649,32 @@ async def generate_formula_from_wish(wish_data: dict) -> dict:
     
     print("🚀 Starting Make a Wish pipeline...")
     
+    # Validate and apply rules engine
+    rules_engine = get_rules_engine()
+    can_proceed, validation_results, fixed_wish_data = rules_engine.validate_wish_data(wish_data)
+    
+    if not can_proceed:
+        blocking_errors = [r for r in validation_results if r.severity == ValidationSeverity.BLOCK]
+        error_messages = [r.message for r in blocking_errors]
+        raise ValueError(f"Validation failed: {'; '.join(error_messages)}")
+    
+    # Log warnings if any
+    warnings = [r for r in validation_results if r.severity == ValidationSeverity.WARN]
+    if warnings:
+        print(f"⚠️ Validation warnings: {len(warnings)}")
+        for warning in warnings:
+            print(f"   - {warning.message}")
+    
+    # Use fixed wish data (with auto-selections applied)
+    wish_data = fixed_wish_data
+    
     # Stage 1: Ingredient Selection
     print("📋 Stage 1: Ingredient Selection...")
     selection_prompt = generate_ingredient_selection_prompt(wish_data)
     selected_ingredients = await call_ai_with_claude(
         system_prompt=INGREDIENT_SELECTION_SYSTEM_PROMPT,
-        user_prompt=selection_prompt
+        user_prompt=selection_prompt,
+        prompt_type="ingredient_selection"
     )
     print(f"✅ Selected {len(selected_ingredients.get('ingredients', []))} ingredients")
     
@@ -630,7 +686,8 @@ async def generate_formula_from_wish(wish_data: dict) -> dict:
     )
     optimized_formula = await call_ai_with_claude(
         system_prompt=FORMULA_OPTIMIZATION_SYSTEM_PROMPT,
-        user_prompt=optimization_prompt
+        user_prompt=optimization_prompt,
+        prompt_type="formula_optimization"
     )
     print(f"✅ Optimized formula: {optimized_formula.get('optimized_formula', {}).get('total_percentage', 0)}%")
     
@@ -639,7 +696,8 @@ async def generate_formula_from_wish(wish_data: dict) -> dict:
     manufacturing_prompt = generate_manufacturing_prompt(optimized_formula)
     manufacturing_process = await call_ai_with_claude(
         system_prompt=MANUFACTURING_PROCESS_SYSTEM_PROMPT,
-        user_prompt=manufacturing_prompt
+        user_prompt=manufacturing_prompt,
+        prompt_type="manufacturing_process"
     )
     print(f"✅ Generated {len(manufacturing_process.get('manufacturing_steps', []))} manufacturing steps")
     
@@ -648,7 +706,8 @@ async def generate_formula_from_wish(wish_data: dict) -> dict:
     cost_prompt = generate_cost_prompt(optimized_formula, wish_data)
     cost_analysis = await call_ai_with_claude(
         system_prompt=COST_ANALYSIS_SYSTEM_PROMPT,
-        user_prompt=cost_prompt
+        user_prompt=cost_prompt,
+        prompt_type="cost_analysis"
     )
     print(f"✅ Cost analysis complete: ₹{cost_analysis.get('raw_material_cost', {}).get('total_per_100g', 0)}/100g")
     
@@ -657,7 +716,8 @@ async def generate_formula_from_wish(wish_data: dict) -> dict:
     compliance_prompt = generate_compliance_prompt(optimized_formula)
     compliance = await call_ai_with_claude(
         system_prompt=COMPLIANCE_CHECK_SYSTEM_PROMPT,
-        user_prompt=compliance_prompt
+        user_prompt=compliance_prompt,
+        prompt_type="compliance_check"
     )
     print(f"✅ Compliance: {compliance.get('overall_status', 'UNKNOWN')}")
     
@@ -672,7 +732,8 @@ async def generate_formula_from_wish(wish_data: dict) -> dict:
         "metadata": {
             "generated_at": datetime.now().isoformat(),
             "formula_version": "1.0",
-            "ai_model": claude_model or "claude-sonnet-4-5-20250929"
+            "ai_model": claude_model or "claude-sonnet-4-5-20250929",
+            "cache_stats": get_cache_manager().get_cache_stats()
         }
     }
     
