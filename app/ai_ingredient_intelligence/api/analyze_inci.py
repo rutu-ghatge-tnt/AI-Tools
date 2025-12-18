@@ -2897,6 +2897,7 @@ async def save_compare_history(
 ):
     """
     Save compare history with name and tag (user-specific)
+    Supports both 2-product and multi-product comparisons
     
     HISTORY FUNCTIONALITY:
     - All product comparison operations are automatically saved to user's history
@@ -2905,8 +2906,9 @@ async def save_compare_history(
     - Name and tags can be used for organization and categorization
     - History items can be searched by name or tag
     - History persists across sessions and page refreshes
+    - Supports both 2-product (input1/input2) and multi-product (products array) comparisons
     
-    Request body:
+    Request body (2-product format - backward compatible):
     {
         "name": "Comparison Name",
         "tag": "optional-tag",
@@ -2914,6 +2916,19 @@ async def save_compare_history(
         "input2": "URL or INCI",
         "input1_type": "url" or "inci",
         "input2_type": "url" or "inci",
+        "comparison_result": {...} (optional if status is "in_progress"),
+        "status": "in_progress" | "completed" | "failed" (default: "completed")
+    }
+    
+    Request body (multi-product format):
+    {
+        "name": "Comparison Name",
+        "tag": "optional-tag",
+        "products": [
+            {"input": "URL or INCI", "input_type": "url" or "inci"},
+            {"input": "URL or INCI", "input_type": "url" or "inci"},
+            ...
+        ],
         "comparison_result": {...} (optional if status is "in_progress"),
         "status": "in_progress" | "completed" | "failed" (default: "completed")
     }
@@ -2926,17 +2941,9 @@ async def save_compare_history(
         # Validate payload
         if "name" not in payload:
             raise HTTPException(status_code=400, detail="Missing required field: name")
-        if "input1" not in payload or "input2" not in payload:
-            raise HTTPException(status_code=400, detail="Missing required fields: input1 and input2")
-        if "input1_type" not in payload or "input2_type" not in payload:
-            raise HTTPException(status_code=400, detail="Missing required fields: input1_type and input2_type")
         
         name = payload["name"]
         tag = payload.get("tag")
-        input1 = payload["input1"]
-        input2 = payload["input2"]
-        input1_type = payload["input1_type"]
-        input2_type = payload["input2_type"]
         status = payload.get("status", "completed")  # Default to "completed" for backward compatibility
         comparison_result = payload.get("comparison_result")  # Optional if status is "in_progress"
         notes = payload.get("notes", "")  # Optional notes
@@ -2954,19 +2961,60 @@ async def save_compare_history(
         if not user_id_value:
             raise HTTPException(status_code=400, detail="User ID not found in JWT token")
         
-        # Create history document
-        history_doc = {
-            "user_id": user_id_value,
-            "name": name,
-            "tag": tag,
-            "input1": input1,
-            "input2": input2,
-            "input1_type": input1_type,
-            "input2_type": input2_type,
-            "status": status,
-            "notes": notes,  # Store notes
-            "created_at": (datetime.now(timezone(timedelta(hours=5, minutes=30)))).isoformat()
-        }
+        # Check if it's multi-product format (products array) or 2-product format (input1/input2)
+        if "products" in payload:
+            # Multi-product format
+            products = payload["products"]
+            if not isinstance(products, list) or len(products) < 2:
+                raise HTTPException(status_code=400, detail="products must be an array with at least 2 items")
+            
+            # Validate each product
+            for i, product in enumerate(products):
+                if not isinstance(product, dict):
+                    raise HTTPException(status_code=400, detail=f"Product {i+1} must be an object")
+                if "input" not in product or "input_type" not in product:
+                    raise HTTPException(status_code=400, detail=f"Product {i+1} is missing 'input' or 'input_type' field")
+                if product["input_type"] not in ["url", "inci"]:
+                    raise HTTPException(status_code=400, detail=f"Product {i+1} input_type must be 'url' or 'inci'")
+            
+            # Create history document with products array
+            history_doc = {
+                "user_id": user_id_value,
+                "name": name,
+                "tag": tag,
+                "products": products,
+                "status": status,
+                "notes": notes,
+                "created_at": (datetime.now(timezone(timedelta(hours=5, minutes=30)))).isoformat()
+            }
+        elif "input1" in payload and "input2" in payload:
+            # 2-product format (backward compatible)
+            if "input1_type" not in payload or "input2_type" not in payload:
+                raise HTTPException(status_code=400, detail="Missing required fields: input1_type and input2_type")
+            
+            input1 = payload["input1"]
+            input2 = payload["input2"]
+            input1_type = payload["input1_type"]
+            input2_type = payload["input2_type"]
+            
+            # Create history document with input1/input2
+            history_doc = {
+                "user_id": user_id_value,
+                "name": name,
+                "tag": tag,
+                "input1": input1,
+                "input2": input2,
+                "input1_type": input1_type,
+                "input2_type": input2_type,
+                "status": status,
+                "notes": notes,
+                "created_at": (datetime.now(timezone(timedelta(hours=5, minutes=30)))).isoformat()
+            }
+        else:
+            raise HTTPException(
+                status_code=400, 
+                detail="Must provide either 'products' array (for multi-product) or 'input1'/'input2' (for 2-product comparison)"
+            )
         
         # Only include comparison_result if provided
         if comparison_result is not None:
@@ -3099,10 +3147,11 @@ async def update_compare_history(
     - notes: Update user notes
     
     Non-editable fields:
-    - input1: Cannot be changed (URL or INCI)
-    - input2: Cannot be changed (URL or INCI)
-    - input1_type: Cannot be changed
-    - input2_type: Cannot be changed
+    - input1: Cannot be changed (URL or INCI) - for 2-product comparisons
+    - input2: Cannot be changed (URL or INCI) - for 2-product comparisons
+    - input1_type: Cannot be changed - for 2-product comparisons
+    - input2_type: Cannot be changed - for 2-product comparisons
+    - products: Cannot be changed (array of products) - for multi-product comparisons
     - status: Cannot be changed
     - comparison_result: Cannot be changed
     - user_id: Cannot be changed
@@ -3122,8 +3171,8 @@ async def update_compare_history(
         if not ObjectId.is_valid(history_id):
             raise HTTPException(status_code=400, detail="Invalid history ID")
         
-        # Prevent editing input1, input2, input1_type, input2_type, and all other fields except name, tag, and notes
-        protected_fields = ["input1", "input2", "input1_type", "input2_type", 
+        # Prevent editing input1, input2, input1_type, input2_type, products, and all other fields except name, tag, and notes
+        protected_fields = ["input1", "input2", "input1_type", "input2_type", "products",
                            "status", "comparison_result", "user_id", "created_at"]
         attempted_protected = [field for field in protected_fields if field in payload]
         if attempted_protected:

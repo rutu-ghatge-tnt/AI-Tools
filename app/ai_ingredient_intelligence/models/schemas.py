@@ -231,15 +231,18 @@ class GetDecodeHistoryResponse(BaseModel):
 
 
 class CompareHistoryItem(BaseModel):
-    """Schema for compare history item"""
+    """Schema for compare history item - supports both 2-product and multi-product comparisons"""
     id: Optional[str] = Field(None, description="History item ID")
     user_id: Optional[str] = Field(None, description="User ID who created this history")
     name: str = Field(..., description="Name for this comparison")
     tag: Optional[str] = Field(None, description="Tag for categorization")
-    input1: str = Field(..., description="First input (URL or INCI)")
-    input2: str = Field(..., description="Second input (URL or INCI)")
-    input1_type: str = Field(..., description="Type of input1: 'url' or 'inci'")
-    input2_type: str = Field(..., description="Type of input2: 'url' or 'inci'")
+    # Legacy fields for 2-product comparisons (backward compatibility)
+    input1: Optional[str] = Field(None, description="First input (URL or INCI) - for 2-product comparisons")
+    input2: Optional[str] = Field(None, description="Second input (URL or INCI) - for 2-product comparisons")
+    input1_type: Optional[str] = Field(None, description="Type of input1: 'url' or 'inci' - for 2-product comparisons")
+    input2_type: Optional[str] = Field(None, description="Type of input2: 'url' or 'inci' - for 2-product comparisons")
+    # New field for multi-product comparisons
+    products: Optional[List[Dict[str, str]]] = Field(None, description="List of products with 'input' and 'input_type' - for multi-product comparisons")
     status: str = Field(..., description="Status: 'pending' (comparison in progress), 'analyzed' (completed), or 'failed'")
     comparison_result: Optional[Dict] = Field(None, description="Full comparison result (only present when status is 'analyzed')")
     notes: Optional[str] = Field(None, description="User notes for this comparison")
