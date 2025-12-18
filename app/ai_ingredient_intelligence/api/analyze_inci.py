@@ -5,6 +5,7 @@ import time
 import os
 import json
 import re
+import asyncio
 from typing import List, Optional, Dict, Tuple
 from collections import defaultdict
 
@@ -2061,16 +2062,17 @@ async def compare_products(
         # Use the shared INCI parser utility
         from app.ai_ingredient_intelligence.utils.inci_parser import parse_inci_string
         
-        # Process all products
-        processed_products = []
-        
-        # Process all products
-        for idx, product in enumerate(products_list):
+        # Helper function to process a single product
+        async def process_single_product(idx: int, product: dict, scraper_instance: Optional[URLScraper] = None) -> dict:
+            """Process a single product (URL or INCI) - can run in parallel"""
             product_input = product["input"]
             product_type = product["input_type"]
             product_num = idx + 1
             
             print(f"Processing product {product_num} (type: {product_type})...")
+            
+            # Use provided scraper or create a new one for this product
+            product_scraper = scraper_instance if scraper_instance else URLScraper()
             
             product_data = {
                 "url_context": None,
@@ -2083,14 +2085,14 @@ async def compare_products(
                 if not product_input.startswith(("http://", "https://")):
                     raise HTTPException(status_code=400, detail=f"Product {product_num} must be a valid URL when input_type is 'url'")
                 product_data["url_context"] = product_input  # Store URL for Claude
-                extraction_result = await scraper.extract_ingredients_from_url(product_input)
+                extraction_result = await product_scraper.extract_ingredients_from_url(product_input)
                 product_data["text"] = extraction_result.get("extracted_text", "")
                 product_data["inci"] = extraction_result.get("ingredients", [])
                 product_data["product_name"] = extraction_result.get("product_name")
                 # Try to detect product name from text if not already extracted
                 if not product_data["product_name"] and product_data["text"]:
                     try:
-                        product_data["product_name"] = await scraper.detect_product_name(product_data["text"], product_input)
+                        product_data["product_name"] = await product_scraper.detect_product_name(product_data["text"], product_input)
                     except:
                         pass
             else:
@@ -2098,16 +2100,39 @@ async def compare_products(
                 product_data["text"] = product_input
                 product_data["inci"] = parse_inci_string(product_input)
                 # Use Claude to clean and validate INCI list if we have a scraper
-                if scraper and product_data["inci"]:
+                if product_scraper and product_data["inci"]:
                     try:
-                        cleaned_inci = await scraper.extract_ingredients_from_text(product_input)
+                        cleaned_inci = await product_scraper.extract_ingredients_from_text(product_input)
                         if cleaned_inci:
                             product_data["inci"] = cleaned_inci
                     except:
                         pass  # Fall back to parsed list
                 product_data["product_name"] = None
             
-            processed_products.append(product_data)
+            # Clean up scraper if we created a new one
+            if product_scraper != scraper_instance and product_scraper:
+                try:
+                    await product_scraper.close()
+                except:
+                    pass
+                # Clean up scraper if we created a new one
+                if product_scraper != scraper_instance and product_scraper:
+                    try:
+                        await product_scraper.close()
+                    except:
+                        pass
+            
+            return product_data
+        
+        # Process all products in parallel for better performance
+        print(f"Processing {len(products_list)} products in parallel...")
+        # Create tasks for parallel processing
+        tasks = [
+            process_single_product(idx, product, scraper if needs_scraper else None)
+            for idx, product in enumerate(products_list)
+        ]
+        # Wait for all products to be processed
+        processed_products = await asyncio.gather(*tasks)
         
         # If scraper wasn't initialized but we need Claude for comparison
         if not scraper:
@@ -2218,16 +2243,16 @@ Return the JSON comparison:"""
         # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
         max_tokens = 4096 if "claude-3-opus-20240229" in model_name else 8192
         
-        response = claude_client.messages.create(
-            model=model_name,
-            max_tokens=max_tokens,
-            temperature=0.1,
-            messages=[
-                {
-                    "role": "user",
-                    "content": comparison_prompt
-                }
-            ]
+        # Run synchronous Claude API call in thread pool to avoid blocking
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: claude_client.messages.create(
+                model=model_name,
+                max_tokens=max_tokens,
+                temperature=0.1,
+                messages=[{"role": "user", "content": comparison_prompt}]
+            )
         )
         
         # Extract response content
@@ -2369,15 +2394,17 @@ Return the JSON comparison:"""
                 print(f"Product {product_num} missing fields: {', '.join(missing)}")
             return missing
         
-        # Fill missing fields for all products
-        for idx, product_data in enumerate(final_products_data):
+        # Helper function to fill missing fields for a single product
+        async def fill_missing_fields_for_product(idx: int, product_data: Dict, current_product: Dict, claude_client_instance, model_name: str) -> Dict:
+            """Fill missing fields for a single product - can run in parallel"""
             product_num = idx + 1
             missing_fields = identify_missing_fields(product_data, product_num)
             
-            if missing_fields:
-                print(f"Attempting to fill {len(missing_fields)} missing fields for Product {product_num}...")
-                current_product = processed_products[idx]
-                fill_prompt = f"""You are an expert cosmetic product researcher. Use your knowledge base, web search capabilities, and deep analysis to find missing information about this product.
+            if not missing_fields:
+                return product_data
+            
+            print(f"Attempting to fill {len(missing_fields)} missing fields for Product {product_num}...")
+            fill_prompt = f"""You are an expert cosmetic product researcher. Use your knowledge base, web search capabilities, and deep analysis to find missing information about this product.
 
 Product Information:
 - Product Name: {product_data.get('product_name') or 'Unknown'}
@@ -2427,49 +2454,60 @@ IMPORTANT: Only include fields that were in the MISSING FIELDS list above. For f
 CRITICAL: NEVER use null. Always provide a value (even if it's "Unknown" for text fields or false for booleans when uncertain).
 """
             
-                try:
-                    # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
-                    max_tokens = 4096 if "claude-3-opus-20240229" in model_name else 8192
-                    
-                    fill_response = claude_client.messages.create(
+            try:
+                # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
+                max_tokens = 4096 if "claude-3-opus-20240229" in model_name else 8192
+                
+                # Run synchronous Claude API call in thread pool to avoid blocking
+                loop = asyncio.get_event_loop()
+                fill_response = await loop.run_in_executor(
+                    None,
+                    lambda: claude_client_instance.messages.create(
                         model=model_name,
                         max_tokens=max_tokens,
                         temperature=0.2,
-                        messages=[
-                            {
-                                "role": "user",
-                                "content": fill_prompt
-                            }
-                        ]
+                        messages=[{"role": "user", "content": fill_prompt}]
                     )
+                )
+                
+                fill_content = fill_response.content[0].text.strip()
+                if '{' in fill_content and '}' in fill_content:
+                    json_start = fill_content.find('{')
+                    json_end = fill_content.rfind('}') + 1
+                    json_str = fill_content[json_start:json_end]
+                    fill_data = json.loads(json_str)
                     
-                    fill_content = fill_response.content[0].text.strip()
-                    if '{' in fill_content and '}' in fill_content:
-                        json_start = fill_content.find('{')
-                        json_end = fill_content.rfind('}') + 1
-                        json_str = fill_content[json_start:json_end]
-                        fill_data = json.loads(json_str)
-                        
-                        # Merge filled fields into product_data
-                        for field in missing_fields:
-                            if field in fill_data and fill_data[field] is not None:
-                                # Handle list fields
-                                if field in ["benefits", "claims"]:
-                                    if isinstance(fill_data[field], list) and len(fill_data[field]) > 0:
-                                        product_data[field] = fill_data[field]
-                                        print(f"✓ Filled product{product_num}.{field} with {len(fill_data[field])} items")
-                                # Handle boolean fields - never allow null
-                                elif field in ["cruelty_free", "sulphate_free", "paraben_free", "vegan", "organic", "fragrance_free", "non_comedogenic", "hypoallergenic"]:
-                                    if fill_data[field] is not None:
-                                        product_data[field] = fill_data[field]
-                                        print(f"✓ Filled product{product_num}.{field} = {fill_data[field]}")
-                                # Handle string fields
-                                else:
-                                    if fill_data[field] and fill_data[field] != "null":
-                                        product_data[field] = fill_data[field]
-                                        print(f"✓ Filled product{product_num}.{field} = {fill_data[field]}")
-                except Exception as e:
-                    print(f"Warning: Failed to fill missing fields for Product {product_num}: {e}")
+                    # Merge filled fields into product_data
+                    for field in missing_fields:
+                        if field in fill_data and fill_data[field] is not None:
+                            # Handle list fields
+                            if field in ["benefits", "claims"]:
+                                if isinstance(fill_data[field], list) and len(fill_data[field]) > 0:
+                                    product_data[field] = fill_data[field]
+                                    print(f"✓ Filled product{product_num}.{field} with {len(fill_data[field])} items")
+                            # Handle boolean fields - never allow null
+                            elif field in ["cruelty_free", "sulphate_free", "paraben_free", "vegan", "organic", "fragrance_free", "non_comedogenic", "hypoallergenic"]:
+                                if fill_data[field] is not None:
+                                    product_data[field] = fill_data[field]
+                                    print(f"✓ Filled product{product_num}.{field} = {fill_data[field]}")
+                            # Handle string fields
+                            else:
+                                if fill_data[field] and fill_data[field] != "null":
+                                    product_data[field] = fill_data[field]
+                                    print(f"✓ Filled product{product_num}.{field} = {fill_data[field]}")
+            except Exception as e:
+                print(f"Warning: Failed to fill missing fields for Product {product_num}: {e}")
+            
+            return product_data
+        
+        # Fill missing fields for all products in parallel
+        print(f"Filling missing fields for {len(final_products_data)} products in parallel...")
+        fill_tasks = [
+            fill_missing_fields_for_product(idx, product_data, processed_products[idx], claude_client, model_name)
+            for idx, product_data in enumerate(final_products_data)
+        ]
+        # Wait for all fill operations to complete
+        final_products_data = await asyncio.gather(*fill_tasks)
         
         # Final pass: Ensure no null values remain
         print("\n=== FINAL PASS: Ensuring No Null Values ===")

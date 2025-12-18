@@ -95,8 +95,65 @@ def custom_openapi():
     openapi_schema = get_openapi(
         title=app.title,
         version=app.version,
+        openapi_version="3.1.0",
         description=app.description,
         routes=app.routes,
+        terms_of_service="https://www.formulynx.in/terms",
+        contact={
+            "name": "SkinBB API Support",
+            "url": "https://www.formulynx.in/contact",
+            "email": "support@formulynx.in"
+        },
+        license_info={
+            "name": "Proprietary",
+            "url": "https://www.formulynx.in/license"
+        },
+        tags=[
+            {
+                "name": "Chatbot",
+                "description": "AI-powered skincare chatbot endpoints for querying and document retrieval"
+            },
+            {
+                "name": "INCI Analysis",
+                "description": "INCI name analysis and ingredient decoding endpoints"
+            },
+            {
+                "name": "Formulation Reports",
+                "description": "Generate comprehensive formulation reports in PDF and PPT formats"
+            },
+            {
+                "name": "Cost Calculator",
+                "description": "Calculate formulation costs and pricing"
+            },
+            {
+                "name": "Ingredient Search",
+                "description": "Search and retrieve ingredient information from databases"
+            },
+            {
+                "name": "Formula Generation",
+                "description": "AI-powered formula generation based on requirements"
+            },
+            {
+                "name": "Inspiration Boards",
+                "description": "Manage inspiration boards and product collections"
+            },
+            {
+                "name": "Face Analysis",
+                "description": "Facial analysis and skin condition assessment endpoints"
+            },
+            {
+                "name": "Authentication",
+                "description": "JWT-based authentication and user management"
+            },
+            {
+                "name": "Dashboard",
+                "description": "Dashboard statistics and analytics endpoints"
+            },
+            {
+                "name": "Make a Wish",
+                "description": "Feature request and wishlist management"
+            }
+        ]
     )
     
     # Add servers configuration
@@ -137,6 +194,12 @@ def custom_openapi():
             "bearerAuth": []
         }
     ]
+    
+    # Add external documentation
+    openapi_schema["externalDocs"] = {
+        "description": "SkinBB API Documentation",
+        "url": "https://www.formulynx.in/api-docs"
+    }
     
     app.openapi_schema = openapi_schema
     return app.openapi_schema
