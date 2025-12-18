@@ -3180,6 +3180,34 @@ async def save_compare_history(
         )
 
 
+@router.options("/compare-history")
+async def options_compare_history():
+    """Handle OPTIONS preflight request for CORS"""
+    return Response(
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Allow-Credentials": "true",
+        }
+    )
+
+
+@router.options("/compare-history/{history_id}")
+async def options_compare_history_item(history_id: str):
+    """Handle OPTIONS preflight request for CORS"""
+    return Response(
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Allow-Credentials": "true",
+        }
+    )
+
+
 @router.get("/compare-history")
 async def get_compare_history(
     search: Optional[str] = None,
