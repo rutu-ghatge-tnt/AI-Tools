@@ -89,7 +89,7 @@ def custom_openapi():
     
     # Get environment variables for server configuration
     import os
-    server_url = os.getenv("SERVER_URL", "http://localhost:8000")
+    server_url = os.getenv("SERVER_URL", "https://capi.skintruth.in")
     node_env = os.getenv("NODE_ENV", "development")
     
     openapi_schema = get_openapi(
