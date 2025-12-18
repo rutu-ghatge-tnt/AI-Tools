@@ -30,6 +30,10 @@ from app.ai_ingredient_intelligence.auth import verify_jwt_token
 from app.ai_ingredient_intelligence.logic.make_wish_generator import (
     generate_formula_from_wish
 )
+from app.ai_ingredient_intelligence.logic.make_wish_rules_engine import (
+    get_rules_engine,
+    ValidationSeverity
+)
 from app.ai_ingredient_intelligence.models.schemas import (
     MakeWishRequest,
     MakeWishResponse
@@ -113,6 +117,28 @@ async def generate_make_wish_formula(
                 status_code=400,
                 detail="Cost values must be positive"
             )
+        
+        # Validate using rules engine
+        rules_engine = get_rules_engine()
+        can_proceed, validation_results, fixed_wish_data = rules_engine.validate_wish_data(wish_data)
+        
+        if not can_proceed:
+            blocking_errors = [r for r in validation_results if r.severity == ValidationSeverity.BLOCK]
+            error_messages = [r.message for r in blocking_errors]
+            raise HTTPException(
+                status_code=400,
+                detail=f"Validation failed: {'; '.join(error_messages)}"
+            )
+        
+        # Use fixed wish data (with auto-selections applied)
+        wish_data = fixed_wish_data
+        
+        # Log validation warnings
+        warnings = [r for r in validation_results if r.severity == ValidationSeverity.WARN]
+        if warnings:
+            print(f"⚠️ Validation warnings: {len(warnings)}")
+            for warning in warnings:
+                print(f"   - {warning.message}")
         
         print(f"📝 Generating Make a Wish formula...")
         print(f"   Category: {wish_data['category']}")

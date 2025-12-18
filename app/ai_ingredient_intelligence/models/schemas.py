@@ -166,8 +166,24 @@ class GenerateFormulaResponse(BaseModel):
     compliance: FormulaCompliance
 
 
+class DecodeHistoryItemSummary(BaseModel):
+    """Summary schema for decode history item (used in list endpoints - excludes large fields)"""
+    id: Optional[str] = Field(None, description="History item ID")
+    user_id: Optional[str] = Field(None, description="User ID who created this history")
+    name: str = Field(..., description="Name for this decode")
+    tag: Optional[str] = Field(None, description="Tag for categorization")
+    input_type: str = Field(..., description="Input type: 'inci' or 'url'")
+    input_data: Optional[str] = Field(None, description="Input data preview (truncated for list view)")
+    status: str = Field(..., description="Status: 'pending' (analysis in progress), 'analyzed' (completed), or 'failed'")
+    notes: Optional[str] = Field(None, description="User notes for this decode")
+    created_at: Optional[str] = Field(None, description="Creation timestamp")
+    # Summary fields from analysis_result (if available)
+    has_analysis: bool = Field(False, description="Whether analysis_result exists")
+    has_report: bool = Field(False, description="Whether report_data exists")
+
+
 class DecodeHistoryItem(BaseModel):
-    """Schema for decode history item"""
+    """Full schema for decode history item (used in detail endpoints - includes all fields)"""
     id: Optional[str] = Field(None, description="History item ID")
     user_id: Optional[str] = Field(None, description="User ID who created this history")
     name: str = Field(..., description="Name for this decode")
@@ -225,13 +241,39 @@ class SaveDecodeHistoryRequest(BaseModel):
 
 
 class GetDecodeHistoryResponse(BaseModel):
-    """Response schema for getting decode history"""
-    items: List[DecodeHistoryItem] = Field(..., description="List of history items")
+    """Response schema for getting decode history (returns summaries only)"""
+    items: List[DecodeHistoryItemSummary] = Field(..., description="List of history item summaries")
     total: int = Field(..., description="Total number of items")
 
 
+class DecodeHistoryDetailResponse(BaseModel):
+    """Response schema for getting decode history detail (returns full data)"""
+    item: DecodeHistoryItem = Field(..., description="Full history item with all data")
+
+
+class CompareHistoryItemSummary(BaseModel):
+    """Summary schema for compare history item (used in list endpoints - excludes large fields)"""
+    id: Optional[str] = Field(None, description="History item ID")
+    user_id: Optional[str] = Field(None, description="User ID who created this history")
+    name: str = Field(..., description="Name for this comparison")
+    tag: Optional[str] = Field(None, description="Tag for categorization")
+    # Legacy fields for 2-product comparisons (backward compatibility)
+    input1: Optional[str] = Field(None, description="First input preview (truncated) - for 2-product comparisons")
+    input2: Optional[str] = Field(None, description="Second input preview (truncated) - for 2-product comparisons")
+    input1_type: Optional[str] = Field(None, description="Type of input1: 'url' or 'inci' - for 2-product comparisons")
+    input2_type: Optional[str] = Field(None, description="Type of input2: 'url' or 'inci' - for 2-product comparisons")
+    # New field for multi-product comparisons
+    products: Optional[List[Dict[str, str]]] = Field(None, description="List of products with 'input' and 'input_type' (inputs truncated) - for multi-product comparisons")
+    status: str = Field(..., description="Status: 'pending' (comparison in progress), 'analyzed' (completed), or 'failed'")
+    notes: Optional[str] = Field(None, description="User notes for this comparison")
+    created_at: Optional[str] = Field(None, description="Creation timestamp")
+    # Summary fields
+    has_comparison: bool = Field(False, description="Whether comparison_result exists")
+    product_count: Optional[int] = Field(None, description="Number of products being compared")
+
+
 class CompareHistoryItem(BaseModel):
-    """Schema for compare history item - supports both 2-product and multi-product comparisons"""
+    """Full schema for compare history item (used in detail endpoints - includes all fields)"""
     id: Optional[str] = Field(None, description="History item ID")
     user_id: Optional[str] = Field(None, description="User ID who created this history")
     name: str = Field(..., description="Name for this comparison")
@@ -261,9 +303,14 @@ class SaveCompareHistoryRequest(BaseModel):
 
 
 class GetCompareHistoryResponse(BaseModel):
-    """Response schema for getting compare history"""
-    items: List[CompareHistoryItem] = Field(..., description="List of history items")
+    """Response schema for getting compare history (returns summaries only)"""
+    items: List[CompareHistoryItemSummary] = Field(..., description="List of history item summaries")
     total: int = Field(..., description="Total number of items")
+
+
+class CompareHistoryDetailResponse(BaseModel):
+    """Response schema for getting compare history detail (returns full data)"""
+    item: CompareHistoryItem = Field(..., description="Full history item with all data")
 
 
 class MarketResearchProduct(BaseModel):
@@ -305,8 +352,24 @@ class MarketResearchResponse(BaseModel):
     ai_reasoning: Optional[str] = Field(None, description="AI reasoning for ingredient selection and matching strategy")
 
 
+class MarketResearchHistoryItemSummary(BaseModel):
+    """Summary schema for market research history item (used in list endpoints - excludes large fields)"""
+    id: Optional[str] = Field(None, description="History item ID")
+    user_id: Optional[str] = Field(None, description="User ID who created this history")
+    name: str = Field(..., description="Name for this market research")
+    tag: Optional[str] = Field(None, description="Tag for categorization")
+    input_type: str = Field(..., description="Input type: 'inci' or 'url'")
+    input_data: Optional[str] = Field(None, description="Input data preview (truncated for list view)")
+    ai_product_type: Optional[str] = Field(None, description="Product type identified by AI")
+    notes: Optional[str] = Field(None, description="User notes for this research")
+    created_at: Optional[str] = Field(None, description="Creation timestamp")
+    # Summary fields from research_result (if available)
+    has_research: bool = Field(False, description="Whether research_result exists")
+    total_products: Optional[int] = Field(None, description="Total number of products found (if available)")
+
+
 class MarketResearchHistoryItem(BaseModel):
-    """Schema for market research history item"""
+    """Full schema for market research history item (used in detail endpoints - includes all fields)"""
     id: Optional[str] = Field(None, description="History item ID")
     user_id: Optional[str] = Field(None, description="User ID who created this history")
     name: str = Field(..., description="Name for this market research")
@@ -335,9 +398,14 @@ class SaveMarketResearchHistoryRequest(BaseModel):
 
 
 class GetMarketResearchHistoryResponse(BaseModel):
-    """Response schema for getting market research history"""
-    items: List[MarketResearchHistoryItem] = Field(..., description="List of history items")
+    """Response schema for getting market research history (returns summaries only)"""
+    items: List[MarketResearchHistoryItemSummary] = Field(..., description="List of history item summaries")
     total: int = Field(..., description="Total number of items")
+
+
+class MarketResearchHistoryDetailResponse(BaseModel):
+    """Response schema for getting market research history detail (returns full data)"""
+    item: MarketResearchHistoryItem = Field(..., description="Full history item with all data")
 
 
 # ============================================================================

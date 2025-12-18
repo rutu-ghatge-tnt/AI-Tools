@@ -53,18 +53,24 @@ from app.ai_ingredient_intelligence.models.schemas import (
     CompareProductsRequest,  # ⬅️ new schema for comparison
     CompareProductsResponse,  # ⬅️ new schema for comparison
     ProductComparisonItem,  # ⬅️ new schema for comparison
-    DecodeHistoryItem,  # ⬅️ new schema for decode history
+    DecodeHistoryItem,  # ⬅️ full schema for decode history (detail endpoint)
+    DecodeHistoryItemSummary,  # ⬅️ summary schema for decode history (list endpoint)
     SaveDecodeHistoryRequest,  # ⬅️ new schema for saving history
     GetDecodeHistoryResponse,  # ⬅️ new schema for getting history
-    CompareHistoryItem,  # ⬅️ new schema for compare history
+    DecodeHistoryDetailResponse,  # ⬅️ new schema for getting history detail
+    CompareHistoryItem,  # ⬅️ full schema for compare history (detail endpoint)
+    CompareHistoryItemSummary,  # ⬅️ summary schema for compare history (list endpoint)
     SaveCompareHistoryRequest,  # ⬅️ new schema for saving compare history
     GetCompareHistoryResponse,  # ⬅️ new schema for getting compare history
+    CompareHistoryDetailResponse,  # ⬅️ new schema for getting compare history detail
     MarketResearchRequest,  # ⬅️ new schema for market research
     MarketResearchResponse,  # ⬅️ new schema for market research response
     MarketResearchProduct,  # ⬅️ new schema for market research product
-    MarketResearchHistoryItem,  # ⬅️ new schema for market research history
+    MarketResearchHistoryItem,  # ⬅️ full schema for market research history (detail endpoint)
+    MarketResearchHistoryItemSummary,  # ⬅️ summary schema for market research history (list endpoint)
     SaveMarketResearchHistoryRequest,  # ⬅️ new schema for saving market research history
     GetMarketResearchHistoryResponse,  # ⬅️ new schema for getting market research history
+    MarketResearchHistoryDetailResponse,  # ⬅️ new schema for getting market research history detail
 )
 from app.ai_ingredient_intelligence.db.mongodb import db
 from app.ai_ingredient_intelligence.db.collections import distributor_col, decode_history_col, compare_history_col, market_research_history_col, branded_ingredients_col, inci_col
@@ -2722,39 +2728,62 @@ async def get_decode_history(
         # Get total count
         total = await decode_history_col.count_documents(query)
         
-        # Fetch items
-        cursor = decode_history_col.find(query).sort("created_at", -1).skip(skip).limit(limit)
+        # Fetch items - only get summary fields (exclude large fields)
+        cursor = decode_history_col.find(
+            query,
+            {
+                "_id": 1,
+                "user_id": 1,
+                "name": 1,
+                "tag": 1,
+                "input_type": 1,
+                "input_data": 1,
+                "status": 1,
+                "notes": 1,
+                "created_at": 1,
+                "analysis_result": 1,  # Check if exists, but don't return full data
+                "report_data": 1  # Check if exists, but don't return full data
+            }
+        ).sort("created_at", -1).skip(skip).limit(limit)
         items = await cursor.to_list(length=limit)
         
-        # Convert ObjectId to string and ensure all fields are included
+        # Convert to summary format (exclude large fields)
+        summary_items = []
         for item in items:
-            item["id"] = str(item["_id"])
+            item_id = str(item["_id"])
             del item["_id"]
-            # Ensure report_data is included (might be None if not set)
-            if "report_data" not in item:
-                item["report_data"] = None
+            
             # Map status for frontend: "in_progress" -> "pending", "completed" -> "analyzed"
-            if "status" in item:
-                status_mapping = {
-                    "in_progress": "pending",
-                    "completed": "analyzed",
-                    "failed": "failed"
-                }
-                item["status"] = status_mapping.get(item["status"], item["status"])
-            else:
-                # Default to "analyzed" for backward compatibility (old records without status)
-                item["status"] = "analyzed"
-            # Ensure analysis_result is None if status is pending or failed
-            if item.get("status") in ["pending", "failed"] and "analysis_result" not in item:
-                item["analysis_result"] = None
-        
-        # Debug: print first item to verify report_data is included
-        if items:
-            first_item = items[0]
-            print(f"DEBUG: First history item - ID: {first_item.get('id')}, Has report_data: {first_item.get('report_data') is not None}, Report length: {len(first_item.get('report_data', '')) if first_item.get('report_data') else 0}")
+            status = item.get("status", "analyzed")
+            if status in ["in_progress", "pending"]:
+                status = "pending"
+            elif status == "completed":
+                status = "analyzed"
+            elif status == "failed":
+                status = "failed"
+            
+            # Truncate input_data for preview (max 100 chars)
+            input_data = item.get("input_data", "")
+            if input_data and len(input_data) > 100:
+                input_data = input_data[:100] + "..."
+            
+            summary_item = {
+                "id": item_id,
+                "user_id": item.get("user_id"),
+                "name": item.get("name", ""),
+                "tag": item.get("tag"),
+                "input_type": item.get("input_type", ""),
+                "input_data": input_data,
+                "status": status,
+                "notes": item.get("notes"),
+                "created_at": item.get("created_at"),
+                "has_analysis": item.get("analysis_result") is not None and status == "analyzed",
+                "has_report": item.get("report_data") is not None and status == "analyzed"
+            }
+            summary_items.append(summary_item)
         
         return GetDecodeHistoryResponse(
-            items=[DecodeHistoryItem(**item) for item in items],
+            items=[DecodeHistoryItemSummary(**item) for item in summary_items],
             total=total
         )
         
@@ -2765,6 +2794,87 @@ async def get_decode_history(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to fetch decode history: {str(e)}"
+        )
+
+
+@router.get("/decode-history/{history_id}/details", response_model=DecodeHistoryDetailResponse)
+async def get_decode_history_detail(
+    history_id: str,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
+    """
+    Get full details of a specific decode history item (includes all large fields)
+    
+    This endpoint returns the complete data including:
+    - Full analysis_result (large Dict)
+    - Full report_data (large HTML string)
+    - All other fields
+    
+    Use this endpoint when you need to display the full analysis or report.
+    The list endpoint (/decode-history) only returns summaries.
+    
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
+    - Only returns items belonging to the authenticated user
+    """
+    try:
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
+        
+        # Validate ObjectId
+        if not ObjectId.is_valid(history_id):
+            raise HTTPException(status_code=400, detail="Invalid history ID")
+        
+        # Fetch full item (including large fields)
+        item = await decode_history_col.find_one({
+            "_id": ObjectId(history_id),
+            "user_id": user_id
+        })
+        
+        if not item:
+            raise HTTPException(status_code=404, detail="History item not found")
+        
+        # Convert ObjectId to string
+        item["id"] = str(item["_id"])
+        del item["_id"]
+        
+        # Ensure all fields are included
+        if "report_data" not in item:
+            item["report_data"] = None
+        if "analysis_result" not in item:
+            item["analysis_result"] = None
+        
+        # Map status for frontend
+        if "status" in item:
+            status_mapping = {
+                "in_progress": "pending",
+                "completed": "analyzed",
+                "failed": "failed"
+            }
+            item["status"] = status_mapping.get(item["status"], item["status"])
+        else:
+            item["status"] = "analyzed"
+        
+        # Ensure analysis_result is None if status is pending or failed
+        if item.get("status") in ["pending", "failed"]:
+            item["analysis_result"] = None
+        
+        return DecodeHistoryDetailResponse(
+            item=DecodeHistoryItem(**item)
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error fetching decode history detail: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch decode history detail: {str(e)}"
         )
 
 
@@ -3114,31 +3224,88 @@ async def get_compare_history(
         # Get total count
         total = await compare_history_col.count_documents(query)
         
-        # Fetch items
-        cursor = compare_history_col.find(query).sort("created_at", -1).skip(skip).limit(limit)
+        # Fetch items - only get summary fields (exclude large fields)
+        cursor = compare_history_col.find(
+            query,
+            {
+                "_id": 1,
+                "user_id": 1,
+                "name": 1,
+                "tag": 1,
+                "input1": 1,
+                "input2": 1,
+                "input1_type": 1,
+                "input2_type": 1,
+                "products": 1,
+                "status": 1,
+                "notes": 1,
+                "created_at": 1,
+                "comparison_result": 1  # Check if exists, but don't return full data
+            }
+        ).sort("created_at", -1).skip(skip).limit(limit)
         items = await cursor.to_list(length=limit)
         
-        # Convert ObjectId to string and ensure all fields are included
+        # Convert to summary format (exclude large fields)
+        summary_items = []
         for item in items:
-            item["id"] = str(item["_id"])
+            item_id = str(item["_id"])
             del item["_id"]
+            
             # Map status for frontend: "in_progress" -> "pending", "completed" -> "analyzed"
-            if "status" in item:
-                status_mapping = {
-                    "in_progress": "pending",
-                    "completed": "analyzed",
-                    "failed": "failed"
-                }
-                item["status"] = status_mapping.get(item["status"], item["status"])
-            else:
-                # Default to "analyzed" for backward compatibility (old records without status)
-                item["status"] = "analyzed"
-            # Ensure comparison_result is None if status is pending or failed
-            if item.get("status") in ["pending", "failed"] and "comparison_result" not in item:
-                item["comparison_result"] = None
+            status = item.get("status", "analyzed")
+            if status == "in_progress":
+                status = "pending"
+            elif status == "completed":
+                status = "analyzed"
+            elif status == "failed":
+                status = "failed"
+            
+            # Truncate input1 and input2 for preview (max 100 chars)
+            input1 = item.get("input1")
+            if input1 and len(input1) > 100:
+                input1 = input1[:100] + "..."
+            
+            input2 = item.get("input2")
+            if input2 and len(input2) > 100:
+                input2 = input2[:100] + "..."
+            
+            # Truncate products inputs if present
+            products = item.get("products")
+            product_count = None
+            if products and isinstance(products, list):
+                product_count = len(products)
+                # Truncate each product's input
+                truncated_products = []
+                for product in products:
+                    if isinstance(product, dict):
+                        truncated_product = product.copy()
+                        if "input" in truncated_product and truncated_product["input"]:
+                            input_val = truncated_product["input"]
+                            if len(input_val) > 100:
+                                truncated_product["input"] = input_val[:100] + "..."
+                        truncated_products.append(truncated_product)
+                products = truncated_products
+            
+            summary_item = {
+                "id": item_id,
+                "user_id": item.get("user_id"),
+                "name": item.get("name", ""),
+                "tag": item.get("tag"),
+                "input1": input1,
+                "input2": input2,
+                "input1_type": item.get("input1_type"),
+                "input2_type": item.get("input2_type"),
+                "products": products,
+                "status": status,
+                "notes": item.get("notes"),
+                "created_at": item.get("created_at"),
+                "has_comparison": item.get("comparison_result") is not None and status == "analyzed",
+                "product_count": product_count
+            }
+            summary_items.append(summary_item)
         
         return GetCompareHistoryResponse(
-            items=[CompareHistoryItem(**item) for item in items],
+            items=[CompareHistoryItemSummary(**item) for item in summary_items],
             total=total
         )
         
@@ -3149,6 +3316,84 @@ async def get_compare_history(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to fetch compare history: {str(e)}"
+        )
+
+
+@router.get("/compare-history/{history_id}/details", response_model=CompareHistoryDetailResponse)
+async def get_compare_history_detail(
+    history_id: str,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
+    """
+    Get full details of a specific compare history item (includes all large fields)
+    
+    This endpoint returns the complete data including:
+    - Full comparison_result (large Dict with all comparison data)
+    - All other fields
+    
+    Use this endpoint when you need to display the full comparison results.
+    The list endpoint (/compare-history) only returns summaries.
+    
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
+    - Only returns items belonging to the authenticated user
+    """
+    try:
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
+        
+        # Validate ObjectId
+        if not ObjectId.is_valid(history_id):
+            raise HTTPException(status_code=400, detail="Invalid history ID")
+        
+        # Fetch full item (including large fields)
+        item = await compare_history_col.find_one({
+            "_id": ObjectId(history_id),
+            "user_id": user_id
+        })
+        
+        if not item:
+            raise HTTPException(status_code=404, detail="History item not found")
+        
+        # Convert ObjectId to string
+        item["id"] = str(item["_id"])
+        del item["_id"]
+        
+        # Ensure all fields are included
+        if "comparison_result" not in item:
+            item["comparison_result"] = None
+        
+        # Map status for frontend
+        if "status" in item:
+            status_mapping = {
+                "in_progress": "pending",
+                "completed": "analyzed",
+                "failed": "failed"
+            }
+            item["status"] = status_mapping.get(item["status"], item["status"])
+        else:
+            item["status"] = "analyzed"
+        
+        # Ensure comparison_result is None if status is pending or failed
+        if item.get("status") in ["pending", "failed"]:
+            item["comparison_result"] = None
+        
+        return CompareHistoryDetailResponse(
+            item=CompareHistoryItem(**item)
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error fetching compare history detail: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch compare history detail: {str(e)}"
         )
 
 
@@ -3694,15 +3939,61 @@ async def get_market_research_history(
             ]
         
         total = await market_research_history_col.count_documents(query)
-        cursor = market_research_history_col.find(query).sort("created_at", -1).skip(skip).limit(limit)
+        
+        # Fetch items - only get summary fields (exclude large fields)
+        cursor = market_research_history_col.find(
+            query,
+            {
+                "_id": 1,
+                "user_id": 1,
+                "name": 1,
+                "tag": 1,
+                "input_type": 1,
+                "input_data": 1,
+                "ai_product_type": 1,
+                "notes": 1,
+                "created_at": 1,
+                "research_result": 1  # Check if exists, but don't return full data
+            }
+        ).sort("created_at", -1).skip(skip).limit(limit)
         items = await cursor.to_list(length=limit)
         
+        # Convert to summary format (exclude large fields)
+        summary_items = []
         for item in items:
-            item["id"] = str(item["_id"])
+            item_id = str(item["_id"])
             del item["_id"]
+            
+            # Truncate input_data for preview (max 100 chars)
+            input_data = item.get("input_data", "")
+            if input_data and len(input_data) > 100:
+                input_data = input_data[:100] + "..."
+            
+            # Get total products count from research_result if available
+            total_products = None
+            research_result = item.get("research_result")
+            if research_result and isinstance(research_result, dict):
+                products = research_result.get("products", [])
+                if isinstance(products, list):
+                    total_products = len(products)
+            
+            summary_item = {
+                "id": item_id,
+                "user_id": item.get("user_id"),
+                "name": item.get("name", ""),
+                "tag": item.get("tag"),
+                "input_type": item.get("input_type", ""),
+                "input_data": input_data,
+                "ai_product_type": item.get("ai_product_type"),
+                "notes": item.get("notes"),
+                "created_at": item.get("created_at"),
+                "has_research": research_result is not None,
+                "total_products": total_products
+            }
+            summary_items.append(summary_item)
         
         return GetMarketResearchHistoryResponse(
-            items=[MarketResearchHistoryItem(**item) for item in items],
+            items=[MarketResearchHistoryItemSummary(**item) for item in summary_items],
             total=total
         )
         
@@ -3715,6 +4006,75 @@ async def get_market_research_history(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to fetch market research history: {str(e)}"
+        )
+
+
+@router.get("/market-research-history/{history_id}/details", response_model=MarketResearchHistoryDetailResponse)
+async def get_market_research_history_detail(
+    history_id: str,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
+    """
+    Get full details of a specific market research history item (includes all large fields)
+    
+    This endpoint returns the complete data including:
+    - Full research_result (large Dict with all products)
+    - All other fields
+    
+    Use this endpoint when you need to display the full research results.
+    The list endpoint (/market-research-history) only returns summaries.
+    
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
+    - Only returns items belonging to the authenticated user
+    """
+    try:
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
+        
+        # Validate ObjectId
+        if not ObjectId.is_valid(history_id):
+            raise HTTPException(status_code=400, detail="Invalid history ID")
+        
+        # Fetch full item (including large fields)
+        item = await market_research_history_col.find_one({
+            "_id": ObjectId(history_id),
+            "user_id": user_id
+        })
+        
+        if not item:
+            raise HTTPException(status_code=404, detail="History item not found")
+        
+        # Convert ObjectId to string
+        item["id"] = str(item["_id"])
+        del item["_id"]
+        
+        # Ensure all fields are included
+        if "research_result" not in item:
+            item["research_result"] = None
+        if "ai_analysis" not in item:
+            item["ai_analysis"] = None
+        if "ai_product_type" not in item:
+            item["ai_product_type"] = None
+        if "ai_reasoning" not in item:
+            item["ai_reasoning"] = None
+        
+        return MarketResearchHistoryDetailResponse(
+            item=MarketResearchHistoryItem(**item)
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error fetching market research history detail: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch market research history detail: {str(e)}"
         )
 
 

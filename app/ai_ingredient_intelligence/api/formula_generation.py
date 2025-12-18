@@ -651,17 +651,34 @@ async def get_wish_history(
         # Get total count
         total = await wish_history_col.count_documents(query)
         
-        # Get items
-        cursor = wish_history_col.find(query).sort("created_at", -1).skip(skip).limit(limit)
+        # Get items - only get summary fields (exclude large fields)
+        cursor = wish_history_col.find(
+            query,
+            {
+                "_id": 1,
+                "user_id": 1,
+                "name": 1,
+                "notes": 1,
+                "created_at": 1,
+                "wish_data": 1,  # Check if exists, but don't return full data
+                "formula_result": 1  # Check if exists, but don't return full data
+            }
+        ).sort("created_at", -1).skip(skip).limit(limit)
+        
         items = []
         async for doc in cursor:
+            # Create summary item (exclude large fields)
+            wish_data = doc.get("wish_data", {})
+            formula_result = doc.get("formula_result", {})
+            
             items.append({
                 "id": str(doc["_id"]),
+                "user_id": doc.get("user_id"),
                 "name": doc.get("name", ""),
-                "wish_data": doc.get("wish_data", {}),
-                "formula_result": doc.get("formula_result", {}),
                 "notes": doc.get("notes", ""),
-                "created_at": doc.get("created_at", "")
+                "created_at": doc.get("created_at", ""),
+                "has_wish_data": wish_data is not None and bool(wish_data),
+                "has_formula_result": formula_result is not None and bool(formula_result)
             })
         
         return {
@@ -678,6 +695,72 @@ async def get_wish_history(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get wish history: {str(e)}"
+        )
+
+
+@router.get("/wish-history/{history_id}/details")
+async def get_wish_history_detail(
+    history_id: str,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
+    """
+    Get full details of a specific wish history item (includes all large fields)
+    
+    This endpoint returns the complete data including:
+    - Full wish_data (large Dict)
+    - Full formula_result (large Dict)
+    - All other fields
+    
+    Use this endpoint when you need to display the full wish data or formula result.
+    The list endpoint (/wish-history) only returns summaries.
+    
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
+    - Only returns items belonging to the authenticated user
+    """
+    try:
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
+        if not user_id:
+            raise HTTPException(
+                status_code=400,
+                detail="User ID not found in JWT token"
+            )
+        
+        # Validate ObjectId
+        if not ObjectId.is_valid(history_id):
+            raise HTTPException(status_code=400, detail="Invalid history ID")
+        
+        # Fetch full item (including large fields)
+        doc = await wish_history_col.find_one({
+            "_id": ObjectId(history_id),
+            "user_id": user_id
+        })
+        
+        if not doc:
+            raise HTTPException(status_code=404, detail="History item not found")
+        
+        # Return full data
+        return {
+            "id": str(doc["_id"]),
+            "user_id": doc.get("user_id"),
+            "name": doc.get("name", ""),
+            "wish_data": doc.get("wish_data", {}),
+            "formula_result": doc.get("formula_result", {}),
+            "notes": doc.get("notes", ""),
+            "created_at": doc.get("created_at", "")
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error getting wish history detail: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get wish history detail: {str(e)}"
         )
 
 
