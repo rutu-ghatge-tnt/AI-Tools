@@ -681,6 +681,85 @@ async def get_wish_history(
         )
 
 
+@router.patch("/wish-history/{history_id}")
+async def update_wish_history(
+    history_id: str,
+    payload: dict,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
+    """
+    Update wish history item - all fields are optional and can be updated
+    
+    HISTORY FUNCTIONALITY:
+    - All fields can be edited to support regeneration scenarios
+    - Allows updating formula results, wish data, and other fields when regenerating
+    - Useful for saving regenerated content back to history
+    
+    Editable fields (all optional):
+    - name: Update the name of the wish history item
+    - notes: Update user notes
+    - wish_data: Update wish data (for regeneration)
+    - formula_result: Update formula result (for regeneration)
+    
+    Note: user_id and created_at are automatically preserved and should not be included in payload
+    
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
+    """
+    try:
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
+        if not user_id:
+            raise HTTPException(
+                status_code=400,
+                detail="User ID not found in JWT token"
+            )
+        
+        # Validate ObjectId
+        if not ObjectId.is_valid(history_id):
+            raise HTTPException(status_code=400, detail="Invalid history ID")
+        
+        # Build update document - allow all fields except user_id and created_at
+        update_doc = {}
+        excluded_fields = ["user_id", "created_at", "_id"]  # These should never be updated
+        
+        for key, value in payload.items():
+            if key not in excluded_fields:
+                update_doc[key] = value
+        
+        if not update_doc:
+            raise HTTPException(status_code=400, detail="No fields to update")
+        
+        # Only update if it belongs to the user
+        result = await wish_history_col.update_one(
+            {"_id": ObjectId(history_id), "user_id": user_id},
+            {"$set": update_doc}
+        )
+        
+        if result.matched_count == 0:
+            raise HTTPException(
+                status_code=404,
+                detail="History item not found or you don't have permission to update it"
+            )
+        
+        return {
+            "success": True,
+            "message": "Wish history updated successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error updating wish history: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to update wish history: {str(e)}"
+        )
+
+
 @router.delete("/wish-history/{history_id}")
 async def delete_wish_history(
     history_id: str,

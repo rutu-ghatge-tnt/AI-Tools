@@ -2788,27 +2788,25 @@ async def update_decode_history(
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
-    Update a decode history item - allows editing name, tag, and notes only
+    Update a decode history item - all fields are optional and can be updated
     
     HISTORY FUNCTIONALITY:
-    - Name, tag, and notes can be edited at any time
-    - Input data (INCI or URL) cannot be changed after creation to maintain data integrity
-    - All other fields are protected and cannot be modified
+    - All fields can be edited to support regeneration scenarios
+    - Allows updating analysis results, report data, and other fields when regenerating
+    - Useful for saving regenerated content back to history
     
-    Editable fields:
+    Editable fields (all optional):
     - name: Update the name of the decode history item
     - tag: Update or add a categorization tag
     - notes: Update user notes
+    - input_data: Update input data (for regeneration)
+    - input_type: Update input type (for regeneration)
+    - report_data: Update report data (for regeneration)
+    - status: Update status (for regeneration)
+    - analysis_result: Update analysis result (for regeneration)
+    - expected_benefits: Update expected benefits (for regeneration)
     
-    Non-editable fields:
-    - input_data: Cannot be changed (creates new history item instead)
-    - input_type: Cannot be changed
-    - report_data: Cannot be changed
-    - status: Cannot be changed
-    - analysis_result: Cannot be changed
-    - expected_benefits: Cannot be changed
-    - user_id: Cannot be changed
-    - created_at: Cannot be changed
+    Note: user_id and created_at are automatically preserved and should not be included in payload
     
     Authentication:
     - Requires JWT token in Authorization header
@@ -2824,27 +2822,16 @@ async def update_decode_history(
         if not ObjectId.is_valid(history_id):
             raise HTTPException(status_code=400, detail="Invalid history ID")
         
-        # Prevent editing input_data, input_type, and all other fields except name, tag, and notes
-        protected_fields = ["input_data", "input_type", "report_data", 
-                           "status", "analysis_result", "expected_benefits", "user_id", "created_at"]
-        attempted_protected = [field for field in protected_fields if field in payload]
-        if attempted_protected:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"The following fields cannot be edited: {', '.join(attempted_protected)}. Only 'name', 'tag', and 'notes' can be edited."
-            )
-        
-        # Build update document - only allow name, tag, and notes
+        # Build update document - allow all fields except user_id and created_at
         update_doc = {}
-        if "name" in payload:
-            update_doc["name"] = payload["name"]
-        if "tag" in payload:
-            update_doc["tag"] = payload["tag"]
-        if "notes" in payload:
-            update_doc["notes"] = payload["notes"]
+        excluded_fields = ["user_id", "created_at", "_id"]  # These should never be updated
+        
+        for key, value in payload.items():
+            if key not in excluded_fields:
+                update_doc[key] = value
         
         if not update_doc:
-            raise HTTPException(status_code=400, detail="No fields to update. Only 'name', 'tag', and 'notes' can be updated.")
+            raise HTTPException(status_code=400, detail="No fields to update")
         
         # Only update if it belongs to the user
         result = await decode_history_col.update_one(
@@ -3172,28 +3159,26 @@ async def update_compare_history(
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
-    Update a compare history item - allows editing name, tag, and notes only
+    Update a compare history item - all fields are optional and can be updated
     
     HISTORY FUNCTIONALITY:
-    - Name, tag, and notes can be edited at any time
-    - Input data (INCI or URL) cannot be changed after creation to maintain data integrity
-    - All other fields are protected and cannot be modified
+    - All fields can be edited to support regeneration scenarios
+    - Allows updating comparison results, input data, and other fields when regenerating
+    - Useful for saving regenerated content back to history
     
-    Editable fields:
+    Editable fields (all optional):
     - name: Update the name of the compare history item
     - tag: Update or add a categorization tag
     - notes: Update user notes
+    - input1: Update input1 (URL or INCI) - for 2-product comparisons (for regeneration)
+    - input2: Update input2 (URL or INCI) - for 2-product comparisons (for regeneration)
+    - input1_type: Update input1_type - for 2-product comparisons (for regeneration)
+    - input2_type: Update input2_type - for 2-product comparisons (for regeneration)
+    - products: Update products array - for multi-product comparisons (for regeneration)
+    - status: Update status (for regeneration)
+    - comparison_result: Update comparison result (for regeneration)
     
-    Non-editable fields:
-    - input1: Cannot be changed (URL or INCI) - for 2-product comparisons
-    - input2: Cannot be changed (URL or INCI) - for 2-product comparisons
-    - input1_type: Cannot be changed - for 2-product comparisons
-    - input2_type: Cannot be changed - for 2-product comparisons
-    - products: Cannot be changed (array of products) - for multi-product comparisons
-    - status: Cannot be changed
-    - comparison_result: Cannot be changed
-    - user_id: Cannot be changed
-    - created_at: Cannot be changed
+    Note: user_id and created_at are automatically preserved and should not be included in payload
     
     Authentication:
     - Requires JWT token in Authorization header
@@ -3209,27 +3194,16 @@ async def update_compare_history(
         if not ObjectId.is_valid(history_id):
             raise HTTPException(status_code=400, detail="Invalid history ID")
         
-        # Prevent editing input1, input2, input1_type, input2_type, products, and all other fields except name, tag, and notes
-        protected_fields = ["input1", "input2", "input1_type", "input2_type", "products",
-                           "status", "comparison_result", "user_id", "created_at"]
-        attempted_protected = [field for field in protected_fields if field in payload]
-        if attempted_protected:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"The following fields cannot be edited: {', '.join(attempted_protected)}. Only 'name', 'tag', and 'notes' can be edited."
-            )
-        
-        # Build update document - only allow name, tag, and notes
+        # Build update document - allow all fields except user_id and created_at
         update_doc = {}
-        if "name" in payload:
-            update_doc["name"] = payload["name"]
-        if "tag" in payload:
-            update_doc["tag"] = payload["tag"]
-        if "notes" in payload:
-            update_doc["notes"] = payload["notes"]
+        excluded_fields = ["user_id", "created_at", "_id"]  # These should never be updated
+        
+        for key, value in payload.items():
+            if key not in excluded_fields:
+                update_doc[key] = value
         
         if not update_doc:
-            raise HTTPException(status_code=400, detail="No fields to update. Only 'name', 'tag', and 'notes' can be updated.")
+            raise HTTPException(status_code=400, detail="No fields to update")
         
         # Only update if it belongs to the user
         result = await compare_history_col.update_one(
@@ -3751,27 +3725,25 @@ async def update_market_research_history(
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
-    Update market research history item - allows editing name, tag, and notes only
+    Update market research history item - all fields are optional and can be updated
     
     HISTORY FUNCTIONALITY:
-    - Name, tag, and notes can be edited at any time
-    - Input data (INCI or URL) cannot be changed after creation to maintain data integrity
-    - All other fields are protected and cannot be modified
+    - All fields can be edited to support regeneration scenarios
+    - Allows updating research results, AI analysis, and other fields when regenerating
+    - Useful for saving regenerated content back to history
     
-    Editable fields:
+    Editable fields (all optional):
     - name: Update the name of the market research history item
     - tag: Update or add a categorization tag
     - notes: Update user notes
+    - input_data: Update input data (URL or INCI) (for regeneration)
+    - input_type: Update input type (for regeneration)
+    - research_result: Update research result (for regeneration)
+    - ai_analysis: Update AI analysis (for regeneration)
+    - ai_product_type: Update AI product type (for regeneration)
+    - ai_reasoning: Update AI reasoning (for regeneration)
     
-    Non-editable fields:
-    - input_data: Cannot be changed (URL or INCI)
-    - input_type: Cannot be changed
-    - research_result: Cannot be changed
-    - ai_analysis: Cannot be changed
-    - ai_product_type: Cannot be changed
-    - ai_reasoning: Cannot be changed
-    - user_id: Cannot be changed
-    - created_at: Cannot be changed
+    Note: user_id and created_at are automatically preserved and should not be included in payload
     
     Authentication:
     - Requires JWT token in Authorization header
@@ -3787,27 +3759,20 @@ async def update_market_research_history(
         if not ObjectId.is_valid(history_id):
             raise HTTPException(status_code=400, detail="Invalid history ID")
         
-        # Prevent editing input_data, input_type, and all other fields except name, tag, and notes
-        protected_fields = ["input_data", "input_type", "research_result",
-                           "ai_analysis", "ai_product_type", "ai_reasoning", "user_id", "created_at"]
-        attempted_protected = [field for field in protected_fields if field in payload]
-        if attempted_protected:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"The following fields cannot be edited: {', '.join(attempted_protected)}. Only 'name', 'tag', and 'notes' can be edited."
-            )
-        
-        # Build update document - only allow name, tag, and notes
+        # Build update document - allow all fields except user_id and created_at
         update_data = {}
-        if "name" in payload:
-            update_data["name"] = payload["name"].strip()
-        if "tag" in payload:
-            update_data["tag"] = payload["tag"].strip() or None
-        if "notes" in payload:
-            update_data["notes"] = payload["notes"].strip() or None
+        excluded_fields = ["user_id", "created_at", "_id"]  # These should never be updated
+        
+        for key, value in payload.items():
+            if key not in excluded_fields:
+                # Handle string fields with strip if they are strings
+                if isinstance(value, str):
+                    update_data[key] = value.strip() if value.strip() else None
+                else:
+                    update_data[key] = value
         
         if not update_data:
-            raise HTTPException(status_code=400, detail="No fields to update. Only 'name', 'tag', and 'notes' can be updated.")
+            raise HTTPException(status_code=400, detail="No fields to update")
         
         result = await market_research_history_col.update_one(
             {"_id": ObjectId(history_id), "user_id": user_id},

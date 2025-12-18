@@ -275,108 +275,163 @@ async def main():
     print("\n🏷️  Categorizing ingredients (parallel processing)...")
     
     batch_size = 20  # Process 20 records in parallel
+    max_retries = 3  # Retry failed categorizations up to 3 times
     
     async with aiohttp.ClientSession() as session:
+        # Track failed records for retry
+        failed_records = []  # List of (index, record) tuples that failed
+        
+        # Calculate total uncategorized records for accurate progress
+        def get_uncategorized_indices():
+            return [i for i in range(total_records) 
+                   if data[i].get("category_decided") not in ["Active", "Excipient"]]
+        
+        uncategorized_indices = get_uncategorized_indices()
+        total_uncategorized = len(uncategorized_indices)
+        
         pbar = tqdm(
-            range(start_index, total_records, batch_size),
+            total=total_records,
             desc="Categorizing",
-            total=(total_records - start_index + batch_size - 1) // batch_size,
-            initial=start_index // batch_size,
-            unit="batch",
+            initial=categorized_count,
+            unit="records",
             ncols=100,
-            bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} batches [{elapsed}<{remaining}, {rate_fmt}]'
+            bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} records [{elapsed}<{remaining}, {rate_fmt}]'
         )
         
         credits_exhausted = False
         last_processed_index = start_index
+        retry_pass = 0
         
-        for batch_start in pbar:
-            batch_end = min(batch_start + batch_size, total_records)
-            batch = data[batch_start:batch_end]
-            last_processed_index = batch_end
+        # Main processing loop - continue until all categorized or credits exhausted
+        while retry_pass <= max_retries and not credits_exhausted:
+            if retry_pass > 0:
+                print(f"\n🔄 Retry pass {retry_pass}/{max_retries} - Processing {len(failed_records)} failed records...")
+                # Update uncategorized indices for retry (recalculate to get fresh list)
+                uncategorized_indices = [idx for idx, _ in failed_records]
+                failed_records = []  # Clear for this retry pass
+            else:
+                # First pass - get all uncategorized records
+                uncategorized_indices = get_uncategorized_indices()
             
-            # Process batch in parallel
-            tasks = []
-            task_indices = []  # Track which records need processing
+            if not uncategorized_indices:
+                break  # All records are categorized!
             
-            for idx, record in enumerate(batch):
-                # Skip if already categorized (don't count again - already counted when first categorized)
-                if record.get("category_decided") in ["Active", "Excipient"]:
-                    continue
+            # Process in batches
+            for batch_start in range(0, len(uncategorized_indices), batch_size):
+                batch_indices = uncategorized_indices[batch_start:batch_start + batch_size]
+                batch_records = [(idx, data[idx]) for idx in batch_indices]
+                last_processed_index = max(batch_indices) if batch_indices else last_processed_index
                 
-                ingredient_name = record.get("ingredient_name", "")
-                description = record.get("description", "")
+                # Process batch in parallel
+                tasks = []
+                task_data = []  # Track (index, record) for each task
                 
-                if ingredient_name:
-                    tasks.append(categorize_ingredient(session, ingredient_name, description))
-                    task_indices.append(idx)
-            
-            if not tasks:
-                # All in batch already categorized
-                pbar.set_postfix({
-                    'categorized': categorized_count,
-                    'active': active_count,
-                    'excipient': excipient_count,
-                    'rate': f"{categorized_count*100/total_records:.1f}%"
-                })
-                continue
-            
-            try:
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                
-                # Process results
-                for task_idx, result in enumerate(results):
-                    record_idx = task_indices[task_idx]
-                    record = batch[record_idx]
-                    current_index = batch_start + record_idx
-                    
-                    if isinstance(result, Exception):
+                for idx, record in batch_records:
+                    # Skip if already categorized (might have been categorized in previous pass)
+                    if record.get("category_decided") in ["Active", "Excipient"]:
                         continue
                     
-                    if result == "CREDITS_EXHAUSTED":
-                        credits_exhausted = True
-                        print(f"\n❌ CREDITS EXHAUSTED - Stopping categorization")
-                        break
-                    elif result == "INVALID_KEY":
-                        print(f"\n❌ INVALID API KEY - Stopping categorization")
-                        break
-                    elif result in ["Active", "Excipient"]:
-                        # Only count if this is a NEW categorization (not already categorized)
-                        was_already_categorized = record.get("category_decided") in ["Active", "Excipient"]
-                        record["category_decided"] = result
-                        if not was_already_categorized:
-                            categorized_count += 1
-                            if result == "Active":
-                                active_count += 1
-                            else:
-                                excipient_count += 1
-                
-                pbar.set_postfix({
-                    'categorized': categorized_count,
-                    'active': active_count,
-                    'excipient': excipient_count,
-                    'rate': f"{categorized_count*100/total_records:.1f}%"
-                })
-                
-                # Save checkpoint every 5 batches (100 records)
-                if (batch_start // batch_size) % 5 == 0:
-                    save_checkpoint({
-                        "last_processed_index": batch_end,
-                        "categorized_count": categorized_count,
-                        "active_count": active_count,
-                        "excipient_count": excipient_count,
-                        "credits_exhausted": credits_exhausted
-                    })
-                    pbar.set_description(f"Categorizing (saved @ {batch_end})")
-                
-                if credits_exhausted:
-                    break
+                    ingredient_name = record.get("ingredient_name", "")
+                    description = record.get("description", "")
                     
-            except Exception as e:
-                print(f"\n⚠️  Error processing batch {batch_start}: {e}")
-                continue
+                    if ingredient_name:
+                        tasks.append(categorize_ingredient(session, ingredient_name, description))
+                        task_data.append((idx, record))
+                
+                if not tasks:
+                    # All in batch already categorized
+                    pbar.set_postfix({
+                        'categorized': categorized_count,
+                        'active': active_count,
+                        'excipient': excipient_count,
+                        'failed': len(failed_records),
+                        'rate': f"{categorized_count*100/total_records:.1f}%"
+                    })
+                    continue
+                
+                try:
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    
+                    # Process results
+                    for task_idx, result in enumerate(results):
+                        record_idx, record = task_data[task_idx]
+                        
+                        if isinstance(result, Exception):
+                            # Track failed record for retry
+                            failed_records.append((record_idx, record))
+                            continue
+                        
+                        if result == "CREDITS_EXHAUSTED":
+                            credits_exhausted = True
+                            print(f"\n❌ CREDITS EXHAUSTED - Stopping categorization")
+                            break
+                        elif result == "INVALID_KEY":
+                            print(f"\n❌ INVALID API KEY - Stopping categorization")
+                            credits_exhausted = True
+                            break
+                        elif result in ["Active", "Excipient"]:
+                            # Only count if this is a NEW categorization
+                            was_already_categorized = record.get("category_decided") in ["Active", "Excipient"]
+                            record["category_decided"] = result
+                            if not was_already_categorized:
+                                categorized_count += 1
+                                if result == "Active":
+                                    active_count += 1
+                                else:
+                                    excipient_count += 1
+                                pbar.update(1)  # Update progress for each successful categorization
+                        else:
+                            # result is None - API call failed, track for retry
+                            failed_records.append((record_idx, record))
+                    
+                    pbar.set_postfix({
+                        'categorized': categorized_count,
+                        'active': active_count,
+                        'excipient': excipient_count,
+                        'failed': len(failed_records),
+                        'rate': f"{categorized_count*100/total_records:.1f}%"
+                    })
+                    
+                    # Save checkpoint every 100 categorizations
+                    if categorized_count % 100 == 0:
+                        save_checkpoint({
+                            "last_processed_index": last_processed_index,
+                            "categorized_count": categorized_count,
+                            "active_count": active_count,
+                            "excipient_count": excipient_count,
+                            "credits_exhausted": credits_exhausted
+                        })
+                        pbar.set_description(f"Categorizing (saved @ {categorized_count})")
+                    
+                    if credits_exhausted:
+                        break
+                        
+                except Exception as e:
+                    print(f"\n⚠️  Error processing batch: {e}")
+                    # Add all records in batch to failed list for retry
+                    for idx, record in batch_records:
+                        if record.get("category_decided") not in ["Active", "Excipient"]:
+                            failed_records.append((idx, record))
+                    continue
+            
+            # Check if we're done (recalculate to account for newly categorized records)
+            remaining_uncategorized = get_uncategorized_indices()
+            if not remaining_uncategorized:
+                break  # All records categorized!
+            
+            # If we have failed records and haven't exceeded max retries, prepare for retry
+            if failed_records and retry_pass < max_retries:
+                retry_pass += 1
+            else:
+                break  # No more retries or no failed records
         
         pbar.close()
+        
+        # Final check for failed records
+        final_failed = get_uncategorized_indices()
+        if final_failed and not credits_exhausted:
+            print(f"\n⚠️  {len(final_failed)} records remain uncategorized after {retry_pass} pass(es)")
+            print(f"   These may have failed API calls or missing ingredient names")
         
         if credits_exhausted:
             save_checkpoint({
