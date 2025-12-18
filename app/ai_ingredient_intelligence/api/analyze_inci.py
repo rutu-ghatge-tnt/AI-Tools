@@ -617,6 +617,7 @@ async def analyze_inci(
     - Saves with "in_progress" status before analysis
     - Updates with "completed" status and analysis_result after analysis
     - Saving errors don't fail the analysis (graceful degradation)
+    - If history_id is provided, updates existing history item instead of creating new one
     
     Request body:
     {
@@ -624,7 +625,8 @@ async def analyze_inci(
         "name": "Product Name" (optional, for auto-saving),
         "tag": "optional-tag" (optional),
         "notes": "User notes" (optional),
-        "expected_benefits": "Expected benefits" (optional)
+        "expected_benefits": "Expected benefits" (optional),
+        "history_id": "existing_history_id" (optional, if frontend already created history item)
     }
     
     Authentication:
@@ -642,9 +644,33 @@ async def analyze_inci(
     expected_benefits = payload.get("expected_benefits")
     input_data = payload.get("input_data")  # Optional: explicit input data, otherwise will use parsed ingredients
     
-    # 🔹 Auto-save: Save initial state with "in_progress" status if user_id provided
+    # 🔹 Check if history_id is provided (frontend may have already created a history item)
+    provided_history_id = payload.get("history_id")
+    if provided_history_id:
+        # Validate the provided history_id
+        try:
+            if ObjectId.is_valid(provided_history_id):
+                # Verify the history item exists and belongs to the user
+                existing_history = await decode_history_col.find_one({
+                    "_id": ObjectId(provided_history_id),
+                    "user_id": user_id_value
+                })
+                if existing_history:
+                    history_id = provided_history_id
+                    print(f"[AUTO-SAVE] Using existing history_id: {history_id}")
+                else:
+                    print(f"[AUTO-SAVE] Warning: Provided history_id {provided_history_id} not found or doesn't belong to user, creating new one")
+                    provided_history_id = None  # Reset to None so we create a new one
+            else:
+                print(f"[AUTO-SAVE] Warning: Invalid history_id format: {provided_history_id}, creating new one")
+                provided_history_id = None
+        except Exception as e:
+            print(f"[AUTO-SAVE] Warning: Error validating history_id: {e}, creating new one")
+            provided_history_id = None
+    
+    # 🔹 Auto-save: Save initial state with "in_progress" status if user_id provided and no existing history_id
     # Auto-save always happens if user_id is provided (name is optional, will use default if not provided)
-    if user_id_value:
+    if user_id_value and not history_id:
         try:
             # Parse INCI names first to get input_data
             if "inci_names" not in payload:
@@ -654,26 +680,45 @@ async def analyze_inci(
             ingredients_preview = parse_inci_string(inci_input)
             input_data_value = input_data or (", ".join(ingredients_preview) if ingredients_preview else str(inci_input))
             
-            # Use provided name or generate default name from ingredients
-            display_name = name if name else (ingredients_preview[0] + "..." if ingredients_preview else "Untitled Analysis")
-            if not display_name or len(display_name) > 100:
-                display_name = ingredients_preview[0] + "..." if ingredients_preview and len(ingredients_preview) > 0 else "Untitled Analysis"
-            
-            # Save initial state
-            history_doc = {
+            # 🔹 BUG FIX: Check if a history item with the same input_data already exists for this user
+            # This prevents creating duplicate history items when the same analysis is run multiple times
+            existing_history_item = await decode_history_col.find_one({
                 "user_id": user_id_value,
-                "name": display_name,
-                "tag": tag,
                 "input_type": "inci",
-                "input_data": input_data_value,
-                "status": "in_progress",
-                "notes": notes,
-                "expected_benefits": expected_benefits,
-                "created_at": (datetime.now(timezone(timedelta(hours=5, minutes=30)))).isoformat()
-            }
-            result = await decode_history_col.insert_one(history_doc)
-            history_id = str(result.inserted_id)
-            print(f"[AUTO-SAVE] Saved initial state with history_id: {history_id}")
+                "input_data": input_data_value
+            }, sort=[("created_at", -1)])  # Get the most recent one
+            
+            if existing_history_item:
+                history_id = str(existing_history_item["_id"])
+                print(f"[AUTO-SAVE] Found existing history item with same input_data, reusing history_id: {history_id}")
+                # Update the existing item's status to "in_progress" if it was completed/failed
+                if existing_history_item.get("status") in ["completed", "failed"]:
+                    await decode_history_col.update_one(
+                        {"_id": existing_history_item["_id"]},
+                        {"$set": {"status": "in_progress"}}
+                    )
+                    print(f"[AUTO-SAVE] Reset existing history item {history_id} status to 'in_progress'")
+            else:
+                # Use provided name or generate default name from ingredients
+                display_name = name if name else (ingredients_preview[0] + "..." if ingredients_preview else "Untitled Analysis")
+                if not display_name or len(display_name) > 100:
+                    display_name = ingredients_preview[0] + "..." if ingredients_preview and len(ingredients_preview) > 0 else "Untitled Analysis"
+                
+                # Save initial state
+                history_doc = {
+                    "user_id": user_id_value,
+                    "name": display_name,
+                    "tag": tag,
+                    "input_type": "inci",
+                    "input_data": input_data_value,
+                    "status": "in_progress",
+                    "notes": notes,
+                    "expected_benefits": expected_benefits,
+                    "created_at": (datetime.now(timezone(timedelta(hours=5, minutes=30)))).isoformat()
+                }
+                result = await decode_history_col.insert_one(history_doc)
+                history_id = str(result.inserted_id)
+                print(f"[AUTO-SAVE] Saved initial state with history_id: {history_id}")
         except Exception as e:
             print(f"[AUTO-SAVE] Warning: Failed to save initial state: {e}")
             # Continue with analysis even if saving fails
@@ -817,6 +862,7 @@ async def analyze_url(
     - Saves with "in_progress" status before analysis
     - Updates with "completed" status and analysis_result after analysis
     - Saving errors don't fail the analysis (graceful degradation)
+    - If history_id is provided, updates existing history item instead of creating new one
     
     Request body:
     {
@@ -824,7 +870,8 @@ async def analyze_url(
         "name": "Product Name" (optional, for auto-saving),
         "tag": "optional-tag" (optional),
         "notes": "User notes" (optional),
-        "expected_benefits": "Expected benefits" (optional)
+        "expected_benefits": "Expected benefits" (optional),
+        "history_id": "existing_history_id" (optional, if frontend already created history item)
     }
     
     Authentication:
@@ -848,6 +895,30 @@ async def analyze_url(
     notes = payload.get("notes", "")
     expected_benefits = payload.get("expected_benefits")
     
+    # 🔹 Check if history_id is provided (frontend may have already created a history item)
+    provided_history_id = payload.get("history_id")
+    if provided_history_id:
+        # Validate the provided history_id
+        try:
+            if ObjectId.is_valid(provided_history_id):
+                # Verify the history item exists and belongs to the user
+                existing_history = await decode_history_col.find_one({
+                    "_id": ObjectId(provided_history_id),
+                    "user_id": user_id_value
+                })
+                if existing_history:
+                    history_id = provided_history_id
+                    print(f"[AUTO-SAVE] Using existing history_id: {history_id}")
+                else:
+                    print(f"[AUTO-SAVE] Warning: Provided history_id {provided_history_id} not found or doesn't belong to user, creating new one")
+                    provided_history_id = None  # Reset to None so we create a new one
+            else:
+                print(f"[AUTO-SAVE] Warning: Invalid history_id format: {provided_history_id}, creating new one")
+                provided_history_id = None
+        except Exception as e:
+            print(f"[AUTO-SAVE] Warning: Error validating history_id: {e}, creating new one")
+            provided_history_id = None
+    
     try:
         # Validate payload
         if "url" not in payload:
@@ -861,29 +932,48 @@ async def analyze_url(
         if not url.startswith(("http://", "https://")):
             raise HTTPException(status_code=400, detail="Invalid URL format. Must start with http:// or https://")
         
-        # 🔹 Auto-save: Save initial state with "in_progress" status if user_id provided
+        # 🔹 Auto-save: Save initial state with "in_progress" status if user_id provided and no existing history_id
         # Auto-save always happens if user_id is provided (name is optional, will use default if not provided)
-        if user_id_value:
+        if user_id_value and not history_id:
             try:
-                # Use provided name or generate default name from URL
-                display_name = name if name else (url.split('/')[-1] if url else "Untitled Analysis")
-                if not display_name or len(display_name) > 100:
-                    display_name = "Untitled Analysis"
-                
-                history_doc = {
+                # 🔹 BUG FIX: Check if a history item with the same input_data (URL) already exists for this user
+                # This prevents creating duplicate history items when the same analysis is run multiple times
+                existing_history_item = await decode_history_col.find_one({
                     "user_id": user_id_value,
-                    "name": display_name,
-                    "tag": tag,
                     "input_type": "url",
-                    "input_data": url,
-                    "status": "in_progress",
-                    "notes": notes,
-                    "expected_benefits": expected_benefits,
-                    "created_at": (datetime.now(timezone(timedelta(hours=5, minutes=30)))).isoformat()
-                }
-                result = await decode_history_col.insert_one(history_doc)
-                history_id = str(result.inserted_id)
-                print(f"[AUTO-SAVE] Saved initial state with history_id: {history_id}")
+                    "input_data": url
+                }, sort=[("created_at", -1)])  # Get the most recent one
+                
+                if existing_history_item:
+                    history_id = str(existing_history_item["_id"])
+                    print(f"[AUTO-SAVE] Found existing history item with same URL, reusing history_id: {history_id}")
+                    # Update the existing item's status to "in_progress" if it was completed/failed
+                    if existing_history_item.get("status") in ["completed", "failed"]:
+                        await decode_history_col.update_one(
+                            {"_id": existing_history_item["_id"]},
+                            {"$set": {"status": "in_progress"}}
+                        )
+                        print(f"[AUTO-SAVE] Reset existing history item {history_id} status to 'in_progress'")
+                else:
+                    # Use provided name or generate default name from URL
+                    display_name = name if name else (url.split('/')[-1] if url else "Untitled Analysis")
+                    if not display_name or len(display_name) > 100:
+                        display_name = "Untitled Analysis"
+                    
+                    history_doc = {
+                        "user_id": user_id_value,
+                        "name": display_name,
+                        "tag": tag,
+                        "input_type": "url",
+                        "input_data": url,
+                        "status": "in_progress",
+                        "notes": notes,
+                        "expected_benefits": expected_benefits,
+                        "created_at": (datetime.now(timezone(timedelta(hours=5, minutes=30)))).isoformat()
+                    }
+                    result = await decode_history_col.insert_one(history_doc)
+                    history_id = str(result.inserted_id)
+                    print(f"[AUTO-SAVE] Saved initial state with history_id: {history_id}")
             except Exception as e:
                 print(f"[AUTO-SAVE] Warning: Failed to save initial state: {e}")
                 # Continue with analysis even if saving fails

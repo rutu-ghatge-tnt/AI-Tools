@@ -204,11 +204,11 @@ class ReportSection(BaseModel):
 class FormulationSummary(BaseModel):
     """Summary fields for formulation report"""
     formulation_type: Optional[str] = Field(None, description="Overall formulation type (e.g., Water-based Serum)")
-    key_active_ingredients: List[str] = Field(default_factory=list, description="List of key active ingredients")
-    primary_benefits: List[str] = Field(default_factory=list, description="List of primary benefits")
+    key_active_ingredients: Optional[str] = Field(None, description="Comma-separated list of key active ingredients")
+    primary_benefits: Optional[str] = Field(None, description="Comma-separated list of primary benefits")
     recommended_ph_range: Optional[str] = Field(None, description="Recommended pH range (e.g., 5.0-6.5)")
     compliance_status: Optional[str] = Field(None, description="Overall compliance status (e.g., Compliant, Review Needed)")
-    critical_concerns: List[str] = Field(default_factory=list, description="List of critical concerns or warnings")
+    critical_concerns: Optional[str] = Field(None, description="Comma-separated list of critical concerns or warnings")
 
 class FormulationReportResponse(BaseModel):
     """Response schema for formulation report as JSON"""

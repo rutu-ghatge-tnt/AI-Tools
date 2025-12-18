@@ -130,3 +130,4 @@ class APIKeyAuth:
         """Verify API key - same as verify_api_key function."""
         return verify_api_key(api_key)
 
+

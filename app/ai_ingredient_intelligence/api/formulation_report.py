@@ -337,11 +337,11 @@ def parse_report_to_json(report_text: str) -> FormulationReportResponse:
     
     summary_data = {
         "formulation_type": None,
-        "key_active_ingredients": [],
-        "primary_benefits": [],
+        "key_active_ingredients": None,
+        "primary_benefits": None,
         "recommended_ph_range": None,
         "compliance_status": None,
-        "critical_concerns": []
+        "critical_concerns": None
     }
     inci_list = []
     analysis_table = []
@@ -387,13 +387,11 @@ def parse_report_to_json(report_text: str) -> FormulationReportResponse:
                         if 'formulation type' in field_name or 'formulation' in field_name and 'type' in field_name:
                             summary_data["formulation_type"] = field_value
                         elif 'key active' in field_name or ('active' in field_name and 'ingredient' in field_name):
-                            # Split comma-separated values
-                            ingredients = [ing.strip() for ing in field_value.split(',') if ing.strip()]
-                            summary_data["key_active_ingredients"] = ingredients
+                            # Store as string (comma-separated)
+                            summary_data["key_active_ingredients"] = field_value
                         elif 'primary benefit' in field_name or ('benefit' in field_name and 'primary' in field_name):
-                            # Split comma-separated values
-                            benefits = [ben.strip() for ben in field_value.split(',') if ben.strip()]
-                            summary_data["primary_benefits"] = benefits
+                            # Store as string (comma-separated)
+                            summary_data["primary_benefits"] = field_value
                         elif 'recommended ph' in field_name or 'ph range' in field_name or ('ph' in field_name and 'range' in field_name):
                             # Extract just the pH range value (e.g., "5.0-6.5")
                             import re
@@ -405,12 +403,11 @@ def parse_report_to_json(report_text: str) -> FormulationReportResponse:
                         elif 'compliance status' in field_name or ('compliance' in field_name and 'status' in field_name):
                             summary_data["compliance_status"] = field_value
                         elif 'critical concern' in field_name or ('concern' in field_name and 'critical' in field_name):
-                            # Split comma-separated values or handle "None"
+                            # Store as string (comma-separated) or handle "None"
                             if field_value.lower() in ['none', 'no concerns', 'no critical concerns', 'n/a', 'na']:
-                                summary_data["critical_concerns"] = []
+                                summary_data["critical_concerns"] = "None"
                             else:
-                                concerns = [concern.strip() for concern in field_value.split(',') if concern.strip()]
-                                summary_data["critical_concerns"] = concerns
+                                summary_data["critical_concerns"] = field_value
                 i += 1
             continue
         elif line.startswith('1) Submitted INCI List'):
