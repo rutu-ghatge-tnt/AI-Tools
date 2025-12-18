@@ -308,6 +308,205 @@ async def test_openai_connection(session: aiohttp.ClientSession) -> bool:
         print(f"\n⚠️  WARNING: Could not test OpenAI connection: {e}")
         return False
 
+async def process_batch_with_openai(
+    session: aiohttp.ClientSession,
+    batch_records: List[Dict[str, Any]]
+) -> List[Optional[Dict[str, Any]]]:
+    """Process a batch of ingredients in a single API call to reduce costs"""
+    
+    if not OPENAI_API_KEY or not batch_records:
+        return [None] * len(batch_records)
+    
+    # Build batch prompt
+    ingredients_data = []
+    for record in batch_records:
+        ingredient_name = record.get("ingredient_name", "")
+        description = record.get("description", "")
+        existing_inci = record.get("inci_names", [])
+        characteristics = record.get("extra_data", {}).get("characteristics", {})
+        product_family = [
+            cat[0] if isinstance(cat, list) and len(cat) > 0 else str(cat)
+            for cat in record.get("functionality_category_tree", [])
+        ]
+        existing_compliance = record.get("extra_data", {}).get("compliance", [])
+        existing_applications = record.get("extra_data", {}).get("applications", [])
+        existing_properties = record.get("extra_data", {}).get("properties", [])
+        
+        ingredients_data.append({
+            "ingredient_name": str(ingredient_name or 'Unknown').strip(),
+            "description": str(description or 'No description available').strip(),
+            "existing_inci": existing_inci,
+            "product_family": product_family,
+            "existing_compliance": existing_compliance,
+            "existing_applications": existing_applications,
+        })
+    
+    # Build combined prompt for batch processing
+    prompt_parts = [
+        "You are a cosmetic ingredient expert. Analyze these ACTIVE ingredients and provide responses in EXACT JSON format.",
+        "",
+        "For each ingredient, provide a JSON object with these exact fields:",
+        "{",
+        '    "category": "Active",',
+        '    "description": "Enhanced description (~100 words for Active ingredients)",',
+        '    "inci_names": ["INCI Name 1", "INCI Name 2", ...],',
+        '    "functional_categories": ["Category 1", "Category 2", ...],',
+        '    "compliance": ["Compliance 1", "Compliance 2", ...],',
+        '    "applications": ["Application 1", "Application 2", ...],',
+        '    "properties": [',
+        '        {"properties": "Property Name", "value_unit": "Value Unit", "test_condition": "", "test_method": ""},',
+        '        ...',
+        '    ]',
+        "}",
+        "",
+        "INGREDIENTS TO PROCESS:",
+    ]
+    
+    for idx, ing_data in enumerate(ingredients_data, 1):
+        prompt_parts.append(f"\n--- INGREDIENT {idx} ---")
+        prompt_parts.append(f"INGREDIENT NAME: {ing_data['ingredient_name']}")
+        prompt_parts.append(f"DESCRIPTION: {ing_data['description']}")
+        prompt_parts.append(f"EXISTING INCI NAMES: {' | '.join(ing_data['existing_inci']) if ing_data['existing_inci'] else 'None'}")
+        prompt_parts.append(f"EXISTING PRODUCT FAMILY: {' | '.join(ing_data['product_family']) if ing_data['product_family'] else 'None'}")
+        prompt_parts.append(f"EXISTING COMPLIANCE: {' | '.join(ing_data['existing_compliance']) if ing_data['existing_compliance'] else 'None'}")
+        prompt_parts.append(f"EXISTING APPLICATIONS: {' | '.join(ing_data['existing_applications']) if ing_data['existing_applications'] else 'None'}")
+    
+    prompt_parts.extend([
+        "",
+        "Provide a JSON array with one object per ingredient in the same order:",
+        "[",
+        "  {ingredient 1 data},",
+        "  {ingredient 2 data},",
+        "  ...",
+        "]",
+        "",
+        "RULES:",
+        "1. DESCRIPTION: Enhance the description to ~100 words for Active ingredients. Keep it informative and professional.",
+        "2. INCI NAMES: Extract all INCI names. Use existing ones and add any additional found. Return empty array [] if none found.",
+        "3. FUNCTIONAL CATEGORIES: Extract from description and product family. Return empty array [] if none found.",
+        "4. COMPLIANCE: Extract compliance info (COSMOS, REACH, Vegan, Organic, etc.). Return empty array [] if none found.",
+        "5. APPLICATIONS: Extract applications (skin care, hair care, etc.). Return empty array [] if none found.",
+        "6. PROPERTIES: Extract physical/chemical properties (pH, viscosity, etc.). Return empty array [] if none found.",
+        "",
+        "IMPORTANT:",
+        "- Output ONLY valid JSON array, no other text, no markdown, no explanations",
+        "- Ensure JSON is properly formatted with double quotes",
+        "- Return empty arrays if no data can be extracted for a field",
+        "- Array must have exactly " + str(len(ingredients_data)) + " objects, one per ingredient"
+    ])
+    
+    prompt = "\n".join(prompt_parts)
+    
+    # Model priority (cheaper models first to reduce costs)
+    models_to_try = [
+        {"name": "gpt-5-mini", "max_tokens": 2000, "endpoint": "chat", "rpm": 500, "tpm": 200000},
+        {"name": "gpt-5-mini-2025-08-07", "max_tokens": 2000, "endpoint": "chat", "rpm": 500, "tpm": 200000},
+        {"name": "gpt-5", "max_tokens": 2000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
+        {"name": "gpt-5-chat-latest", "max_tokens": 2000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
+        {"name": "gpt-4.1", "max_tokens": 2000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
+        {"name": "chatgpt-4o-latest", "max_tokens": 2000, "endpoint": "chat", "rpm": 200, "tpm": 500000},
+        {"name": "gpt-4o-2024-11-20", "max_tokens": 2000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
+        {"name": "gpt-3.5-turbo", "max_tokens": 2000, "endpoint": "chat", "rpm": 500, "tpm": 200000},
+    ]
+    
+    for model_config in models_to_try:
+        model_name = model_config["name"]
+        max_tokens = model_config["max_tokens"]
+        endpoint = model_config["endpoint"]
+        rpm_limit = model_config["rpm"]
+        
+        await rate_limiter.wait_if_needed(model_name, rpm_limit)
+        await asyncio.sleep(0.5)  # Reduced delay for batch processing
+        
+        try:
+            if endpoint == "chat":
+                payload = {
+                    "model": model_name,
+                    "messages": [{"role": "user", "content": prompt}]
+                }
+                if model_name.startswith("gpt-5"):
+                    payload["max_completion_tokens"] = max_tokens
+                else:
+                    payload["max_tokens"] = max_tokens
+            else:
+                payload = {
+                    "model": model_name,
+                    "prompt": prompt,
+                    "max_tokens": max_tokens,
+                    "temperature": 0.3,
+                    "top_p": 0.9
+                }
+            
+            api_url = "https://api.openai.com/v1/chat/completions" if endpoint == "chat" else "https://api.openai.com/v1/completions"
+            
+            async with session.post(
+                api_url,
+                headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=120)  # Longer timeout for batch
+            ) as response:
+                
+                if response.status == 200:
+                    data = await response.json()
+                    
+                    if not data or "choices" not in data:
+                        continue
+                    
+                    if endpoint == "chat":
+                        content = data["choices"][0]["message"]["content"].strip()
+                    else:
+                        content = data["choices"][0]["text"].strip()
+                    
+                    # Try to extract JSON array from response
+                    # Look for array pattern
+                    json_array_match = re.search(r'\[[\s\S]*\]', content)
+                    if json_array_match:
+                        try:
+                            results_array = json.loads(json_array_match.group())
+                            if isinstance(results_array, list) and len(results_array) == len(batch_records):
+                                return results_array
+                        except json.JSONDecodeError:
+                            pass
+                    
+                    # Try parsing whole content as array
+                    try:
+                        results_array = json.loads(content)
+                        if isinstance(results_array, list) and len(results_array) == len(batch_records):
+                            return results_array
+                    except json.JSONDecodeError:
+                        pass
+                    
+                    # Fallback: try to extract individual JSON objects
+                    json_objects = re.findall(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', content, re.DOTALL)
+                    if len(json_objects) == len(batch_records):
+                        try:
+                            results_array = [json.loads(obj) for obj in json_objects]
+                            return results_array
+                        except json.JSONDecodeError:
+                            pass
+                    
+                    continue
+                
+                elif response.status == 429:
+                    error_data = await response.json()
+                    error_msg = error_data.get("error", {}).get("message", "")
+                    if "insufficient_quota" in error_msg.lower() or "billing" in error_msg.lower():
+                        # Credits exhausted - return error for all items
+                        return [{"error": "insufficient_quota", "message": error_msg}] * len(batch_records)
+                    continue
+                elif response.status == 401:
+                    # Invalid API key - return error for all items
+                    return [{"error": "invalid_key"}] * len(batch_records)
+                else:
+                    continue
+                    
+        except Exception as e:
+            continue
+    
+    # Return None for all items if all models failed
+    return [None] * len(batch_records)
+
+
 async def fill_missing_values_with_openai(
     session: aiohttp.ClientSession,
     ingredient_name: str,
@@ -319,175 +518,22 @@ async def fill_missing_values_with_openai(
     existing_applications: List[str],
     existing_properties: List[Dict[str, Any]]
 ) -> Optional[Dict[str, Any]]:
-    """Call OpenAI to fill missing INCI names and other missing values"""
-    
-    if not OPENAI_API_KEY:
-        return None
-    
-    clean_ingredient = str(ingredient_name or 'Unknown').strip()
-    clean_description = str(description or 'No description available').strip()
-    existing_inci_str = " | ".join(existing_inci) if existing_inci else "None"
-    characteristics_str = json.dumps(characteristics, indent=2) if characteristics else "None"
-    product_family_str = " | ".join(product_family) if product_family else "None"
-    existing_compliance_str = " | ".join(existing_compliance) if existing_compliance else "None"
-    existing_applications_str = " | ".join(existing_applications) if existing_applications else "None"
-    
-    prompt = f"""You are a cosmetic ingredient expert. Analyze this ingredient and extract missing information in EXACT JSON format.
-
-INGREDIENT NAME: {clean_ingredient}
-DESCRIPTION: {clean_description}
-EXISTING INCI NAMES: {existing_inci_str}
-CHARACTERISTICS: {characteristics_str}
-PRODUCT FAMILY: {product_family_str}
-EXISTING COMPLIANCE: {existing_compliance_str}
-EXISTING APPLICATIONS: {existing_applications_str}
-
-Provide a JSON response with these exact fields:
-{{
-    "inci_names": ["INCI Name 1", "INCI Name 2", ...],
-    "functional_categories": ["Category 1", "Category 2", ...],
-    "compliance": ["Compliance 1", "Compliance 2", ...],
-    "applications": ["Application 1", "Application 2", ...],
-    "properties": [
-        {{"properties": "Property Name", "value_unit": "Value Unit", "test_condition": "", "test_method": ""}},
-        ...
-    ],
-    "missing_data_filled": true
-}}
-
-RULES:
-1. INCI NAMES: Extract all INCI (International Nomenclature of Cosmetic Ingredients) names from the ingredient name and description
-   - If existing INCI names are provided, use them and add any additional ones found
-   - If no INCI names exist, extract them from the ingredient name and description
-   - Return as array of strings in proper INCI format (e.g., "HYALURONIC ACID", "SODIUM HYALURONATE")
-   - If ingredient name itself is an INCI name, include it
-   - Extract from description if mentioned (e.g., "contains X and Y" → extract X and Y as INCI)
-
-2. FUNCTIONAL CATEGORIES: Extract functional categories from description and product family
-   - Use existing product_family if provided
-   - Extract additional categories from description (e.g., "moisturizing", "antioxidant", "emollient")
-   - Return as array of category names
-   - If no categories found, return empty array []
-
-3. COMPLIANCE: Extract compliance and certification information from description and characteristics
-   - Look for mentions of: COSMOS, REACH, Vegan, Organic, GMO-free, FDA, EU regulations, etc.
-   - If existing compliance is provided, use it and add any additional ones found
-   - Return as array of compliance strings (e.g., ["COSMOS", "Vegan", "REACH"])
-   - If no compliance found, return empty array []
-
-4. APPLICATIONS: Extract product applications from description
-   - Look for mentions of: skin care, hair care, body care, facial care, sun care, baby care, etc.
-   - If existing applications are provided, use them and add any additional ones found
-   - Return as array of application strings (e.g., ["Skin Care", "Hair Care"])
-   - If no applications found, return empty array []
-
-5. PROPERTIES: Extract physical/chemical properties from description and characteristics
-   - Look for: pH, viscosity, density, solubility, appearance, color, molecular weight, etc.
-   - Return as array of objects with structure: {{"properties": "Property Name", "value_unit": "Value Unit", "test_condition": "", "test_method": ""}}
-   - Extract values from description if mentioned (e.g., "pH 4-6" → {{"properties": "pH", "value_unit": "4 - 6"}})
-   - If no properties found, return empty array []
-
-IMPORTANT: 
-- Output ONLY valid JSON, no other text, no markdown, no explanations
-- Ensure JSON is properly formatted with double quotes
-- Return empty arrays if no data can be extracted for a field
-- If you cannot extract any data, return: {{"inci_names": [], "functional_categories": [], "compliance": [], "applications": [], "properties": [], "missing_data_filled": false}}"""
-
-    # Model priority (GPT-5 first per user preference)
-    models_to_try = [
-        {"name": "gpt-5", "max_tokens": 4000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
-        {"name": "gpt-5-chat-latest", "max_tokens": 4000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
-        {"name": "gpt-5-mini", "max_tokens": 4000, "endpoint": "chat", "rpm": 500, "tpm": 200000},
-        {"name": "gpt-5-mini-2025-08-07", "max_tokens": 4000, "endpoint": "chat", "rpm": 500, "tpm": 200000},
-        {"name": "gpt-4.1", "max_tokens": 4000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
-        {"name": "chatgpt-4o-latest", "max_tokens": 4000, "endpoint": "chat", "rpm": 200, "tpm": 500000},
-        {"name": "gpt-4o-2024-11-20", "max_tokens": 4000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
-        {"name": "gpt-3.5-turbo", "max_tokens": 4000, "endpoint": "chat", "rpm": 500, "tpm": 200000},
-    ]
-    
-    for model_config in models_to_try:
-        model_name = model_config["name"]
-        max_tokens = model_config["max_tokens"]
-        endpoint = model_config["endpoint"]
-        rpm_limit = model_config["rpm"]
-        
-        await rate_limiter.wait_if_needed(model_name, rpm_limit)
-        await asyncio.sleep(1)
-        
-        try:
-            if endpoint == "chat":
-                payload = {
-                    "model": model_name,
-                    "messages": [{"role": "user", "content": prompt}]
-                }
-                if model_name.startswith("gpt-5"):
-                    payload["max_completion_tokens"] = max_tokens
-                else:
-                    payload["max_tokens"] = max_tokens
-            else:
-                payload = {
-                    "model": model_name,
-                    "prompt": prompt,
-                    "max_tokens": max_tokens,
-                    "temperature": 0.3,
-                    "top_p": 0.9
-                }
-            
-            api_url = "https://api.openai.com/v1/chat/completions" if endpoint == "chat" else "https://api.openai.com/v1/completions"
-            
-            async with session.post(
-                api_url,
-                headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=60)
-            ) as response:
-                
-                if response.status == 200:
-                    data = await response.json()
-                    
-                    if not data or "choices" not in data:
-                        continue
-                    
-                    if endpoint == "chat":
-                        content = data["choices"][0]["message"]["content"].strip()
-                    else:
-                        content = data["choices"][0]["text"].strip()
-                    
-                    # Try to extract JSON from response
-                    json_match = re.search(r'\{[^{}]*\}', content, re.DOTALL)
-                    if json_match:
-                        try:
-                            result = json.loads(json_match.group())
-                            if "inci_names" in result:
-                                return result
-                        except json.JSONDecodeError:
-                            pass
-                    
-                    # If direct JSON parse fails, try to parse the whole content
-                    try:
-                        result = json.loads(content)
-                        if "inci_names" in result:
-                            return result
-                    except json.JSONDecodeError:
-                        continue
-                
-                elif response.status == 429:
-                    error_data = await response.json()
-                    error_msg = error_data.get("error", {}).get("message", "")
-                    if "insufficient_quota" in error_msg.lower() or "billing" in error_msg.lower():
-                        # Credits exhausted - don't try other models
-                        return {"error": "insufficient_quota", "message": error_msg}
-                    continue
-                elif response.status == 401:
-                    # Invalid API key - don't try other models
-                    return {"error": "invalid_key"}
-                else:
-                    continue
-                    
-        except Exception as e:
-            continue
-    
-    return None
+    """Legacy function - kept for backward compatibility. Use process_batch_with_openai instead."""
+    # This function is deprecated but kept for compatibility
+    # The new batch processing function should be used instead
+    batch_result = await process_batch_with_openai(session, [{
+        "ingredient_name": ingredient_name,
+        "description": description,
+        "inci_names": existing_inci,
+        "functionality_category_tree": [[cat] for cat in product_family],
+        "extra_data": {
+            "characteristics": characteristics,
+            "compliance": existing_compliance,
+            "applications": existing_applications,
+            "properties": existing_properties
+        }
+    }])
+    return batch_result[0] if batch_result and batch_result[0] else None
 
 
 async def enhance_description_with_openai(
@@ -495,140 +541,51 @@ async def enhance_description_with_openai(
     ingredient_name: str,
     description: str
 ) -> Optional[Dict[str, Any]]:
-    """Call OpenAI to enhance description and determine category"""
-    
-    if not OPENAI_API_KEY:
-        return None
-    
-    clean_ingredient = str(ingredient_name or 'Unknown').strip()
-    clean_description = str(description or 'No description available').strip()
-    
-    prompt = f"""You are a cosmetic ingredient expert. Analyze this ingredient and provide a response in EXACT JSON format.
-
-INGREDIENT: {clean_ingredient}
-DESCRIPTION: {clean_description}
-
-Provide a JSON response with these exact fields:
-{{
-    "category": "Active" or "Excipient",
-    "description": "Enhanced description (~100 words for Active, ~50 for Excipient)"
-}}
-
-IMPORTANT: 
-- Output ONLY valid JSON, no other text, no markdown, no explanations
-- Use "Active" for functional ingredients (vitamins, peptides, acids, etc.)
-- Use "Excipient" for non-functional ingredients (thickeners, preservatives, etc.)
-- Keep descriptions concise but informative
-- Ensure JSON is properly formatted with double quotes
-- If you cannot analyze the ingredient, return: {{"category": "Unknown", "description": "Unable to analyze this ingredient"}}"""
-
-    # Model priority (GPT-5 first per user preference)
-    models_to_try = [
-        {"name": "gpt-5", "max_tokens": 4000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
-        {"name": "gpt-5-chat-latest", "max_tokens": 4000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
-        {"name": "gpt-5-mini", "max_tokens": 4000, "endpoint": "chat", "rpm": 500, "tpm": 200000},
-        {"name": "gpt-5-mini-2025-08-07", "max_tokens": 4000, "endpoint": "chat", "rpm": 500, "tpm": 200000},
-        {"name": "gpt-4.1", "max_tokens": 4000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
-        {"name": "chatgpt-4o-latest", "max_tokens": 4000, "endpoint": "chat", "rpm": 200, "tpm": 500000},
-        {"name": "gpt-4o-2024-11-20", "max_tokens": 4000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
-        {"name": "gpt-3.5-turbo", "max_tokens": 4000, "endpoint": "chat", "rpm": 500, "tpm": 200000},
-    ]
-    
-    for model_config in models_to_try:
-        model_name = model_config["name"]
-        max_tokens = model_config["max_tokens"]
-        endpoint = model_config["endpoint"]
-        rpm_limit = model_config["rpm"]
-        
-        await rate_limiter.wait_if_needed(model_name, rpm_limit)
-        await asyncio.sleep(1)  # Small delay between requests
-        
-        try:
-            if endpoint == "chat":
-                payload = {
-                    "model": model_name,
-                    "messages": [{"role": "user", "content": prompt}]
-                }
-                if model_name.startswith("gpt-5"):
-                    payload["max_completion_tokens"] = max_tokens
-                else:
-                    payload["max_tokens"] = max_tokens
-            else:
-                payload = {
-                    "model": model_name,
-                    "prompt": prompt,
-                    "max_tokens": max_tokens,
-                    "temperature": 0.3,
-                    "top_p": 0.9
-                }
-            
-            api_url = "https://api.openai.com/v1/chat/completions" if endpoint == "chat" else "https://api.openai.com/v1/completions"
-            
-            async with session.post(
-                api_url,
-                headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=60)
-            ) as response:
-                
-                if response.status == 200:
-                    data = await response.json()
-                    
-                    if not data or "choices" not in data:
-                        continue
-                    
-                    if endpoint == "chat":
-                        content = data["choices"][0]["message"]["content"].strip()
-                    else:
-                        content = data["choices"][0]["text"].strip()
-                    
-                    # Try to extract JSON from response
-                    json_match = re.search(r'\{[^{}]*\}', content, re.DOTALL)
-                    if json_match:
-                        try:
-                            result = json.loads(json_match.group())
-                            if "category" in result and "description" in result:
-                                return result
-                        except json.JSONDecodeError:
-                            pass
-                    
-                    # If direct JSON parse fails, try to parse the whole content
-                    try:
-                        result = json.loads(content)
-                        if "category" in result and "description" in result:
-                            return result
-                    except json.JSONDecodeError:
-                        continue
-                
-                elif response.status == 429:
-                    error_data = await response.json()
-                    error_msg = error_data.get("error", {}).get("message", "")
-                    if "insufficient_quota" in error_msg.lower() or "billing" in error_msg.lower():
-                        # Credits exhausted - don't try other models
-                        return {"error": "insufficient_quota", "message": error_msg}
-                    continue  # Try next model
-                elif response.status == 401:
-                    # Invalid API key - don't try other models
-                    return {"error": "invalid_key"}
-                else:
-                    continue  # Try next model
-                    
-        except Exception as e:
-            continue  # Try next model
-    
-    return None
+    """Legacy function - kept for backward compatibility. Use process_batch_with_openai instead."""
+    # This function is deprecated but kept for compatibility
+    # The new batch processing function should be used instead
+    batch_result = await process_batch_with_openai(session, [{
+        "ingredient_name": ingredient_name,
+        "description": description,
+        "inci_names": [],
+        "functionality_category_tree": [],
+        "extra_data": {
+            "characteristics": {},
+            "compliance": [],
+            "applications": [],
+            "properties": []
+        }
+    }])
+    return batch_result[0] if batch_result and batch_result[0] else None
 
 
-async def process_ingredient_with_enhancement(
-    session: aiohttp.ClientSession,
-    cleaned_record: Dict[str, Any]
-) -> Dict[str, Any]:
-    """Process ingredient: fill missing values and enhance description"""
-    
-    ingredient_name = cleaned_record.get("ingredient_name", "")
-    description = cleaned_record.get("description", "")
+def needs_enhancement(cleaned_record: Dict[str, Any]) -> bool:
+    """Check if record needs enhancement (missing data or description)"""
     existing_inci = cleaned_record.get("inci_names", [])
-    characteristics = cleaned_record.get("extra_data", {}).get("characteristics", {})
+    product_family = cleaned_record.get("functionality_category_tree", [])
+    existing_compliance = cleaned_record.get("extra_data", {}).get("compliance", [])
+    existing_applications = cleaned_record.get("extra_data", {}).get("applications", [])
+    existing_properties = cleaned_record.get("extra_data", {}).get("properties", [])
+    has_enhanced_description = bool(cleaned_record.get("enhanced_description"))
+    
+    # Skip if already has enhanced description and all data is filled
+    if has_enhanced_description and existing_inci and product_family:
+        return False
+    
+    # Need enhancement if missing description or missing critical data
+    needs_inci_fill = not existing_inci or not cleaned_record.get("original_inci_name", "").strip()
+    needs_category_fill = not product_family
+    needs_description = not has_enhanced_description
+    
+    return needs_inci_fill or needs_category_fill or needs_description
+
+
+def apply_batch_result_to_record(cleaned_record: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
+    """Apply batch processing result to a single record"""
+    if not result or result.get("error"):
+        return cleaned_record
+    
+    existing_inci = cleaned_record.get("inci_names", [])
     product_family = [
         cat[0] if isinstance(cat, list) and len(cat) > 0 else str(cat)
         for cat in cleaned_record.get("functionality_category_tree", [])
@@ -637,109 +594,109 @@ async def process_ingredient_with_enhancement(
     existing_applications = cleaned_record.get("extra_data", {}).get("applications", [])
     existing_properties = cleaned_record.get("extra_data", {}).get("properties", [])
     
-    # Fill missing values if OpenAI is available
-    # Note: use global OPENAI_API_KEY here, not local variable
-    global OPENAI_API_KEY
-    if OPENAI_API_KEY and ingredient_name:
-        try:
-            # Check if we need to fill any missing data
-            needs_inci_fill = not existing_inci or not cleaned_record.get("original_inci_name", "").strip()
-            needs_category_fill = not product_family
-            needs_compliance_fill = not existing_compliance
-            needs_applications_fill = not existing_applications
-            needs_properties_fill = not existing_properties
-            
-            if needs_inci_fill or needs_category_fill or needs_compliance_fill or needs_applications_fill or needs_properties_fill:
-                fill_result = await fill_missing_values_with_openai(
-                    session,
-                    ingredient_name,
-                    description,
-                    existing_inci,
-                    characteristics,
-                    product_family,
-                    existing_compliance,
-                    existing_applications,
-                    existing_properties
-                )
-                
-                # Check for credits exhausted error
-                if fill_result and fill_result.get("error") == "insufficient_quota":
-                    # Return error to stop processing
-                    return {"error": "insufficient_quota", "message": fill_result.get("message", "")}
-                
-                if fill_result and fill_result.get("missing_data_filled"):
-                    # Merge extracted INCI names (normalize unicode)
-                    extracted_inci = fill_result.get("inci_names", [])
-                    if extracted_inci:
-                        # Normalize and combine
-                        normalized_extracted = [normalize_unicode_text(name) for name in extracted_inci]
-                        combined_inci = list(set(existing_inci + normalized_extracted))
-                        cleaned_record["inci_names"] = combined_inci
-                        
-                        # Update original_inci_name if it was missing
-                        if not cleaned_record.get("original_inci_name", "").strip():
-                            cleaned_record["original_inci_name"] = " | ".join(combined_inci)
-                    
-                    # Merge extracted functional categories (normalize unicode)
-                    extracted_categories = fill_result.get("functional_categories", [])
-                    if extracted_categories:
-                        normalized_categories = [normalize_unicode_text(cat) for cat in extracted_categories]
-                        combined_categories = list(set(product_family + normalized_categories))
-                        # Convert to tree format
-                        cleaned_record["functionality_category_tree"] = [[cat] for cat in combined_categories]
-                    
-                    # Merge extracted compliance (normalize unicode)
-                    extracted_compliance = fill_result.get("compliance", [])
-                    if extracted_compliance:
-                        normalized_compliance = [normalize_unicode_text(comp) for comp in extracted_compliance]
-                        combined_compliance = list(set(existing_compliance + normalized_compliance))
-                        cleaned_record["extra_data"]["compliance"] = combined_compliance
-                    
-                    # Merge extracted applications (normalize unicode)
-                    extracted_applications = fill_result.get("applications", [])
-                    if extracted_applications:
-                        normalized_apps = [normalize_unicode_text(app) for app in extracted_applications]
-                        combined_applications = list(set(existing_applications + normalized_apps))
-                        cleaned_record["extra_data"]["applications"] = combined_applications
-                    
-                    # Merge extracted properties (normalize unicode in text fields)
-                    extracted_properties = fill_result.get("properties", [])
-                    if extracted_properties:
-                        # Normalize unicode in property objects
-                        normalized_props = []
-                        for prop in extracted_properties:
-                            normalized_prop = {}
-                            for k, v in prop.items():
-                                normalized_prop[k] = normalize_unicode_text(v) if isinstance(v, str) else v
-                            normalized_props.append(normalized_prop)
-                        
-                        # Combine properties, avoiding duplicates based on property name
-                        existing_prop_names = {prop.get("properties", "") for prop in existing_properties}
-                        new_properties = [
-                            prop for prop in normalized_props
-                            if prop.get("properties", "") not in existing_prop_names
-                        ]
-                        cleaned_record["extra_data"]["properties"] = existing_properties + new_properties
-        except Exception as e:
-            print(f"⚠️  Error filling missing values for {ingredient_name}: {e}")
+    # Update enhanced description
+    if "description" in result:
+        cleaned_record["enhanced_description"] = normalize_unicode_text(result["description"])
     
-    # Enhance description if OpenAI is available
-    if OPENAI_API_KEY and ingredient_name and description:
-        try:
-            result = await enhance_description_with_openai(
-                session,
-                ingredient_name,
-                description
-            )
-            
-            if result and "category" in result and "description" in result:
-                cleaned_record["category_decided"] = result["category"]
-                # Normalize unicode in enhanced description
-                cleaned_record["enhanced_description"] = normalize_unicode_text(result["description"])
-        except Exception as e:
-            print(f"⚠️  Error enhancing description for {ingredient_name}: {e}")
+    # Update category
+    if "category" in result:
+        cleaned_record["category_decided"] = result["category"]
+    
+    # Merge INCI names
+    extracted_inci = result.get("inci_names", [])
+    if extracted_inci:
+        normalized_extracted = [normalize_unicode_text(name) for name in extracted_inci]
+        combined_inci = list(set(existing_inci + normalized_extracted))
+        cleaned_record["inci_names"] = combined_inci
+        if not cleaned_record.get("original_inci_name", "").strip():
+            cleaned_record["original_inci_name"] = " | ".join(combined_inci)
+    
+    # Merge functional categories
+    extracted_categories = result.get("functional_categories", [])
+    if extracted_categories:
+        normalized_categories = [normalize_unicode_text(cat) for cat in extracted_categories]
+        combined_categories = list(set(product_family + normalized_categories))
+        cleaned_record["functionality_category_tree"] = [[cat] for cat in combined_categories]
+    
+    # Merge compliance
+    extracted_compliance = result.get("compliance", [])
+    if extracted_compliance:
+        normalized_compliance = [normalize_unicode_text(comp) for comp in extracted_compliance]
+        combined_compliance = list(set(existing_compliance + normalized_compliance))
+        cleaned_record["extra_data"]["compliance"] = combined_compliance
+    
+    # Merge applications
+    extracted_applications = result.get("applications", [])
+    if extracted_applications:
+        normalized_apps = [normalize_unicode_text(app) for app in extracted_applications]
+        combined_applications = list(set(existing_applications + normalized_apps))
+        cleaned_record["extra_data"]["applications"] = combined_applications
+    
+    # Merge properties
+    extracted_properties = result.get("properties", [])
+    if extracted_properties:
+        normalized_props = []
+        for prop in extracted_properties:
+            normalized_prop = {}
+            for k, v in prop.items():
+                normalized_prop[k] = normalize_unicode_text(v) if isinstance(v, str) else v
+            normalized_props.append(normalized_prop)
+        
+        existing_prop_names = {prop.get("properties", "") for prop in existing_properties}
+        new_properties = [
+            prop for prop in normalized_props
+            if prop.get("properties", "") not in existing_prop_names
+        ]
+        cleaned_record["extra_data"]["properties"] = existing_properties + new_properties
     
     return cleaned_record
+
+
+async def process_batch_of_ingredients(
+    session: aiohttp.ClientSession,
+    batch_records: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Process a batch of ingredients using optimized batch API call"""
+    global OPENAI_API_KEY
+    
+    if not OPENAI_API_KEY:
+        return batch_records
+    
+    # Filter records that need enhancement (maintain indices)
+    records_to_process = []
+    indices_to_process = []
+    for idx, r in enumerate(batch_records):
+        if needs_enhancement(r):
+            records_to_process.append(r)
+            indices_to_process.append(idx)
+    
+    if not records_to_process:
+        return batch_records
+    
+    # Process batch
+    try:
+        batch_results = await process_batch_with_openai(session, records_to_process)
+        
+        # Check for credits exhausted
+        if batch_results and batch_results[0] and isinstance(batch_results[0], dict) and batch_results[0].get("error") == "insufficient_quota":
+            # Return error indicator for first record, others unchanged
+            error_result = batch_records.copy()
+            if error_result:
+                error_result[0] = {"error": "insufficient_quota", "message": batch_results[0].get("message", "")}
+            return error_result
+        
+        # Apply results to records and maintain original order
+        final_results = batch_records.copy()
+        for idx, result in zip(indices_to_process, batch_results):
+            if result and isinstance(result, dict) and not result.get("error"):
+                final_results[idx] = apply_batch_result_to_record(batch_records[idx], result)
+            # If result is None or error, keep original record
+        
+        return final_results
+        
+    except Exception as e:
+        print(f"⚠️  Error processing batch: {e}")
+        return batch_records
 
 
 def validate_record(record: Dict[str, Any]) -> bool:
@@ -912,6 +869,13 @@ async def main():
             if uncategorized:
                 print(f"   ⚠️  Uncategorized: {len(uncategorized)} (will be SKIPPED)")
             print(f"   💰 Cost savings: Only processing {len(active_records)}/{len(cleaned_data)} records ({len(active_records)*100/len(cleaned_data):.1f}%)")
+            print(f"\n⚡ OPTIMIZATION ENABLED:")
+            print(f"   📦 Batch processing: 8 ingredients per API call (reduces API calls by ~87%)")
+            print(f"   🔄 Combined operations: Fill missing values + enhance description in one call")
+            print(f"   💵 Cheaper models first: gpt-5-mini prioritized (lower cost)")
+            print(f"   📉 Reduced tokens: 2000 max tokens (down from 4000)")
+            print(f"   ⏭️  Smart skipping: Records with complete data are skipped")
+            print(f"   💰 Estimated cost reduction: ~85-90% compared to original approach")
             
             enhanced_count = checkpoint.get("enhanced_count", 0)
             filled_inci_count = checkpoint.get("filled_inci_count", 0)
@@ -960,14 +924,16 @@ async def main():
                 print(f"   💡 Run categorize_ingredients.py first to categorize ingredients")
                 use_openai = False
             else:
-                batch_size = 50
-                total_batches = (len(active_data) - enhancement_start + batch_size - 1) // batch_size
+                # OPTIMIZED: Use batch processing with 8 ingredients per API call to reduce costs
+                api_batch_size = 8  # Process 8 ingredients in one API call
+                processing_batch_size = 50  # Process 50 records at a time for checkpointing
+                total_batches = (len(active_data) - enhancement_start + processing_batch_size - 1) // processing_batch_size
                 
                 async with aiohttp.ClientSession() as session:
                     pbar = tqdm(
-                        range(enhancement_start, len(active_data), batch_size),
-                        desc="🤖 Enhancing (Actives Only)",
-                        initial=enhancement_start // batch_size,
+                        range(enhancement_start, len(active_data), processing_batch_size),
+                        desc="🤖 Enhancing (Batched, Actives Only)",
+                        initial=enhancement_start // processing_batch_size,
                         total=total_batches,
                         unit="batch",
                         ncols=100,
@@ -975,77 +941,36 @@ async def main():
                     )
                     
                     for i in pbar:
-                        batch = active_data[i:i + batch_size]
-                        tasks = [
-                            process_ingredient_with_enhancement(session, record)
-                            for record in batch
-                        ]
+                        processing_batch = active_data[i:i + processing_batch_size]
                         
                         try:
-                            results = await asyncio.gather(*tasks, return_exceptions=True)
-                            
+                            # Process in smaller API batches (8 ingredients per API call)
+                            all_results = []
                             credits_exhausted_detected = False
-                            for j, result in enumerate(results):
-                                if isinstance(result, Exception):
-                                    failed_count += 1
-                                    continue
+                            
+                            for api_batch_start in range(0, len(processing_batch), api_batch_size):
+                                api_batch = processing_batch[api_batch_start:api_batch_start + api_batch_size]
                                 
-                                # Check for credits exhausted error
-                                if isinstance(result, dict) and result.get("error") == "insufficient_quota":
+                                # Process batch using optimized batch API call
+                                batch_results = await process_batch_of_ingredients(session, api_batch)
+                                
+                                # Check for credits exhausted
+                                if batch_results and isinstance(batch_results[0], dict) and batch_results[0].get("error") == "insufficient_quota":
                                     credits_exhausted_detected = True
                                     print(f"\n❌ CREDITS EXHAUSTED detected!")
-                                    print(f"   Message: {result.get('message', 'Insufficient quota')}")
+                                    print(f"   Message: {batch_results[0].get('message', 'Insufficient quota')}")
                                     print(f"   ⏭️  Stopping enhancement - will continue with cleaning only")
                                     break
                                 
-                                # Track what was filled/enhanced
-                                original_inci_count = len(batch[j].get("inci_names", []))
-                                new_inci_count = len(result.get("inci_names", []))
-                                if new_inci_count > original_inci_count:
-                                    filled_inci_count += 1
-                                
-                                original_cat_count = len(batch[j].get("functionality_category_tree", []))
-                                new_cat_count = len(result.get("functionality_category_tree", []))
-                                if new_cat_count > original_cat_count:
-                                    filled_category_count += 1
-                                
-                                # Track compliance, applications, properties
-                                original_compliance = len(batch[j].get("extra_data", {}).get("compliance", []))
-                                new_compliance = len(result.get("extra_data", {}).get("compliance", []))
-                                if new_compliance > original_compliance:
-                                    filled_compliance_count += 1
-                                
-                                original_apps = len(batch[j].get("extra_data", {}).get("applications", []))
-                                new_apps = len(result.get("extra_data", {}).get("applications", []))
-                                if new_apps > original_apps:
-                                    filled_applications_count += 1
-                                
-                                original_props = len(batch[j].get("extra_data", {}).get("properties", []))
-                                new_props = len(result.get("extra_data", {}).get("properties", []))
-                                if new_props > original_props:
-                                    filled_properties_count += 1
-                                
-                                if result.get("enhanced_description"):
-                                    enhanced_count += 1
-                                else:
-                                    failed_count += 1
-                                
-                                # Update the original record in cleaned_data using the index mapping
-                                batch_record = batch[j]
-                                # Find the index in cleaned_data
-                                for idx, orig_record in enumerate(cleaned_data):
-                                    if id(orig_record) == id(batch_record):
-                                        cleaned_data[idx] = result
-                                        break
+                                all_results.extend(batch_results)
                             
-                            # Stop if credits exhausted
                             if credits_exhausted_detected:
                                 save_checkpoint({
                                     "last_processed_index": total_records,
                                     "total_records": total_records,
                                     "cleaned_data": cleaned_data,
                                     "skipped_count": skipped_count,
-                                    "enhancement_start_index": i + batch_size,
+                                    "enhancement_start_index": i + processing_batch_size,
                                     "enhanced_count": enhanced_count,
                                     "filled_inci_count": filled_inci_count,
                                     "filled_category_count": filled_category_count,
@@ -1058,8 +983,52 @@ async def main():
                                 })
                                 break
                             
+                            # Track what was filled/enhanced
+                            for j, (original_record, result) in enumerate(zip(processing_batch, all_results)):
+                                if isinstance(result, Exception):
+                                    failed_count += 1
+                                    continue
+                                
+                                # Track what was filled/enhanced
+                                original_inci_count = len(original_record.get("inci_names", []))
+                                new_inci_count = len(result.get("inci_names", []))
+                                if new_inci_count > original_inci_count:
+                                    filled_inci_count += 1
+                                
+                                original_cat_count = len(original_record.get("functionality_category_tree", []))
+                                new_cat_count = len(result.get("functionality_category_tree", []))
+                                if new_cat_count > original_cat_count:
+                                    filled_category_count += 1
+                                
+                                # Track compliance, applications, properties
+                                original_compliance = len(original_record.get("extra_data", {}).get("compliance", []))
+                                new_compliance = len(result.get("extra_data", {}).get("compliance", []))
+                                if new_compliance > original_compliance:
+                                    filled_compliance_count += 1
+                                
+                                original_apps = len(original_record.get("extra_data", {}).get("applications", []))
+                                new_apps = len(result.get("extra_data", {}).get("applications", []))
+                                if new_apps > original_apps:
+                                    filled_applications_count += 1
+                                
+                                original_props = len(original_record.get("extra_data", {}).get("properties", []))
+                                new_props = len(result.get("extra_data", {}).get("properties", []))
+                                if new_props > original_props:
+                                    filled_properties_count += 1
+                                
+                                if result.get("enhanced_description"):
+                                    enhanced_count += 1
+                                else:
+                                    failed_count += 1
+                                
+                                # Update the original record in cleaned_data
+                                for idx, orig_record in enumerate(cleaned_data):
+                                    if id(orig_record) == id(original_record):
+                                        cleaned_data[idx] = result
+                                        break
+                            
                             # Update progress bar with detailed stats
-                            active_processed = i + batch_size
+                            active_processed = i + processing_batch_size
                             pbar.set_postfix({
                                 'enhanced': enhanced_count,
                                 'inci': filled_inci_count,
@@ -1072,24 +1041,22 @@ async def main():
                             })
                             
                             # Print sample of what was enhanced every 10 batches
-                            if (i // batch_size) % 10 == 0 and enhanced_count > 0:
+                            if (i // processing_batch_size) % 10 == 0 and enhanced_count > 0:
                                 # Find a recently enhanced record to show
-                                for j in range(min(batch_size, len(results))):
-                                    if j < len(results) and not isinstance(results[j], Exception):
-                                        result = results[j]
-                                        if result.get("enhanced_description"):
-                                            name = result.get("ingredient_name", "Unknown")[:40]
-                                            category = result.get("category_decided", "N/A")
-                                            print(f"\n   ✅ Enhanced: {name} → Category: {category}")
-                                            break
+                                for result in all_results[:5]:
+                                    if isinstance(result, dict) and result.get("enhanced_description"):
+                                        name = result.get("ingredient_name", "Unknown")[:40]
+                                        category = result.get("category_decided", "N/A")
+                                        print(f"\n   ✅ Enhanced: {name} → Category: {category}")
+                                        break
                             
-                            # Save checkpoint after each batch
+                            # Save checkpoint after each processing batch
                             save_checkpoint({
                                 "last_processed_index": total_records,
                                 "total_records": total_records,
                                 "cleaned_data": cleaned_data,
                                 "skipped_count": skipped_count,
-                                "enhancement_start_index": i + batch_size,
+                                "enhancement_start_index": i + processing_batch_size,
                                 "enhanced_count": enhanced_count,
                                 "filled_inci_count": filled_inci_count,
                                 "filled_category_count": filled_category_count,
@@ -1099,10 +1066,10 @@ async def main():
                                 "failed_count": failed_count,
                                 "skipped_excipients": skipped_excipients
                             })
-                            pbar.set_description(f"🤖 Enhancing Actives (saved @ {i + batch_size})")
+                            pbar.set_description(f"🤖 Enhancing Actives (saved @ {i + processing_batch_size})")
                         except Exception as e:
-                            print(f"\n⚠️  Error processing batch {i//batch_size + 1}: {e}")
-                            failed_count += len(batch)
+                            print(f"\n⚠️  Error processing batch {i//processing_batch_size + 1}: {e}")
+                            failed_count += len(processing_batch)
                             pbar.set_postfix({'error': 'yes', 'failed': failed_count})
                     
                     pbar.close()
