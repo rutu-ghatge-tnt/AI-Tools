@@ -1,6 +1,7 @@
 """
 Pydantic schemas for Inspiration Boards API
 """
+from __future__ import annotations
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 from datetime import datetime
@@ -104,7 +105,7 @@ class BoardListResponse(BaseModel):
 
 class BoardDetailResponse(BoardResponse):
     """Board detail with product summaries (excludes large decoded_data)"""
-    products: List[ProductSummary] = Field(default_factory=list, description="Product summaries (use /products/{product_id} for full data)")
+    products: List["ProductSummary"] = Field(default_factory=list, description="Product summaries (use /products/{product_id} for full data)")
     stats: Optional[Dict[str, Any]] = None
 
 
