@@ -103,8 +103,8 @@ class BoardListResponse(BaseModel):
 
 
 class BoardDetailResponse(BoardResponse):
-    """Board detail with products"""
-    products: List[Any] = Field(default_factory=list)  # Will be ProductResponse
+    """Board detail with product summaries (excludes large decoded_data)"""
+    products: List[ProductSummary] = Field(default_factory=list, description="Product summaries (use /products/{product_id} for full data)")
     stats: Optional[Dict[str, Any]] = None
 
 
@@ -143,8 +143,41 @@ class UpdateProductRequest(BaseModel):
     my_rating: Optional[int] = Field(None, ge=1, le=5)
 
 
+class ProductSummary(BaseModel):
+    """Product summary (used in board detail - excludes large decoded_data)"""
+    product_id: str
+    board_id: str
+    user_id: str
+    name: str
+    brand: str
+    url: Optional[str]
+    platform: str
+    image: str
+    price: float
+    size: float
+    unit: str
+    price_per_ml: float
+    category: Optional[str]
+    rating: Optional[float]
+    reviews: Optional[int]
+    date_added: datetime
+    notes: Optional[str]
+    tags: List[str]
+    my_rating: Optional[int]
+    decoded: bool
+    created_at: datetime
+    updated_at: datetime
+    # Summary fields from decoded_data (if available)
+    has_decoded_data: bool = Field(False, description="Whether decoded_data exists")
+    hero_ingredients_preview: Optional[List[str]] = Field(None, description="First 3 hero ingredients if decoded")
+    estimated_cost: Optional[float] = Field(None, description="Estimated cost if decoded")
+
+    class Config:
+        from_attributes = True
+
+
 class ProductResponse(BaseModel):
-    """Product response model"""
+    """Full product response model (includes all decoded_data)"""
     product_id: str
     board_id: str
     user_id: str

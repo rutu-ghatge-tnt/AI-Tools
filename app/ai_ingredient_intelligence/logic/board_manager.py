@@ -104,7 +104,7 @@ async def get_board_detail(user_id: str, board_id: str) -> Optional[Dict[str, An
     print(f"DEBUG: Found {product_count_before} products in database for this board")
     
     async for product_doc in products_cursor:
-        product = await _format_product(product_doc)
+        product = await _format_product_summary(product_doc)
         products.append(product)
     
     print(f"DEBUG: Formatted {len(products)} products for response")
@@ -206,8 +206,51 @@ async def delete_board(user_id: str, board_id: str) -> Dict[str, Any]:
     }
 
 
+async def _format_product_summary(product_doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Format product document as summary (excludes large decoded_data)"""
+    decoded_data = product_doc.get("decoded_data") if product_doc.get("decoded") else None
+    has_decoded_data = decoded_data is not None
+    
+    # Extract summary fields from decoded_data if available
+    hero_ingredients_preview = None
+    estimated_cost = None
+    if decoded_data and isinstance(decoded_data, dict):
+        hero_ingredients = decoded_data.get("hero_ingredients", [])
+        if hero_ingredients and isinstance(hero_ingredients, list):
+            hero_ingredients_preview = hero_ingredients[:3]  # First 3 only
+        estimated_cost = decoded_data.get("estimated_cost")
+    
+    return {
+        "product_id": str(product_doc["_id"]),
+        "board_id": str(product_doc["board_id"]),
+        "user_id": product_doc["user_id"],
+        "name": product_doc["name"],
+        "brand": product_doc["brand"],
+        "url": product_doc.get("url"),
+        "platform": product_doc.get("platform", "other"),
+        "image": product_doc.get("image", "🧴"),
+        "price": product_doc.get("price", 0),
+        "size": product_doc.get("size", 0),
+        "unit": product_doc.get("unit", "ml"),
+        "price_per_ml": product_doc.get("price_per_ml", 0),
+        "category": product_doc.get("category"),
+        "rating": product_doc.get("rating"),
+        "reviews": product_doc.get("reviews"),
+        "date_added": product_doc.get("date_added", product_doc.get("created_at")),
+        "notes": product_doc.get("notes"),
+        "tags": product_doc.get("tags", []),
+        "my_rating": product_doc.get("my_rating"),
+        "decoded": product_doc.get("decoded", False),
+        "created_at": product_doc.get("created_at"),
+        "updated_at": product_doc.get("updated_at", product_doc.get("created_at")),
+        "has_decoded_data": has_decoded_data,
+        "hero_ingredients_preview": hero_ingredients_preview,
+        "estimated_cost": estimated_cost
+    }
+
+
 async def _format_product(product_doc: Dict[str, Any]) -> Dict[str, Any]:
-    """Format product document for response"""
+    """Format product document for full response (includes decoded_data)"""
     decoded_data = None
     if product_doc.get("decoded") and product_doc.get("decoded_data"):
         decoded_data = product_doc["decoded_data"]
