@@ -205,34 +205,66 @@ async def fetch_distributors_for_branded_ingredients(items: List[AnalyzeInciItem
             result_map[ing["name"]] = []
         
         # Group distributors by matching ingredient
+        # CRITICAL: A distributor only shows if BOTH ingredient AND supplier match
         for distributor in processed_distributors:
             distributor_ingredient_name = distributor.get("ingredientName", "")
+            distributor_supplier_ids = distributor.get("principlesSupplierIds", [])
             
-            # Try to match distributor to requested ingredients
-            matched = False
             for ing in branded_ingredients:
                 ingredient_name = ing["name"]
+                ingredient_id = ing.get("id")
+                
+                # Step 1: Check if ingredient matches
+                ingredient_matches = False
                 normalized_name = ingredient_name.strip().lower()
                 distributor_normalized = distributor_ingredient_name.strip().lower()
                 
-                # Check if distributor matches this ingredient
-                # Match by exact name or if distributor's ingredientIds contains this ingredient's ID
                 if (normalized_name == distributor_normalized or 
                     (ingredient_name in ingredient_id_map and 
                      distributor.get("ingredientIds") and
                      any(str(ing_id) in [str(x) for x in distributor.get("ingredientIds", [])] 
                          for ing_id in ingredient_id_map[ingredient_name]))):
-                    result_map[ingredient_name].append(distributor)
-                    matched = True
-                    break
-            
-            # If no match found but distributor has ingredientName, try fuzzy match
-            if not matched and distributor_ingredient_name:
-                for ing in branded_ingredients:
-                    ingredient_name = ing["name"]
-                    if ingredient_name.strip().lower() == distributor_ingredient_name.strip().lower():
+                    ingredient_matches = True
+                
+                # Step 2: If ingredient matches, check if supplier also matches
+                if ingredient_matches and ingredient_id:
+                    try:
+                        # Get the branded ingredient document to check supplier_id
+                        ing_id_obj = ObjectId(ingredient_id)
+                        ing_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
+                        
+                        if ing_doc:
+                            ingredient_supplier_id = ing_doc.get("supplier_id")
+                            
+                            # Check if ingredient's supplier_id matches any of distributor's principlesSupplierIds
+                            supplier_matches = False
+                            if ingredient_supplier_id and distributor_supplier_ids:
+                                # Convert supplier_id to string for comparison
+                                ingredient_supplier_id_str = str(ingredient_supplier_id)
+                                # Check if any distributor supplier ID matches
+                                for dist_supplier_id in distributor_supplier_ids:
+                                    if str(dist_supplier_id) == ingredient_supplier_id_str:
+                                        supplier_matches = True
+                                        break
+                            
+                            # Only add distributor if BOTH ingredient AND supplier match
+                            if supplier_matches:
+                                result_map[ingredient_name].append(distributor)
+                                print(f"✅ Matched distributor {distributor.get('firmName', 'N/A')} for ingredient {ingredient_name} (supplier match)")
+                            # If supplier doesn't match, don't add (skip this distributor for this ingredient)
+                        else:
+                            # If ingredient doc not found, skip supplier check but still match by ingredient
+                            # (backward compatibility for ingredients without supplier_id)
+                            result_map[ingredient_name].append(distributor)
+                            print(f"⚠️ Ingredient {ingredient_name} doc not found, matching by ingredient only (no supplier check)")
+                    except Exception as e:
+                        print(f"⚠️ Error checking supplier match for {ingredient_name}: {e}")
+                        # On error, still match by ingredient (backward compatibility)
                         result_map[ingredient_name].append(distributor)
-                        break
+                elif ingredient_matches:
+                    # Ingredient matches but no ingredient_id - match by ingredient only (backward compatibility)
+                    result_map[ingredient_name].append(distributor)
+                    print(f"⚠️ Matched by ingredient only (no ingredient_id for supplier check): {ingredient_name}")
         
         return result_map
             
@@ -1993,7 +2025,51 @@ async def get_distributor_by_ingredient(
                 if "ingredientName" not in distributor:
                     distributor["ingredientName"] = ingredient_name
         
-        return distributors if distributors else []
+        # Filter distributors by supplier match if ingredient_id is provided
+        # CRITICAL: A distributor only shows if BOTH ingredient AND supplier match
+        filtered_distributors = []
+        if ingredient_id:
+            try:
+                # Get the branded ingredient document to check supplier_id
+                ing_id_obj = ObjectId(ingredient_id)
+                ing_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
+                
+                if ing_doc:
+                    ingredient_supplier_id = ing_doc.get("supplier_id")
+                    
+                    for distributor in distributors:
+                        distributor_supplier_ids = distributor.get("principlesSupplierIds", [])
+                        
+                        # Check if ingredient's supplier_id matches any of distributor's principlesSupplierIds
+                        supplier_matches = False
+                        if ingredient_supplier_id and distributor_supplier_ids:
+                            # Convert supplier_id to string for comparison
+                            ingredient_supplier_id_str = str(ingredient_supplier_id)
+                            # Check if any distributor supplier ID matches
+                            for dist_supplier_id in distributor_supplier_ids:
+                                if str(dist_supplier_id) == ingredient_supplier_id_str:
+                                    supplier_matches = True
+                                    break
+                        
+                        # Only include distributor if supplier matches
+                        if supplier_matches:
+                            filtered_distributors.append(distributor)
+                            print(f"✅ Matched distributor {distributor.get('firmName', 'N/A')} for ingredient {ingredient_name} (supplier match)")
+                        else:
+                            print(f"⚠️ Distributor {distributor.get('firmName', 'N/A')} ingredient matches but supplier doesn't match for {ingredient_name}")
+                    # Use filtered list
+                    return filtered_distributors if filtered_distributors else []
+                else:
+                    # If ingredient doc not found, return all (backward compatibility)
+                    print(f"⚠️ Ingredient {ingredient_name} doc not found, returning all distributors (no supplier check)")
+                    return distributors if distributors else []
+            except Exception as e:
+                print(f"⚠️ Error checking supplier match for {ingredient_name}: {e}")
+                # On error, return all (backward compatibility)
+                return distributors if distributors else []
+        else:
+            # No ingredient_id provided, return all (backward compatibility)
+            return distributors if distributors else []
             
     except Exception as e:
         print(f"Error fetching distributors: {e}")
@@ -2157,43 +2233,77 @@ async def get_distributors_by_ingredients(
                 result_map[ing["name"]] = []
         
         # Group distributors by matching ingredient
+        # CRITICAL: A distributor only shows if BOTH ingredient AND supplier match
         for distributor in processed_distributors:
             distributor_ingredient_name = distributor.get("ingredientName", "")
+            distributor_supplier_ids = distributor.get("principlesSupplierIds", [])
             
-            # Try to match distributor to requested ingredients
-            matched = False
             for ing in ingredients:
                 if not isinstance(ing, dict) or "name" not in ing:
                     continue
                 
                 ingredient_name = ing["name"]
+                ingredient_id = ing.get("id")
+                
+                # Step 1: Check if ingredient matches
+                ingredient_matches = False
                 normalized_name = ingredient_name.strip().lower()
                 distributor_normalized = distributor_ingredient_name.strip().lower()
                 
-                # Check if distributor matches this ingredient
-                # Match by exact name or if distributor's ingredientIds contains this ingredient's ID
                 if (normalized_name == distributor_normalized or 
                     (ingredient_name in ingredient_id_map and 
                      distributor.get("ingredientIds") and
                      any(str(ing_id) in [str(x) for x in distributor.get("ingredientIds", [])] 
                          for ing_id in ingredient_id_map[ingredient_name]))):
-                    if ingredient_name not in result_map:
-                        result_map[ingredient_name] = []
-                    result_map[ingredient_name].append(distributor)
-                    matched = True
-                    break
-            
-            # If no match found but distributor has ingredientName, try fuzzy match
-            if not matched and distributor_ingredient_name:
-                for ing in ingredients:
-                    if not isinstance(ing, dict) or "name" not in ing:
-                        continue
-                    ingredient_name = ing["name"]
-                    if ingredient_name.strip().lower() == distributor_ingredient_name.strip().lower():
+                    ingredient_matches = True
+                
+                # Step 2: If ingredient matches, check if supplier also matches
+                if ingredient_matches and ingredient_id:
+                    try:
+                        # Get the branded ingredient document to check supplier_id
+                        ing_id_obj = ObjectId(ingredient_id)
+                        ing_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
+                        
+                        if ing_doc:
+                            ingredient_supplier_id = ing_doc.get("supplier_id")
+                            
+                            # Check if ingredient's supplier_id matches any of distributor's principlesSupplierIds
+                            supplier_matches = False
+                            if ingredient_supplier_id and distributor_supplier_ids:
+                                # Convert supplier_id to string for comparison
+                                ingredient_supplier_id_str = str(ingredient_supplier_id)
+                                # Check if any distributor supplier ID matches
+                                for dist_supplier_id in distributor_supplier_ids:
+                                    if str(dist_supplier_id) == ingredient_supplier_id_str:
+                                        supplier_matches = True
+                                        break
+                            
+                            # Only add distributor if BOTH ingredient AND supplier match
+                            if supplier_matches:
+                                if ingredient_name not in result_map:
+                                    result_map[ingredient_name] = []
+                                result_map[ingredient_name].append(distributor)
+                                print(f"✅ Matched distributor {distributor.get('firmName', 'N/A')} for ingredient {ingredient_name} (supplier match)")
+                            # If supplier doesn't match, don't add (skip this distributor for this ingredient)
+                        else:
+                            # If ingredient doc not found, skip supplier check but still match by ingredient
+                            # (backward compatibility for ingredients without supplier_id)
+                            if ingredient_name not in result_map:
+                                result_map[ingredient_name] = []
+                            result_map[ingredient_name].append(distributor)
+                            print(f"⚠️ Ingredient {ingredient_name} doc not found, matching by ingredient only (no supplier check)")
+                    except Exception as e:
+                        print(f"⚠️ Error checking supplier match for {ingredient_name}: {e}")
+                        # On error, still match by ingredient (backward compatibility)
                         if ingredient_name not in result_map:
                             result_map[ingredient_name] = []
                         result_map[ingredient_name].append(distributor)
-                        break
+                elif ingredient_matches:
+                    # Ingredient matches but no ingredient_id - match by ingredient only (backward compatibility)
+                    if ingredient_name not in result_map:
+                        result_map[ingredient_name] = []
+                    result_map[ingredient_name].append(distributor)
+                    print(f"⚠️ Matched by ingredient only (no ingredient_id for supplier check): {ingredient_name}")
         
         return result_map
             
@@ -3204,36 +3314,75 @@ async def get_decode_history_detail(
                                 refreshed_distributor_info[ingredient_name] = []
                             
                             # Match distributors to ingredients
+                            # CRITICAL: A distributor only shows if BOTH ingredient AND supplier match
                             for distributor in processed_distributors:
                                 distributor_ingredient_name = distributor.get("ingredientName", "")
-                                matched = False
+                                distributor_supplier_ids = distributor.get("principlesSupplierIds", [])
                                 
                                 for ing in branded_ingredients:
                                     ingredient_name = ing["name"]
+                                    ingredient_id = ing.get("id")
+                                    
+                                    # Step 1: Check if ingredient matches
+                                    ingredient_matches = False
                                     normalized_name = ingredient_name.strip().lower()
                                     distributor_normalized = distributor_ingredient_name.strip().lower()
                                     
-                                    # Match by name or ingredient ID
                                     if (normalized_name == distributor_normalized or 
                                         (ingredient_name in ingredient_id_map and 
                                          distributor.get("ingredientIds") and
                                          any(str(ing_id) in [str(x) for x in distributor.get("ingredientIds", [])] 
                                              for ing_id in ingredient_id_map[ingredient_name]))):
-                                        if ingredient_name not in refreshed_distributor_info:
-                                            refreshed_distributor_info[ingredient_name] = []
-                                        refreshed_distributor_info[ingredient_name].append(distributor)
-                                        matched = True
-                                        break
-                                
-                                # Fallback: fuzzy match by name
-                                if not matched and distributor_ingredient_name:
-                                    for ing in branded_ingredients:
-                                        ingredient_name = ing["name"]
-                                        if ingredient_name.strip().lower() == distributor_ingredient_name.strip().lower():
+                                        ingredient_matches = True
+                                    
+                                    # Step 2: If ingredient matches, check if supplier also matches
+                                    if ingredient_matches and ingredient_id:
+                                        try:
+                                            # Get the branded ingredient document to check supplier_id
+                                            ing_id_obj = ObjectId(ingredient_id)
+                                            ing_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
+                                            
+                                            if ing_doc:
+                                                ingredient_supplier_id = ing_doc.get("supplier_id")
+                                                
+                                                # Check if ingredient's supplier_id matches any of distributor's principlesSupplierIds
+                                                supplier_matches = False
+                                                if ingredient_supplier_id and distributor_supplier_ids:
+                                                    # Convert supplier_id to string for comparison
+                                                    ingredient_supplier_id_str = str(ingredient_supplier_id)
+                                                    # Check if any distributor supplier ID matches
+                                                    for dist_supplier_id in distributor_supplier_ids:
+                                                        if str(dist_supplier_id) == ingredient_supplier_id_str:
+                                                            supplier_matches = True
+                                                            break
+                                                
+                                                # Only add distributor if BOTH ingredient AND supplier match
+                                                if supplier_matches:
+                                                    if ingredient_name not in refreshed_distributor_info:
+                                                        refreshed_distributor_info[ingredient_name] = []
+                                                    refreshed_distributor_info[ingredient_name].append(distributor)
+                                                    print(f"✅ Matched distributor {distributor.get('firmName', 'N/A')} for ingredient {ingredient_name} (supplier match)")
+                                                else:
+                                                    print(f"⚠️ Distributor {distributor.get('firmName', 'N/A')} ingredient matches but supplier doesn't match for {ingredient_name}")
+                                            else:
+                                                # If ingredient doc not found, skip supplier check but still match by ingredient
+                                                # (backward compatibility for ingredients without supplier_id)
+                                                if ingredient_name not in refreshed_distributor_info:
+                                                    refreshed_distributor_info[ingredient_name] = []
+                                                refreshed_distributor_info[ingredient_name].append(distributor)
+                                                print(f"⚠️ Ingredient {ingredient_name} doc not found, matching by ingredient only (no supplier check)")
+                                        except Exception as e:
+                                            print(f"⚠️ Error checking supplier match for {ingredient_name}: {e}")
+                                            # On error, still match by ingredient (backward compatibility)
                                             if ingredient_name not in refreshed_distributor_info:
                                                 refreshed_distributor_info[ingredient_name] = []
                                             refreshed_distributor_info[ingredient_name].append(distributor)
-                                            break
+                                    elif ingredient_matches:
+                                        # Ingredient matches but no ingredient_id - match by ingredient only (backward compatibility)
+                                        if ingredient_name not in refreshed_distributor_info:
+                                            refreshed_distributor_info[ingredient_name] = []
+                                        refreshed_distributor_info[ingredient_name].append(distributor)
+                                        print(f"⚠️ Matched by ingredient only (no ingredient_id for supplier check): {ingredient_name}")
                             
                             # Update analysis_result with fresh distributor info
                             analysis_result["distributor_info"] = refreshed_distributor_info
