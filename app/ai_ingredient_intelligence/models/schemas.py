@@ -35,6 +35,7 @@ class AnalyzeInciResponse(BaseModel):
     processing_time: float = Field(..., description="Time taken to process (in seconds)")
     bis_cautions: Optional[Dict[str, List[str]]] = Field(None, description="BIS cautions for ingredients")
     categories: Optional[Dict[str, str]] = Field(None, description="Individual INCI categories mapping for bifurcation: { 'inci_name': 'Active' | 'Excipient' }")
+    distributor_info: Optional[Dict[str, List[Dict]]] = Field(None, description="Distributor information for branded ingredients: { 'ingredient_name': [distributor1, distributor2, ...] }")
     
     class Config:
         # Exclude None values from JSON serialization to remove deprecated fields
