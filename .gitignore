@@ -171,4 +171,16 @@ app/chroma_db_bis/**/*.bin
 app/chroma_db_bis/**/*.sqlite3
 app/chroma_db_bis/*.bin
 app/chroma_db_bis/*.sqlite3
-output_specialChem_1765800534743.json
+# ---- Large generated data (DO NOT COMMIT) ----
+cleaned_specialchem_ingredients.json
+cleaned_specialchem_ingredients.json.*
+cleaning_checkpoint.json
+
+# backups & checkpoints
+*.backup_*
+*.pre_save_*
+
+# data outputs
+data/
+datasets/
+checkpoints/
