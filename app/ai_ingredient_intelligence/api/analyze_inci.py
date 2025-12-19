@@ -165,35 +165,72 @@ async def fetch_distributors_for_branded_ingredients(items: List[AnalyzeInciItem
         all_distributors = await distributor_col.find(query).sort("createdAt", -1).to_list(length=None)
         
         # Process distributors: convert ObjectId to string and fetch ingredient names
+        # Also enrich with supplier-ingredient mappings if available
         processed_distributors = []
         for distributor in all_distributors:
             distributor["_id"] = str(distributor["_id"])
             
-            # Fetch ingredientName from ingredientIds
-            if "ingredientIds" in distributor and distributor.get("ingredientIds"):
-                ingredient_names = []
-                for ing_id in distributor["ingredientIds"]:
-                    try:
-                        if isinstance(ing_id, str):
-                            try:
-                                ing_id_obj = ObjectId(ing_id)
-                            except:
-                                continue
-                        else:
-                            ing_id_obj = ing_id
-                        
-                        ing_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
-                        if ing_doc:
-                            ingredient_names.append(ing_doc.get("ingredient_name", ""))
-                    except Exception as e:
-                        pass
+            # Check if distributor has supplierIngredientMappings (new structure)
+            supplier_mappings = distributor.get("supplierIngredientMappings", [])
+            if supplier_mappings:
+                # Enrich mappings with ingredient details
+                enriched_mappings = []
+                for mapping in supplier_mappings:
+                    ingredient_details = []
+                    for ing_id_str in mapping.get("ingredientIds", []):
+                        try:
+                            ing_id_obj = ObjectId(ing_id_str) if isinstance(ing_id_str, str) else ing_id_str
+                            ing_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
+                            if ing_doc:
+                                ingredient_details.append({
+                                    "ingredientId": str(ing_id_obj),
+                                    "ingredientName": ing_doc.get("ingredient_name", ""),
+                                    "originalInciName": ing_doc.get("original_inci_name", ""),
+                                    "category": ing_doc.get("category_decided", "")
+                                })
+                        except Exception as e:
+                            pass
+                    
+                    enriched_mappings.append({
+                        "supplierId": mapping.get("supplierId", ""),
+                        "supplierName": mapping.get("supplierName", ""),
+                        "ingredients": ingredient_details
+                    })
                 
-                if ingredient_names:
-                    distributor["ingredientName"] = ingredient_names[0] if len(ingredient_names) == 1 else ", ".join(ingredient_names)
+                distributor["supplierIngredientMappings"] = enriched_mappings
+                
+                # Set ingredientName for backward compatibility (first ingredient from first supplier)
+                if enriched_mappings and enriched_mappings[0].get("ingredients"):
+                    first_ingredient = enriched_mappings[0]["ingredients"][0]
+                    distributor["ingredientName"] = first_ingredient.get("ingredientName", "")
                 else:
                     distributor["ingredientName"] = distributor.get("ingredientName", "")
             else:
-                distributor["ingredientName"] = distributor.get("ingredientName", "")
+                # Backward compatibility: Fetch ingredientName from ingredientIds
+                if "ingredientIds" in distributor and distributor.get("ingredientIds"):
+                    ingredient_names = []
+                    for ing_id in distributor["ingredientIds"]:
+                        try:
+                            if isinstance(ing_id, str):
+                                try:
+                                    ing_id_obj = ObjectId(ing_id)
+                                except:
+                                    continue
+                            else:
+                                ing_id_obj = ing_id
+                            
+                            ing_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
+                            if ing_doc:
+                                ingredient_names.append(ing_doc.get("ingredient_name", ""))
+                        except Exception as e:
+                            pass
+                    
+                    if ingredient_names:
+                        distributor["ingredientName"] = ingredient_names[0] if len(ingredient_names) == 1 else ", ".join(ingredient_names)
+                    else:
+                        distributor["ingredientName"] = distributor.get("ingredientName", "")
+                else:
+                    distributor["ingredientName"] = distributor.get("ingredientName", "")
             
             processed_distributors.append(distributor)
         
@@ -239,19 +276,36 @@ async def fetch_distributors_for_branded_ingredients(items: List[AnalyzeInciItem
                             # Check if ingredient's supplier_id matches any of distributor's principlesSupplierIds
                             supplier_matches = False
                             if ingredient_supplier_id and distributor_supplier_ids:
-                                # Convert supplier_id to string for comparison
+                                # Convert ingredient supplier_id to string for comparison
                                 ingredient_supplier_id_str = str(ingredient_supplier_id)
+                                
                                 # Check if any distributor supplier ID matches
+                                # Handle both string and ObjectId formats
                                 for dist_supplier_id in distributor_supplier_ids:
-                                    if str(dist_supplier_id) == ingredient_supplier_id_str:
+                                    dist_supplier_id_str = str(dist_supplier_id)
+                                    # Compare as strings (handles both ObjectId and string formats)
+                                    if dist_supplier_id_str == ingredient_supplier_id_str:
                                         supplier_matches = True
+                                        print(f"   🔍 Supplier match found: {dist_supplier_id_str} == {ingredient_supplier_id_str}")
                                         break
-                            
-                            # Only add distributor if BOTH ingredient AND supplier match
-                            if supplier_matches:
+                                
+                                if not supplier_matches:
+                                    print(f"   ❌ No supplier match: ingredient supplier={ingredient_supplier_id_str} (type: {type(ingredient_supplier_id)}), distributor suppliers={[str(s) for s in distributor_supplier_ids]} (types: {[type(s) for s in distributor_supplier_ids]})")
+                                
+                                # Only add distributor if supplier matches
+                                if supplier_matches:
+                                    result_map[ingredient_name].append(distributor)
+                                    print(f"✅ Matched distributor {distributor.get('firmName', 'N/A')} for ingredient {ingredient_name} (supplier match: {ingredient_supplier_id_str})")
+                                else:
+                                    print(f"⚠️ Distributor {distributor.get('firmName', 'N/A')} ingredient matches but supplier doesn't match for {ingredient_name} (ingredient supplier: {ingredient_supplier_id_str}, distributor suppliers: {distributor_supplier_ids})")
+                            else:
+                                # If ingredient has no supplier_id OR distributor has no principlesSupplierIds,
+                                # still show the distributor (backward compatibility and for ingredients without supplier data)
                                 result_map[ingredient_name].append(distributor)
-                                print(f"✅ Matched distributor {distributor.get('firmName', 'N/A')} for ingredient {ingredient_name} (supplier match)")
-                            # If supplier doesn't match, don't add (skip this distributor for this ingredient)
+                                if not ingredient_supplier_id:
+                                    print(f"⚠️ Ingredient {ingredient_name} has no supplier_id, matching by ingredient only")
+                                if not distributor_supplier_ids:
+                                    print(f"⚠️ Distributor {distributor.get('firmName', 'N/A')} has no principlesSupplierIds, matching by ingredient only")
                         else:
                             # If ingredient doc not found, skip supplier check but still match by ingredient
                             # (backward compatibility for ingredients without supplier_id)
@@ -259,6 +313,8 @@ async def fetch_distributors_for_branded_ingredients(items: List[AnalyzeInciItem
                             print(f"⚠️ Ingredient {ingredient_name} doc not found, matching by ingredient only (no supplier check)")
                     except Exception as e:
                         print(f"⚠️ Error checking supplier match for {ingredient_name}: {e}")
+                        import traceback
+                        traceback.print_exc()
                         # On error, still match by ingredient (backward compatibility)
                         result_map[ingredient_name].append(distributor)
                 elif ingredient_matches:
@@ -1447,15 +1503,20 @@ async def get_suppliers_paginated(skip: int = 0, limit: int = 50, search: Option
         # Get total count
         total = await suppliers_collection.count_documents(query)
         
-        # Get paginated results
-        cursor = suppliers_collection.find(query, {"supplierName": 1, "_id": 0}).skip(skip).limit(limit)
+        # Get paginated results - include both _id and supplierName
+        cursor = suppliers_collection.find(query, {"supplierName": 1, "_id": 1}).skip(skip).limit(limit)
         suppliers = await cursor.to_list(length=None)
         
-        # Extract supplier names
-        supplier_names = [s.get("supplierName", "") for s in suppliers if s.get("supplierName")]
+        # Extract supplier data with IDs and names
+        supplier_list = []
+        for s in suppliers:
+            supplier_list.append({
+                "supplierId": str(s.get("_id", "")),
+                "supplierName": s.get("supplierName", "")
+            })
         
         return {
-            "suppliers": supplier_names,
+            "suppliers": supplier_list,
             "total": total,
             "skip": skip,
             "limit": limit,
@@ -1466,6 +1527,88 @@ async def get_suppliers_paginated(skip: int = 0, limit: int = 50, search: Option
         raise HTTPException(status_code=500, detail=f"Failed to fetch suppliers: {str(e)}")
 
 
+@router.get("/suppliers/{supplier_id}/ingredients")
+async def get_ingredients_by_supplier(
+    supplier_id: str,
+    skip: int = 0,
+    limit: int = 50,
+    search: Optional[str] = None,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
+    """
+    Get all ingredients for a specific supplier with pagination
+    
+    Query params:
+    - supplier_id: ID of the supplier (from path)
+    - skip: Number of records to skip (default: 0)
+    - limit: Maximum number of records to return (default: 50)
+    - search: Optional search term to filter ingredients by name
+    """
+    try:
+        # Validate supplier_id format
+        try:
+            supplier_id_obj = ObjectId(supplier_id)
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"Invalid supplier ID format: {supplier_id}")
+        
+        # Verify supplier exists
+        supplier_doc = await suppliers_col.find_one({"_id": supplier_id_obj})
+        if not supplier_doc:
+            raise HTTPException(status_code=404, detail=f"Supplier not found with ID: {supplier_id}")
+        
+        supplier_name = supplier_doc.get("supplierName", "Unknown Supplier")
+        
+        # Build query for ingredients with this supplier_id
+        query = {"supplier_id": supplier_id_obj}
+        
+        # Add search filter if provided
+        if search and search.strip():
+            query["ingredient_name"] = {"$regex": search.strip(), "$options": "i"}
+        
+        # Get total count
+        total = await branded_ingredients_col.count_documents(query)
+        
+        # Get paginated results
+        cursor = branded_ingredients_col.find(
+            query,
+            {
+                "_id": 1,
+                "ingredient_name": 1,
+                "original_inci_name": 1,
+                "category_decided": 1,
+                "supplier_id": 1
+            }
+        ).skip(skip).limit(limit).sort("ingredient_name", 1)
+        
+        ingredients = []
+        async for doc in cursor:
+            ingredients.append({
+                "ingredient_id": str(doc["_id"]),
+                "ingredient_name": doc.get("ingredient_name", ""),
+                "original_inci_name": doc.get("original_inci_name", ""),
+                "category": doc.get("category_decided", ""),
+                "supplier_id": str(doc.get("supplier_id", "")) if doc.get("supplier_id") else None
+            })
+        
+        return {
+            "supplier_id": supplier_id,
+            "supplier_name": supplier_name,
+            "ingredients": ingredients,
+            "total": total,
+            "skip": skip,
+            "limit": limit,
+            "hasMore": (skip + limit) < total
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error fetching ingredients by supplier: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to fetch ingredients: {str(e)}")
+
+
 @router.post("/distributor/register")
 async def register_distributor(
     payload: dict,
@@ -1474,19 +1617,33 @@ async def register_distributor(
     """
     Register a new distributor and save to distributor collection
     
+    NEW FLOW: Claim suppliers, then select ingredients from each supplier
+    
     Request body:
     {
         "firmName": "ABC Distributors",
         "category": "Pvt Ltd",
         "registeredAddress": "123 Main St, City",
-        "contactPerson": {
-            "name": "John Doe",
-            "number": "+91-1234567890",
-            "email": "contact@abc.com",
-            "zone": "India"
-        },
-        "ingredientName": "Hyaluronic Acid",
-        "principlesSuppliers": ["Supplier 1", "Supplier 2"],
+        "contactPersons": [
+            {
+                "name": "John Doe",
+                "number": "+91-1234567890",
+                "email": "contact@abc.com",
+                "zones": ["India"]
+            }
+        ],
+        "suppliers": [
+            {
+                "supplierId": "507f1f77bcf86cd799439011",
+                "supplierName": "Supplier 1",
+                "selectedIngredientIds": ["507f191e810c19729de860ea", "507f191e810c19729de860eb"]
+            },
+            {
+                "supplierId": "507f1f77bcf86cd799439012",
+                "supplierName": "Supplier 2",
+                "selectedIngredientIds": ["507f191e810c19729de860ec"]
+            }
+        ],
         "yourInfo": {
             "name": "John Doe",
             "email": "john@abc.com",
@@ -1499,7 +1656,7 @@ async def register_distributor(
     try:
         # Validate required fields
         required_fields = ["firmName", "category", "registeredAddress", "contactPersons", 
-                         "ingredientName", "principlesSuppliers", "yourInfo", "acceptTerms"]
+                         "suppliers", "yourInfo", "acceptTerms"]
         for field in required_fields:
             if field not in payload:
                 raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
@@ -1529,10 +1686,10 @@ async def register_distributor(
                 elif not contact_person[field] or (isinstance(contact_person[field], str) and not contact_person[field].strip()):
                     raise HTTPException(status_code=400, detail=f"Contact Person {idx + 1}: {field} cannot be empty")
         
-        # Validate principles suppliers
-        principles_suppliers = payload.get("principlesSuppliers", [])
-        if not isinstance(principles_suppliers, list) or len(principles_suppliers) == 0:
-            raise HTTPException(status_code=400, detail="At least one supplier must be selected in Principles You Represent")
+        # Validate suppliers array
+        suppliers = payload.get("suppliers", [])
+        if not isinstance(suppliers, list) or len(suppliers) == 0:
+            raise HTTPException(status_code=400, detail="At least one supplier must be selected")
         
         # Validate your info
         your_info = payload.get("yourInfo", {})
@@ -1547,192 +1704,93 @@ async def register_distributor(
         # Prepare distributor document
         from datetime import datetime
         
-        # Lookup ingredient IDs from branded ingredients collection by name
-        ingredient_name = payload["ingredientName"]
-        ingredient_id_provided = payload.get("ingredientId")  # Optional ingredient ID from frontend
-        ingredient_ids = []
-        
-        # Clean ingredient name (remove trailing commas, extra spaces)
-        ingredient_name_clean = ingredient_name.strip().rstrip(',').strip()
-        
-        print(f"🔍 Looking up ingredient IDs for: '{ingredient_name_clean}'")
-        
-        # CRITICAL: If ingredientId is provided from frontend, use it directly (most reliable)
-        if ingredient_id_provided:
-            try:
-                ing_id_obj = ObjectId(ingredient_id_provided)
-                # Verify the ID exists in the collection
-                verify_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
-                if verify_doc:
-                    ingredient_ids.append(str(ing_id_obj))
-                    print(f"✅✅✅ Using provided ingredient ID: {ingredient_id_provided}")
-                    print(f"   Verified: Ingredient '{verify_doc.get('ingredient_name', 'N/A')}' exists with this ID")
-                else:
-                    print(f"❌ WARNING: Provided ingredient ID {ingredient_id_provided} not found! Will lookup by name instead.")
-                    ingredient_id_provided = None  # Fall back to name lookup
-            except Exception as e:
-                print(f"❌ WARNING: Invalid ingredient ID format {ingredient_id_provided}: {e}. Will lookup by name instead.")
-                ingredient_id_provided = None  # Fall back to name lookup
-        
-        # If no valid ID provided, lookup by name
-        if not ingredient_ids:
-            print(f"🔍 No ingredient ID provided, looking up by name: '{ingredient_name_clean}'")
-            
-            # Strategy 1: Try exact match on ingredient_name field (case-insensitive)
-            print(f"🔍 Strategy 1: Exact match search for '{ingredient_name_clean}'")
-            count_found = 0
-            async for branded_ingredient in branded_ingredients_col.find(
-                {"ingredient_name": {"$regex": f"^{ingredient_name_clean}$", "$options": "i"}}
-            ):
-                count_found += 1
-                ing_id_obj = branded_ingredient["_id"]
-                ing_id_str = str(ing_id_obj)
-                
-                # CRITICAL: Verify the ID exists by querying it directly
-                verify_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
-                if verify_doc:
-                    if ing_id_str not in ingredient_ids:
-                        ingredient_ids.append(ing_id_str)
-                        print(f"✅ Found ingredient ID (exact match): {ing_id_str}")
-                        print(f"   Ingredient Name: '{branded_ingredient.get('ingredient_name', 'N/A')}'")
-                        print(f"   ObjectId Type: {type(ing_id_obj)}")
-                        print(f"   String ID: {ing_id_str}")
-                        print(f"   ✅ VERIFIED: Can query back with ObjectId({ing_id_str})")
-                        
-                        # Double verification: Try querying with string
-                        try:
-                            verify_doc2 = await branded_ingredients_col.find_one({"_id": ObjectId(ing_id_str)})
-                            if verify_doc2:
-                                print(f"   ✅ DOUBLE VERIFIED: Can also query with ObjectId(string)")
-                            else:
-                                print(f"   ❌ WARNING: Cannot query with ObjectId(string)")
-                        except Exception as e:
-                            print(f"   ❌ ERROR converting to ObjectId: {e}")
-                else:
-                    print(f"❌ CRITICAL: ID {ing_id_str} verification FAILED - document not found!")
-            
-            if count_found == 0:
-                print(f"   No exact matches found")
-            
-            # Strategy 2: If no exact match, try normalized match (remove special chars, normalize spaces)
-            if len(ingredient_ids) == 0:
-                normalized_search = re.sub(r'[^\w\s]', '', ingredient_name_clean).strip()
-                normalized_search = re.sub(r'\s+', ' ', normalized_search)
-                print(f"🔍 Trying normalized match: '{normalized_search}'")
-                
-                async for branded_ingredient in branded_ingredients_col.find(
-                    {"ingredient_name": {"$regex": f"^{re.escape(normalized_search)}$", "$options": "i"}}
-                ):
-                    ing_id = str(branded_ingredient["_id"])
-                    if ing_id not in ingredient_ids:
-                        ingredient_ids.append(ing_id)
-                        print(f"✅ Found ingredient ID (normalized): {ing_id} for '{branded_ingredient.get('ingredient_name', 'N/A')}'")
-            
-            # Strategy 3: Try partial match (contains) on ingredient_name
-            if len(ingredient_ids) == 0:
-                print(f"🔍 Trying partial match (contains)...")
-                async for branded_ingredient in branded_ingredients_col.find(
-                    {"ingredient_name": {"$regex": re.escape(ingredient_name_clean), "$options": "i"}}
-                ):
-                    ing_id = str(branded_ingredient["_id"])
-                    if ing_id not in ingredient_ids:
-                        ingredient_ids.append(ing_id)
-                        print(f"✅ Found ingredient ID (partial): {ing_id} for '{branded_ingredient.get('ingredient_name', 'N/A')}'")
-        
-        # Final verification: Check all found IDs actually exist in the collection
-        # This is CRITICAL - we must verify each ID can be queried
-        verified_ids = []
-        print(f"\n🔍 FINAL VERIFICATION: Testing {len(ingredient_ids)} ID(s)...")
-        for ing_id_str in ingredient_ids:
-            try:
-                print(f"\n   Testing ID: {ing_id_str}")
-                print(f"   ID Type: {type(ing_id_str)}")
-                
-                # Convert to ObjectId
-                ing_id_obj = ObjectId(ing_id_str)
-                print(f"   Converted to ObjectId: {ing_id_obj}")
-                print(f"   ObjectId Type: {type(ing_id_obj)}")
-                
-                # Query 1: Direct ObjectId query
-                verify_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
-                if verify_doc:
-                    print(f"   ✅ Query 1 PASSED: Found with ObjectId")
-                    print(f"      Ingredient: '{verify_doc.get('ingredient_name', 'N/A')}'")
-                    
-                    # Query 2: String to ObjectId conversion
-                    verify_doc2 = await branded_ingredients_col.find_one({"_id": ObjectId(ing_id_str)})
-                    if verify_doc2:
-                        print(f"   ✅ Query 2 PASSED: Found with ObjectId(string)")
-                        verified_ids.append(ing_id_str)
-                        print(f"   ✅✅✅ ID {ing_id_str} is VALID and VERIFIED")
-                    else:
-                        print(f"   ❌ Query 2 FAILED: Cannot find with ObjectId(string)")
-                else:
-                    print(f"   ❌ Query 1 FAILED: ID {ing_id_str} does NOT exist!")
-                    print(f"   🔍 Debug: Checking if ID exists in any form...")
-                    
-                    # Try to find by string match in _id field (shouldn't work but let's check)
-                    all_docs = await branded_ingredients_col.find({}).limit(5).to_list(length=5)
-                    print(f"   Sample _id types from collection:")
-                    for doc in all_docs:
-                        print(f"      - {doc.get('ingredient_name', 'N/A')}: _id={doc['_id']} (type: {type(doc['_id'])}, str: {str(doc['_id'])})")
-                    
-            except Exception as e:
-                print(f"   ❌ ERROR: Invalid ID format {ing_id_str}: {type(e).__name__}: {e}")
-                import traceback
-                traceback.print_exc()
-        
-        print(f"\n📊 Verification Summary:")
-        print(f"   Original IDs: {len(ingredient_ids)}")
-        print(f"   Verified IDs: {len(verified_ids)}")
-        print(f"   Verified ID List: {verified_ids}")
-        
-        ingredient_ids = verified_ids  # Use only verified IDs
-        
-        if len(ingredient_ids) == 0:
-            print(f"❌ ERROR: No valid ingredient IDs found for '{ingredient_name_clean}'. Please check if the ingredient exists in the database.")
-            print(f"   Searched in: branded_ingredients collection (ingredient_name field)")
-            # Let's also show what ingredients exist with similar names for debugging
-            print(f"   Debug: Searching for similar ingredient names...")
-            async for similar in branded_ingredients_col.find(
-                {"ingredient_name": {"$regex": ingredient_name_clean[:5] if len(ingredient_name_clean) > 5 else ingredient_name_clean, "$options": "i"}}
-            ).limit(5):
-                print(f"   Similar: '{similar.get('ingredient_name', 'N/A')}' (ID: {similar['_id']})")
-        else:
-            print(f"✅ Successfully found and verified {len(ingredient_ids)} ingredient ID(s): {ingredient_ids}")
-        
-        # Map principal suppliers to supplier IDs from ingre_suppliers collection
-        principles_suppliers = payload.get("principlesSuppliers", [])
+        # Process suppliers and their selected ingredients
         supplier_ids = []
         supplier_names_mapped = []
+        all_ingredient_ids = []
+        supplier_ingredient_mappings = []  # Store supplier-to-ingredients mapping
         
-        if principles_suppliers:
-            print(f"\n🔍 Mapping principal suppliers to supplier IDs...")
-            for supplier_name in principles_suppliers:
-                if not supplier_name or not supplier_name.strip():
-                    continue
-                
-                supplier_name_clean = supplier_name.strip()
-                print(f"   Looking up supplier: '{supplier_name_clean}'")
-                
-                # Try exact match first
-                supplier_doc = await suppliers_col.find_one(
-                    {"supplierName": {"$regex": f"^{re.escape(supplier_name_clean)}$", "$options": "i"}}
-                )
-                
-                if supplier_doc:
-                    supplier_id = str(supplier_doc["_id"])
-                    if supplier_id not in supplier_ids:
-                        supplier_ids.append(supplier_id)
-                        supplier_names_mapped.append(supplier_doc.get("supplierName", supplier_name_clean))
-                        print(f"   ✅ Found supplier ID: {supplier_id} for '{supplier_doc.get('supplierName', 'N/A')}'")
-                else:
-                    # If not found, still keep the name for reference
-                    print(f"   ⚠️ Supplier '{supplier_name_clean}' not found in suppliers collection, will store as name only")
-                    supplier_names_mapped.append(supplier_name_clean)
+        print(f"🔍 Processing {len(suppliers)} supplier(s)...")
+        
+        for idx, supplier_data in enumerate(suppliers):
+            if not isinstance(supplier_data, dict):
+                raise HTTPException(status_code=400, detail=f"Supplier {idx + 1}: Must be an object")
             
-            print(f"✅ Mapped {len(supplier_ids)} supplier ID(s): {supplier_ids}")
-            print(f"   Supplier names: {supplier_names_mapped}")
+            supplier_id = supplier_data.get("supplierId")
+            supplier_name = supplier_data.get("supplierName", "")
+            selected_ingredient_ids = supplier_data.get("selectedIngredientIds", [])
+            
+            if not supplier_id:
+                raise HTTPException(status_code=400, detail=f"Supplier {idx + 1}: Missing supplierId")
+            
+            if not isinstance(selected_ingredient_ids, list) or len(selected_ingredient_ids) == 0:
+                raise HTTPException(status_code=400, detail=f"Supplier {idx + 1}: At least one ingredient must be selected")
+            
+            # Validate supplier_id format and existence
+            try:
+                supplier_id_obj = ObjectId(supplier_id)
+            except Exception:
+                raise HTTPException(status_code=400, detail=f"Supplier {idx + 1}: Invalid supplierId format: {supplier_id}")
+            
+            # Verify supplier exists
+            supplier_doc = await suppliers_col.find_one({"_id": supplier_id_obj})
+            if not supplier_doc:
+                raise HTTPException(status_code=404, detail=f"Supplier {idx + 1}: Supplier not found with ID: {supplier_id}")
+            
+            # Use supplier name from DB if not provided
+            if not supplier_name:
+                supplier_name = supplier_doc.get("supplierName", f"Supplier {idx + 1}")
+            
+            supplier_ids.append(supplier_id)
+            supplier_names_mapped.append(supplier_name)
+            
+            # Validate and verify all ingredient IDs for this supplier
+            verified_ingredient_ids = []
+            print(f"\n   Supplier {idx + 1}: {supplier_name} (ID: {supplier_id})")
+            print(f"   Selected ingredients: {len(selected_ingredient_ids)}")
+            
+            for ing_id_str in selected_ingredient_ids:
+                try:
+                    ing_id_obj = ObjectId(ing_id_str)
+                    # Verify ingredient exists and belongs to this supplier
+                    ing_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
+                    
+                    if not ing_doc:
+                        print(f"   ⚠️ WARNING: Ingredient ID {ing_id_str} not found, skipping")
+                        continue
+                    
+                    # Verify ingredient belongs to this supplier
+                    ing_supplier_id = ing_doc.get("supplier_id")
+                    if ing_supplier_id:
+                        ing_supplier_id_str = str(ing_supplier_id)
+                        if ing_supplier_id_str != supplier_id:
+                            print(f"   ⚠️ WARNING: Ingredient {ing_id_str} ({ing_doc.get('ingredient_name', 'N/A')}) does not belong to supplier {supplier_name}, skipping")
+                            continue
+                    
+                    verified_ingredient_ids.append(ing_id_str)
+                    if ing_id_str not in all_ingredient_ids:
+                        all_ingredient_ids.append(ing_id_str)
+                    
+                    print(f"   ✅ Verified ingredient: {ing_doc.get('ingredient_name', 'N/A')} (ID: {ing_id_str})")
+                    
+                except Exception as e:
+                    print(f"   ❌ ERROR: Invalid ingredient ID format {ing_id_str}: {e}")
+                    continue
+            
+            if len(verified_ingredient_ids) == 0:
+                raise HTTPException(status_code=400, detail=f"Supplier {idx + 1}: No valid ingredients found for supplier {supplier_name}")
+            
+            # Store supplier-ingredient mapping
+            supplier_ingredient_mappings.append({
+                "supplierId": supplier_id,
+                "supplierName": supplier_name,
+                "ingredientIds": verified_ingredient_ids
+            })
+        
+        print(f"\n📊 Summary:")
+        print(f"   Suppliers: {len(supplier_ids)}")
+        print(f"   Total Ingredients: {len(all_ingredient_ids)}")
+        print(f"   Supplier IDs: {supplier_ids}")
         
         # Validate and prepare contact persons data
         contact_persons_data = []
@@ -1749,18 +1807,16 @@ async def register_distributor(
             contact_persons_data.append(contact_person_data)
             print(f"📝 Contact Person {idx + 1}: {contact_person_data['name']} - {contact_person_data['email']} - Zones: {contact_person_data['zones']}")
         
-        # Store only ingredientIds (list) - names will be fetched from IDs when needed
-        # Do NOT store ingredientName - it will be fetched from IDs when querying
-        # IMPORTANT: Store IDs as strings (MongoDB will handle conversion when needed)
-        # Store supplier IDs and names - primarily mapped to suppliers collection
+        # Store distributor document with new structure
         distributor_doc = {
             "firmName": payload["firmName"],
             "category": payload["category"],
             "registeredAddress": payload["registeredAddress"],
-            "contactPersons": contact_persons_data,  # Use validated and cleaned contact persons
-            "ingredientIds": ingredient_ids,  # Store ONLY list of ingredient IDs (as strings) - names fetched from IDs
-            "principlesSuppliers": payload["principlesSuppliers"],  # Keep original names for display
-            "principlesSupplierIds": supplier_ids,  # Store supplier IDs mapped from ingre_suppliers collection
+            "contactPersons": contact_persons_data,
+            "ingredientIds": all_ingredient_ids,  # All selected ingredient IDs across all suppliers
+            "principlesSupplierIds": supplier_ids,  # All supplier IDs
+            "principlesSuppliers": supplier_names_mapped,  # Supplier names for display
+            "supplierIngredientMappings": supplier_ingredient_mappings,  # NEW: Detailed mapping of supplier to ingredients
             "yourInfo": payload["yourInfo"],
             "acceptTerms": payload["acceptTerms"],
             "status": "under review",  # under review, approved, rejected
@@ -1768,81 +1824,50 @@ async def register_distributor(
             "updatedAt": datetime.utcnow()
         }
         
-        print(f"💾 Saving distributor document:")
+        print(f"\n💾 Saving distributor document:")
         print(f"   - Firm: {payload['firmName']}")
-        print(f"   - Ingredient Name: {ingredient_name_clean}")
-        print(f"   - Ingredient IDs: {ingredient_ids}")
-        print(f"   - Principal Supplier IDs: {supplier_ids}")
+        print(f"   - Suppliers: {len(supplier_ids)}")
+        print(f"   - Total Ingredients: {len(all_ingredient_ids)}")
         print(f"   - Contact Persons: {len(contact_persons_data)}")
-        
-        # CRITICAL: Final verification before saving - test EXACTLY how we'll query them later
-        final_verified_ids = []
-        if ingredient_ids:
-            print(f"\n🔍 CRITICAL FINAL VERIFICATION: Testing {len(ingredient_ids)} ID(s) can be queried...")
-            for ing_id_str in ingredient_ids:
-                print(f"\n   Testing ID: '{ing_id_str}'")
-                print(f"   ID length: {len(ing_id_str)}")
-                print(f"   ID format check: {ing_id_str.isalnum() if isinstance(ing_id_str, str) else 'not string'}")
-                
-                try:
-                    # Test 1: Convert to ObjectId
-                    ing_id_obj = ObjectId(ing_id_str)
-                    print(f"   ✅ Can convert to ObjectId: {ing_id_obj}")
-                    
-                    # Test 2: Query with ObjectId (this is how we'll use it)
-                    test_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
-                    if test_doc:
-                        print(f"   ✅✅✅ ID {ing_id_str} EXISTS in collection!")
-                        print(f"      Ingredient Name: '{test_doc.get('ingredient_name', 'N/A')}'")
-                        print(f"      Document _id: {test_doc['_id']}")
-                        print(f"      Document _id type: {type(test_doc['_id'])}")
-                        print(f"      Document _id as string: {str(test_doc['_id'])}")
-                        
-                        # Test 3: Verify the string matches
-                        if str(test_doc['_id']) == ing_id_str:
-                            print(f"   ✅ String ID matches document _id")
-                            final_verified_ids.append(ing_id_str)
-                        else:
-                            print(f"   ⚠️ WARNING: String mismatch! Document has: {str(test_doc['_id'])}, we have: {ing_id_str}")
-                            # Use the actual document ID instead
-                            final_verified_ids.append(str(test_doc['_id']))
-                            print(f"   ✅ Using actual document ID: {str(test_doc['_id'])}")
-                    else:
-                        print(f"   ❌❌❌ CRITICAL: ID {ing_id_str} CANNOT be found in collection!")
-                        print(f"   🔍 Debug: Checking collection stats...")
-                        total_count = await branded_ingredients_col.count_documents({})
-                        print(f"   Total documents in collection: {total_count}")
-                        
-                        # Try to find ANY document to see ID format
-                        sample_doc = await branded_ingredients_col.find_one({})
-                        if sample_doc:
-                            print(f"   Sample document _id: {sample_doc['_id']} (type: {type(sample_doc['_id'])}, str: {str(sample_doc['_id'])})")
-                        
-                except Exception as e:
-                    print(f"   ❌❌❌ CRITICAL ERROR with ID {ing_id_str}: {type(e).__name__}: {e}")
-                    import traceback
-                    traceback.print_exc()
-            
-            print(f"\n📊 Final Verification Summary:")
-            print(f"   Original IDs: {ingredient_ids}")
-            print(f"   Verified IDs: {final_verified_ids}")
-            print(f"   Verified Count: {len(final_verified_ids)}")
-            
-            # Update the doc with ONLY verified IDs
-            ingredient_ids = final_verified_ids
-            distributor_doc["ingredientIds"] = ingredient_ids
-            
-            if len(ingredient_ids) == 0:
-                print(f"\n⚠️⚠️⚠️ WARNING: No valid ingredient IDs to save! Distributor will be saved with empty ingredientIds array.")
         
         # Insert into distributor collection
         result = await distributor_col.insert_one(distributor_doc)
         
         if result.inserted_id:
+            # Prepare response with detailed supplier-ingredient mappings
+            response_mappings = []
+            for mapping in supplier_ingredient_mappings:
+                # Fetch ingredient details for response
+                ingredient_details = []
+                for ing_id_str in mapping["ingredientIds"]:
+                    try:
+                        ing_doc = await branded_ingredients_col.find_one({"_id": ObjectId(ing_id_str)})
+                        if ing_doc:
+                            ingredient_details.append({
+                                "ingredientId": ing_id_str,
+                                "ingredientName": ing_doc.get("ingredient_name", ""),
+                                "originalInciName": ing_doc.get("original_inci_name", ""),
+                                "category": ing_doc.get("category_decided", "")
+                            })
+                    except Exception as e:
+                        print(f"   ⚠️ Error fetching ingredient {ing_id_str}: {e}")
+                
+                response_mappings.append({
+                    "supplierId": mapping["supplierId"],
+                    "supplierName": mapping["supplierName"],
+                    "ingredients": ingredient_details
+                })
+            
             return {
                 "success": True,
                 "message": "Distributor registration submitted successfully",
-                "distributorId": str(result.inserted_id)
+                "distributorId": str(result.inserted_id),
+                "details": {
+                    "firmName": payload["firmName"],
+                    "suppliers": response_mappings,
+                    "totalSuppliers": len(supplier_ids),
+                    "totalIngredients": len(all_ingredient_ids)
+                }
             }
         else:
             raise HTTPException(status_code=500, detail="Failed to save distributor registration")
@@ -1986,43 +2011,80 @@ async def get_distributor_by_ingredient(
         distributors = await distributor_col.find(query).sort("createdAt", -1).to_list(length=None)
         
         # Convert ObjectId to string and fetch ingredientName from IDs for response
+        # Also enrich with supplier-ingredient mappings if available
         for distributor in distributors:
             distributor["_id"] = str(distributor["_id"])
             
-            # Always fetch ingredientName from ingredientIds (primary source)
-            if "ingredientIds" in distributor and distributor.get("ingredientIds"):
-                ingredient_names = []
-                for ing_id in distributor["ingredientIds"]:
-                    try:
-                        # Try as ObjectId first, then as string
-                        if isinstance(ing_id, str):
-                            try:
-                                ing_id_obj = ObjectId(ing_id)
-                            except:
-                                print(f"⚠️ Invalid ObjectId format in distributor: {ing_id}")
-                                continue
-                        else:
-                            ing_id_obj = ing_id
-                        
-                        ing_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
-                        if ing_doc:
-                            ingredient_names.append(ing_doc.get("ingredient_name", ""))
-                            print(f"✅ Found ingredient name for ID {ing_id}: {ing_doc.get('ingredient_name', 'N/A')}")
-                        else:
-                            print(f"❌ ERROR: Ingredient ID {ing_id} not found in branded_ingredients collection!")
-                    except Exception as e:
-                        print(f"⚠️ Error looking up ingredient ID {ing_id}: {e}")
-                        pass
-                # Use first name found, or join if multiple
-                if ingredient_names:
-                    distributor["ingredientName"] = ingredient_names[0] if len(ingredient_names) == 1 else ", ".join(ingredient_names)
+            # Check if distributor has supplierIngredientMappings (new structure)
+            supplier_mappings = distributor.get("supplierIngredientMappings", [])
+            if supplier_mappings:
+                # Enrich mappings with ingredient details
+                enriched_mappings = []
+                for mapping in supplier_mappings:
+                    ingredient_details = []
+                    for ing_id_str in mapping.get("ingredientIds", []):
+                        try:
+                            ing_id_obj = ObjectId(ing_id_str) if isinstance(ing_id_str, str) else ing_id_str
+                            ing_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
+                            if ing_doc:
+                                ingredient_details.append({
+                                    "ingredientId": str(ing_id_obj),
+                                    "ingredientName": ing_doc.get("ingredient_name", ""),
+                                    "originalInciName": ing_doc.get("original_inci_name", ""),
+                                    "category": ing_doc.get("category_decided", "")
+                                })
+                        except Exception as e:
+                            print(f"   ⚠️ Error fetching ingredient {ing_id_str}: {e}")
+                    
+                    enriched_mappings.append({
+                        "supplierId": mapping.get("supplierId", ""),
+                        "supplierName": mapping.get("supplierName", ""),
+                        "ingredients": ingredient_details
+                    })
+                
+                distributor["supplierIngredientMappings"] = enriched_mappings
+                
+                # Set ingredientName for backward compatibility (first ingredient from first supplier)
+                if enriched_mappings and enriched_mappings[0].get("ingredients"):
+                    first_ingredient = enriched_mappings[0]["ingredients"][0]
+                    distributor["ingredientName"] = first_ingredient.get("ingredientName", ingredient_name)
                 else:
-                    # If IDs don't resolve, fallback to stored name or query parameter
-                    distributor["ingredientName"] = distributor.get("ingredientName", ingredient_name)
-            else:
-                # Backward compatibility: if no ingredientIds, use stored ingredientName or query parameter
-                if "ingredientName" not in distributor:
                     distributor["ingredientName"] = ingredient_name
+            else:
+                # Backward compatibility: Always fetch ingredientName from ingredientIds (primary source)
+                if "ingredientIds" in distributor and distributor.get("ingredientIds"):
+                    ingredient_names = []
+                    for ing_id in distributor["ingredientIds"]:
+                        try:
+                            # Try as ObjectId first, then as string
+                            if isinstance(ing_id, str):
+                                try:
+                                    ing_id_obj = ObjectId(ing_id)
+                                except:
+                                    print(f"⚠️ Invalid ObjectId format in distributor: {ing_id}")
+                                    continue
+                            else:
+                                ing_id_obj = ing_id
+                            
+                            ing_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
+                            if ing_doc:
+                                ingredient_names.append(ing_doc.get("ingredient_name", ""))
+                                print(f"✅ Found ingredient name for ID {ing_id}: {ing_doc.get('ingredient_name', 'N/A')}")
+                            else:
+                                print(f"❌ ERROR: Ingredient ID {ing_id} not found in branded_ingredients collection!")
+                        except Exception as e:
+                            print(f"⚠️ Error looking up ingredient ID {ing_id}: {e}")
+                            pass
+                    # Use first name found, or join if multiple
+                    if ingredient_names:
+                        distributor["ingredientName"] = ingredient_names[0] if len(ingredient_names) == 1 else ", ".join(ingredient_names)
+                    else:
+                        # If IDs don't resolve, fallback to stored name or query parameter
+                        distributor["ingredientName"] = distributor.get("ingredientName", ingredient_name)
+                else:
+                    # Backward compatibility: if no ingredientIds, use stored ingredientName or query parameter
+                    if "ingredientName" not in distributor:
+                        distributor["ingredientName"] = ingredient_name
         
         # Filter distributors by supplier match if ingredient_id is provided
         # CRITICAL: A distributor only shows if BOTH ingredient AND supplier match
@@ -2042,20 +2104,36 @@ async def get_distributor_by_ingredient(
                         # Check if ingredient's supplier_id matches any of distributor's principlesSupplierIds
                         supplier_matches = False
                         if ingredient_supplier_id and distributor_supplier_ids:
-                            # Convert supplier_id to string for comparison
+                            # Convert ingredient supplier_id to string for comparison
                             ingredient_supplier_id_str = str(ingredient_supplier_id)
+                            
                             # Check if any distributor supplier ID matches
+                            # Handle both string and ObjectId formats
                             for dist_supplier_id in distributor_supplier_ids:
-                                if str(dist_supplier_id) == ingredient_supplier_id_str:
+                                dist_supplier_id_str = str(dist_supplier_id)
+                                # Compare as strings (handles both ObjectId and string formats)
+                                if dist_supplier_id_str == ingredient_supplier_id_str:
                                     supplier_matches = True
+                                    print(f"   🔍 Supplier match found: {dist_supplier_id_str} == {ingredient_supplier_id_str}")
                                     break
-                        
-                        # Only include distributor if supplier matches
-                        if supplier_matches:
-                            filtered_distributors.append(distributor)
-                            print(f"✅ Matched distributor {distributor.get('firmName', 'N/A')} for ingredient {ingredient_name} (supplier match)")
+                            
+                            if not supplier_matches:
+                                print(f"   ❌ No supplier match: ingredient supplier={ingredient_supplier_id_str} (type: {type(ingredient_supplier_id)}), distributor suppliers={[str(s) for s in distributor_supplier_ids]} (types: {[type(s) for s in distributor_supplier_ids]})")
+                            
+                            # Only include distributor if supplier matches
+                            if supplier_matches:
+                                filtered_distributors.append(distributor)
+                                print(f"✅ Matched distributor {distributor.get('firmName', 'N/A')} for ingredient {ingredient_name} (supplier match: {ingredient_supplier_id_str})")
+                            else:
+                                print(f"⚠️ Distributor {distributor.get('firmName', 'N/A')} ingredient matches but supplier doesn't match for {ingredient_name} (ingredient supplier: {ingredient_supplier_id_str}, distributor suppliers: {distributor_supplier_ids})")
                         else:
-                            print(f"⚠️ Distributor {distributor.get('firmName', 'N/A')} ingredient matches but supplier doesn't match for {ingredient_name}")
+                            # If ingredient has no supplier_id OR distributor has no principlesSupplierIds,
+                            # still show the distributor (backward compatibility and for ingredients without supplier data)
+                            filtered_distributors.append(distributor)
+                            if not ingredient_supplier_id:
+                                print(f"⚠️ Ingredient {ingredient_name} has no supplier_id, matching by ingredient only")
+                            if not distributor_supplier_ids:
+                                print(f"⚠️ Distributor {distributor.get('firmName', 'N/A')} has no principlesSupplierIds, matching by ingredient only")
                     # Use filtered list
                     return filtered_distributors if filtered_distributors else []
                 else:
@@ -2191,35 +2269,72 @@ async def get_distributors_by_ingredients(
         all_distributors = await distributor_col.find(query).sort("createdAt", -1).to_list(length=None)
         
         # Process distributors: convert ObjectId to string and fetch ingredient names
+        # Also enrich with supplier-ingredient mappings if available
         processed_distributors = []
         for distributor in all_distributors:
             distributor["_id"] = str(distributor["_id"])
             
-            # Fetch ingredientName from ingredientIds
-            if "ingredientIds" in distributor and distributor.get("ingredientIds"):
-                ingredient_names = []
-                for ing_id in distributor["ingredientIds"]:
-                    try:
-                        if isinstance(ing_id, str):
-                            try:
-                                ing_id_obj = ObjectId(ing_id)
-                            except:
-                                continue
-                        else:
-                            ing_id_obj = ing_id
-                        
-                        ing_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
-                        if ing_doc:
-                            ingredient_names.append(ing_doc.get("ingredient_name", ""))
-                    except Exception as e:
-                        pass
+            # Check if distributor has supplierIngredientMappings (new structure)
+            supplier_mappings = distributor.get("supplierIngredientMappings", [])
+            if supplier_mappings:
+                # Enrich mappings with ingredient details
+                enriched_mappings = []
+                for mapping in supplier_mappings:
+                    ingredient_details = []
+                    for ing_id_str in mapping.get("ingredientIds", []):
+                        try:
+                            ing_id_obj = ObjectId(ing_id_str) if isinstance(ing_id_str, str) else ing_id_str
+                            ing_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
+                            if ing_doc:
+                                ingredient_details.append({
+                                    "ingredientId": str(ing_id_obj),
+                                    "ingredientName": ing_doc.get("ingredient_name", ""),
+                                    "originalInciName": ing_doc.get("original_inci_name", ""),
+                                    "category": ing_doc.get("category_decided", "")
+                                })
+                        except Exception as e:
+                            pass
+                    
+                    enriched_mappings.append({
+                        "supplierId": mapping.get("supplierId", ""),
+                        "supplierName": mapping.get("supplierName", ""),
+                        "ingredients": ingredient_details
+                    })
                 
-                if ingredient_names:
-                    distributor["ingredientName"] = ingredient_names[0] if len(ingredient_names) == 1 else ", ".join(ingredient_names)
+                distributor["supplierIngredientMappings"] = enriched_mappings
+                
+                # Set ingredientName for backward compatibility (first ingredient from first supplier)
+                if enriched_mappings and enriched_mappings[0].get("ingredients"):
+                    first_ingredient = enriched_mappings[0]["ingredients"][0]
+                    distributor["ingredientName"] = first_ingredient.get("ingredientName", "")
                 else:
                     distributor["ingredientName"] = distributor.get("ingredientName", "")
             else:
-                distributor["ingredientName"] = distributor.get("ingredientName", "")
+                # Backward compatibility: Fetch ingredientName from ingredientIds
+                if "ingredientIds" in distributor and distributor.get("ingredientIds"):
+                    ingredient_names = []
+                    for ing_id in distributor["ingredientIds"]:
+                        try:
+                            if isinstance(ing_id, str):
+                                try:
+                                    ing_id_obj = ObjectId(ing_id)
+                                except:
+                                    continue
+                            else:
+                                ing_id_obj = ing_id
+                            
+                            ing_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
+                            if ing_doc:
+                                ingredient_names.append(ing_doc.get("ingredient_name", ""))
+                        except Exception as e:
+                            pass
+                    
+                    if ingredient_names:
+                        distributor["ingredientName"] = ingredient_names[0] if len(ingredient_names) == 1 else ", ".join(ingredient_names)
+                    else:
+                        distributor["ingredientName"] = distributor.get("ingredientName", "")
+                else:
+                    distributor["ingredientName"] = distributor.get("ingredientName", "")
             
             processed_distributors.append(distributor)
         
@@ -2269,21 +2384,40 @@ async def get_distributors_by_ingredients(
                             # Check if ingredient's supplier_id matches any of distributor's principlesSupplierIds
                             supplier_matches = False
                             if ingredient_supplier_id and distributor_supplier_ids:
-                                # Convert supplier_id to string for comparison
+                                # Convert ingredient supplier_id to string for comparison
                                 ingredient_supplier_id_str = str(ingredient_supplier_id)
+                                
                                 # Check if any distributor supplier ID matches
+                                # Handle both string and ObjectId formats
                                 for dist_supplier_id in distributor_supplier_ids:
-                                    if str(dist_supplier_id) == ingredient_supplier_id_str:
+                                    dist_supplier_id_str = str(dist_supplier_id)
+                                    # Compare as strings (handles both ObjectId and string formats)
+                                    if dist_supplier_id_str == ingredient_supplier_id_str:
                                         supplier_matches = True
+                                        print(f"   🔍 Supplier match found: {dist_supplier_id_str} == {ingredient_supplier_id_str}")
                                         break
-                            
-                            # Only add distributor if BOTH ingredient AND supplier match
-                            if supplier_matches:
+                                
+                                if not supplier_matches:
+                                    print(f"   ❌ No supplier match: ingredient supplier={ingredient_supplier_id_str} (type: {type(ingredient_supplier_id)}), distributor suppliers={[str(s) for s in distributor_supplier_ids]} (types: {[type(s) for s in distributor_supplier_ids]})")
+                                
+                                # Only add distributor if supplier matches
+                                if supplier_matches:
+                                    if ingredient_name not in result_map:
+                                        result_map[ingredient_name] = []
+                                    result_map[ingredient_name].append(distributor)
+                                    print(f"✅ Matched distributor {distributor.get('firmName', 'N/A')} for ingredient {ingredient_name} (supplier match: {ingredient_supplier_id_str})")
+                                else:
+                                    print(f"⚠️ Distributor {distributor.get('firmName', 'N/A')} ingredient matches but supplier doesn't match for {ingredient_name} (ingredient supplier: {ingredient_supplier_id_str}, distributor suppliers: {distributor_supplier_ids})")
+                            else:
+                                # If ingredient has no supplier_id OR distributor has no principlesSupplierIds,
+                                # still show the distributor (backward compatibility and for ingredients without supplier data)
                                 if ingredient_name not in result_map:
                                     result_map[ingredient_name] = []
                                 result_map[ingredient_name].append(distributor)
-                                print(f"✅ Matched distributor {distributor.get('firmName', 'N/A')} for ingredient {ingredient_name} (supplier match)")
-                            # If supplier doesn't match, don't add (skip this distributor for this ingredient)
+                                if not ingredient_supplier_id:
+                                    print(f"⚠️ Ingredient {ingredient_name} has no supplier_id, matching by ingredient only")
+                                if not distributor_supplier_ids:
+                                    print(f"⚠️ Distributor {distributor.get('firmName', 'N/A')} has no principlesSupplierIds, matching by ingredient only")
                         else:
                             # If ingredient doc not found, skip supplier check but still match by ingredient
                             # (backward compatibility for ingredients without supplier_id)
@@ -3347,22 +3481,40 @@ async def get_decode_history_detail(
                                                 # Check if ingredient's supplier_id matches any of distributor's principlesSupplierIds
                                                 supplier_matches = False
                                                 if ingredient_supplier_id and distributor_supplier_ids:
-                                                    # Convert supplier_id to string for comparison
+                                                    # Convert ingredient supplier_id to string for comparison
                                                     ingredient_supplier_id_str = str(ingredient_supplier_id)
+                                                    
                                                     # Check if any distributor supplier ID matches
+                                                    # Handle both string and ObjectId formats
                                                     for dist_supplier_id in distributor_supplier_ids:
-                                                        if str(dist_supplier_id) == ingredient_supplier_id_str:
+                                                        dist_supplier_id_str = str(dist_supplier_id)
+                                                        # Compare as strings (handles both ObjectId and string formats)
+                                                        if dist_supplier_id_str == ingredient_supplier_id_str:
                                                             supplier_matches = True
+                                                            print(f"   🔍 Supplier match found: {dist_supplier_id_str} == {ingredient_supplier_id_str}")
                                                             break
-                                                
-                                                # Only add distributor if BOTH ingredient AND supplier match
-                                                if supplier_matches:
+                                                    
+                                                    if not supplier_matches:
+                                                        print(f"   ❌ No supplier match: ingredient supplier={ingredient_supplier_id_str} (type: {type(ingredient_supplier_id)}), distributor suppliers={[str(s) for s in distributor_supplier_ids]} (types: {[type(s) for s in distributor_supplier_ids]})")
+                                                    
+                                                    # Only add distributor if supplier matches
+                                                    if supplier_matches:
+                                                        if ingredient_name not in refreshed_distributor_info:
+                                                            refreshed_distributor_info[ingredient_name] = []
+                                                        refreshed_distributor_info[ingredient_name].append(distributor)
+                                                        print(f"✅ Matched distributor {distributor.get('firmName', 'N/A')} for ingredient {ingredient_name} (supplier match: {ingredient_supplier_id_str})")
+                                                    else:
+                                                        print(f"⚠️ Distributor {distributor.get('firmName', 'N/A')} ingredient matches but supplier doesn't match for {ingredient_name} (ingredient supplier: {ingredient_supplier_id_str}, distributor suppliers: {distributor_supplier_ids})")
+                                                else:
+                                                    # If ingredient has no supplier_id OR distributor has no principlesSupplierIds,
+                                                    # still show the distributor (backward compatibility and for ingredients without supplier data)
                                                     if ingredient_name not in refreshed_distributor_info:
                                                         refreshed_distributor_info[ingredient_name] = []
                                                     refreshed_distributor_info[ingredient_name].append(distributor)
-                                                    print(f"✅ Matched distributor {distributor.get('firmName', 'N/A')} for ingredient {ingredient_name} (supplier match)")
-                                                else:
-                                                    print(f"⚠️ Distributor {distributor.get('firmName', 'N/A')} ingredient matches but supplier doesn't match for {ingredient_name}")
+                                                    if not ingredient_supplier_id:
+                                                        print(f"⚠️ Ingredient {ingredient_name} has no supplier_id, matching by ingredient only")
+                                                    if not distributor_supplier_ids:
+                                                        print(f"⚠️ Distributor {distributor.get('firmName', 'N/A')} has no principlesSupplierIds, matching by ingredient only")
                                             else:
                                                 # If ingredient doc not found, skip supplier check but still match by ingredient
                                                 # (backward compatibility for ingredients without supplier_id)
@@ -4387,65 +4539,73 @@ Return your ranking as JSON with the structure specified in the system prompt.""
 
 @router.post("/save-market-research-history")
 async def save_market_research_history(
-    payload: dict,
+    request: SaveMarketResearchHistoryRequest,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
     Save market research history (user-specific)
     
-    Request body:
-    {
-        "name": "Product Name",
-        "tag": "optional-tag",
-        "input_type": "inci" or "url",
-        "input_data": "ingredient list or URL",
-        "research_result": {...} (optional),
-        "ai_analysis": "AI analysis message",
-        "ai_product_type": "Product type",
-        "ai_reasoning": "AI reasoning",
-        "notes": "User notes"
-    }
+    Request body includes:
+    - name: Name for this market research (required)
+    - tag: Optional tag for categorization
+    - notes: Optional user notes
+    - input_type: Input type ('inci' or 'url') (required)
+    - input_data: Input data (INCI list or URL) (required)
+    - research_result: Full market research result (optional)
+    - ai_analysis: AI analysis message (optional)
+    - ai_product_type: Product type identified by AI (optional)
+    - ai_reasoning: AI reasoning (optional)
     
     Authentication:
     - Requires JWT token in Authorization header
     - User ID is automatically extracted from the JWT token
     """
     try:
-        if "name" not in payload:
-            raise HTTPException(status_code=400, detail="name is required")
-        if "input_type" not in payload:
-            raise HTTPException(status_code=400, detail="input_type is required")
-        if "input_data" not in payload:
-            raise HTTPException(status_code=400, detail="input_data is required")
-        
         # Extract user_id from JWT token (already verified by verify_jwt_token)
-        user_id_value = current_user.get("user_id") or current_user.get("_id") or payload.get("user_id")
+        user_id_value = current_user.get("user_id") or current_user.get("_id")
         if not user_id_value:
             raise HTTPException(status_code=400, detail="User ID not found in JWT token")
         
-        name = payload.get("name", "").strip()
-        tag = payload.get("tag", "").strip() or None
-        input_type = payload.get("input_type", "").lower()
-        input_data = payload.get("input_data", "").strip()
-        research_result = payload.get("research_result")
-        ai_analysis = payload.get("ai_analysis")
-        ai_product_type = payload.get("ai_product_type")
-        ai_reasoning = payload.get("ai_reasoning")
-        notes = payload.get("notes", "").strip() or None
+        # Handle input_data - convert dict to string if needed (for frontend compatibility)
+        input_data_value = request.input_data
+        if isinstance(input_data_value, dict):
+            # If input_data is a dict (from frontend), convert to string format
+            if input_data_value.get("url"):
+                input_data_value = input_data_value["url"]
+            elif input_data_value.get("inci"):
+                input_data_value = input_data_value["inci"]
+            elif input_data_value.get("name"):
+                input_data_value = input_data_value["name"]
+            elif input_data_value.get("ingredient"):
+                ingredient = input_data_value["ingredient"]
+                input_data_value = ingredient if isinstance(ingredient, str) else ", ".join(ingredient) if isinstance(ingredient, list) else str(ingredient)
+            else:
+                input_data_value = str(input_data_value)
+        elif isinstance(input_data_value, str):
+            input_data_value = input_data_value.strip()
+        else:
+            input_data_value = str(input_data_value)
         
-        if input_type not in ["inci", "url"]:
-            raise HTTPException(status_code=400, detail="input_type must be 'inci' or 'url'")
+        # Validate input_type
+        input_type = request.input_type.lower()
+        if input_type not in ["inci", "url", "name", "ingredient"]:
+            raise HTTPException(status_code=400, detail="input_type must be 'inci', 'url', 'name', or 'ingredient'")
+        
+        # Prepare fields with proper handling
+        name = request.name.strip() if request.name else ""
+        tag = request.tag.strip() if request.tag else None
+        notes = request.notes.strip() if request.notes else None
         
         history_doc = {
             "user_id": user_id_value,
             "name": name,
             "tag": tag,
             "input_type": input_type,
-            "input_data": input_data,
-            "research_result": research_result,
-            "ai_analysis": ai_analysis,
-            "ai_product_type": ai_product_type,
-            "ai_reasoning": ai_reasoning,
+            "input_data": input_data_value,
+            "research_result": request.research_result,
+            "ai_analysis": request.ai_analysis,
+            "ai_product_type": request.ai_product_type,
+            "ai_reasoning": request.ai_reasoning,
             "notes": notes,
             "created_at": (datetime.now(timezone(timedelta(hours=5, minutes=30)))).isoformat()
         }

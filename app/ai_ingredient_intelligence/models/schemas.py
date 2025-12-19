@@ -381,8 +381,8 @@ class SaveMarketResearchHistoryRequest(BaseModel):
     """Request schema for saving market research history"""
     name: str = Field(..., description="Name for this market research")
     tag: Optional[str] = Field(None, description="Tag for categorization")
-    input_type: str = Field(..., description="Input type: 'inci' or 'url'")
-    input_data: str = Field(..., description="Input data (INCI list or URL)")
+    input_type: str = Field(..., description="Input type: 'inci', 'url', 'name', or 'ingredient'")
+    input_data: Union[str, Dict[str, Any]] = Field(..., description="Input data (INCI list, URL, name, ingredient, or dict with url/inci/name/ingredient fields)")
     research_result: Optional[Dict] = Field(None, description="Full market research result")
     ai_analysis: Optional[str] = Field(None, description="AI analysis message")
     ai_product_type: Optional[str] = Field(None, description="Product type identified by AI")

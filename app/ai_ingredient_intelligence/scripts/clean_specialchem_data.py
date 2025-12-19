@@ -974,17 +974,19 @@ async def main():
                 # OPTIMIZED: Use batch processing with 25-30 ingredients per API call to reduce costs
                 api_batch_size = 30  # Process 30 ingredients in one API call (increased from 8)
                 processing_batch_size = 50  # Process 50 records at a time for checkpointing
-                total_batches = (len(active_data) - enhancement_start + processing_batch_size - 1) // processing_batch_size
+                
+                # Create the range of indices to process
+                batch_range = list(range(enhancement_start, len(active_data), processing_batch_size))
+                actual_batch_count = len(batch_range)
                 
                 async with aiohttp.ClientSession() as session:
                     pbar = tqdm(
-                        range(enhancement_start, len(active_data), processing_batch_size),
-                        desc="🤖 Enhancing (Batched, Actives Only)",
-                        initial=enhancement_start // processing_batch_size,
-                        total=total_batches,
+                        batch_range,
+                        desc="🤖 Enhancing Actives",
+                        total=actual_batch_count,
                         unit="batch",
                         ncols=100,
-                        bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} batches [{elapsed}<{remaining}, {rate_fmt}]'
+                        bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]'
                     )
                     
                     for i in pbar:
@@ -1004,9 +1006,9 @@ async def main():
                                 # Check for credits exhausted
                                 if batch_results and isinstance(batch_results[0], dict) and batch_results[0].get("error") == "insufficient_quota":
                                     credits_exhausted_detected = True
-                                    print(f"\n❌ CREDITS EXHAUSTED detected!")
-                                    print(f"   Message: {batch_results[0].get('message', 'Insufficient quota')}")
-                                    print(f"   ⏭️  Stopping enhancement - will continue with cleaning only")
+                                    tqdm.write(f"\n❌ CREDITS EXHAUSTED detected!")
+                                    tqdm.write(f"   Message: {batch_results[0].get('message', 'Insufficient quota')}")
+                                    tqdm.write(f"   ⏭️  Stopping enhancement - will continue with cleaning only")
                                     break
                                 
                                 all_results.extend(batch_results)
@@ -1108,12 +1110,12 @@ async def main():
                                 # Find recently enhanced records to show (show up to 2 examples)
                                 enhanced_in_batch = [r for r in all_results if isinstance(r, dict) and r.get("enhanced_description")]
                                 if enhanced_in_batch:
-                                    print(f"\n   📊 Batch {i//processing_batch_size + 1}: Enhanced {batch_enhanced}/{len(processing_batch)} ingredients | Total enhanced: {enhanced_count}/{active_processed}")
+                                    tqdm.write(f"\n   📊 Batch {i//processing_batch_size + 1}: Enhanced {batch_enhanced}/{len(processing_batch)} ingredients | Total enhanced: {enhanced_count}/{active_processed}")
                                     # Show up to 2 examples
                                     for result in enhanced_in_batch[:2]:
                                         name = result.get("ingredient_name", "Unknown")[:40]
                                         category = result.get("category_decided", "N/A")
-                                        print(f"      ✅ {name} → {category}")
+                                        tqdm.write(f"      ✅ {name} → {category}")
                             
                             # Save checkpoint after each processing batch
                             save_checkpoint({
@@ -1131,9 +1133,11 @@ async def main():
                                 "failed_count": failed_count,
                                 "skipped_excipients": skipped_excipients
                             })
-                            pbar.set_description(f"🤖 Enhancing Actives (saved @ {i + processing_batch_size})")
+                            # Update description less frequently to avoid overlapping text
+                            if (i // processing_batch_size) % 10 == 0:
+                                pbar.set_description(f"🤖 Enhancing Actives (saved @ {i + processing_batch_size})")
                         except Exception as e:
-                            print(f"\n⚠️  Error processing batch {i//processing_batch_size + 1}: {e}")
+                            tqdm.write(f"\n⚠️  Error processing batch {i//processing_batch_size + 1}: {e}")
                             failed_count += len(processing_batch)
                             pbar.set_postfix({'error': 'yes', 'failed': failed_count})
                     
