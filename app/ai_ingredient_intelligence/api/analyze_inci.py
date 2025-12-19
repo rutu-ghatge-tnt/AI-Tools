@@ -73,7 +73,7 @@ from app.ai_ingredient_intelligence.models.schemas import (
     MarketResearchHistoryDetailResponse,  # ⬅️ new schema for getting market research history detail
 )
 from app.ai_ingredient_intelligence.db.mongodb import db
-from app.ai_ingredient_intelligence.db.collections import distributor_col, decode_history_col, compare_history_col, market_research_history_col, branded_ingredients_col, inci_col
+from app.ai_ingredient_intelligence.db.collections import distributor_col, decode_history_col, compare_history_col, market_research_history_col, branded_ingredients_col, inci_col, suppliers_col
 from datetime import datetime, timezone, timedelta
 from bson import ObjectId
 
@@ -1607,24 +1607,6 @@ async def register_distributor(
                     if ing_id not in ingredient_ids:
                         ingredient_ids.append(ing_id)
                         print(f"✅ Found ingredient ID (partial): {ing_id} for '{branded_ingredient.get('ingredient_name', 'N/A')}'")
-            
-            # Strategy 4: Try matching against INCI names in the ingredient's inci_ids
-            if len(ingredient_ids) == 0:
-                print(f"🔍 Trying INCI name match...")
-                # First, get the INCI document that matches the name
-                inci_doc = await inci_col.find_one(
-                    {"inciName": {"$regex": f"^{ingredient_name_clean}$", "$options": "i"}}
-                )
-                if inci_doc:
-                    inci_id = inci_doc["_id"]
-                    # Now find branded ingredients that have this INCI in their inci_ids
-                    async for branded_ingredient in branded_ingredients_col.find(
-                        {"inci_ids": inci_id}
-                    ):
-                        ing_id = str(branded_ingredient["_id"])
-                        if ing_id not in ingredient_ids:
-                            ingredient_ids.append(ing_id)
-                            print(f"✅ Found ingredient ID (via INCI): {ing_id} for '{branded_ingredient.get('ingredient_name', 'N/A')}'")
         
         # Final verification: Check all found IDs actually exist in the collection
         # This is CRITICAL - we must verify each ID can be queried
@@ -1678,7 +1660,7 @@ async def register_distributor(
         
         if len(ingredient_ids) == 0:
             print(f"❌ ERROR: No valid ingredient IDs found for '{ingredient_name_clean}'. Please check if the ingredient exists in the database.")
-            print(f"   Searched in: ingredient_name field and INCI names")
+            print(f"   Searched in: branded_ingredients collection (ingredient_name field)")
             # Let's also show what ingredients exist with similar names for debugging
             print(f"   Debug: Searching for similar ingredient names...")
             async for similar in branded_ingredients_col.find(
@@ -1687,6 +1669,39 @@ async def register_distributor(
                 print(f"   Similar: '{similar.get('ingredient_name', 'N/A')}' (ID: {similar['_id']})")
         else:
             print(f"✅ Successfully found and verified {len(ingredient_ids)} ingredient ID(s): {ingredient_ids}")
+        
+        # Map principal suppliers to supplier IDs from ingre_suppliers collection
+        principles_suppliers = payload.get("principlesSuppliers", [])
+        supplier_ids = []
+        supplier_names_mapped = []
+        
+        if principles_suppliers:
+            print(f"\n🔍 Mapping principal suppliers to supplier IDs...")
+            for supplier_name in principles_suppliers:
+                if not supplier_name or not supplier_name.strip():
+                    continue
+                
+                supplier_name_clean = supplier_name.strip()
+                print(f"   Looking up supplier: '{supplier_name_clean}'")
+                
+                # Try exact match first
+                supplier_doc = await suppliers_col.find_one(
+                    {"supplierName": {"$regex": f"^{re.escape(supplier_name_clean)}$", "$options": "i"}}
+                )
+                
+                if supplier_doc:
+                    supplier_id = str(supplier_doc["_id"])
+                    if supplier_id not in supplier_ids:
+                        supplier_ids.append(supplier_id)
+                        supplier_names_mapped.append(supplier_doc.get("supplierName", supplier_name_clean))
+                        print(f"   ✅ Found supplier ID: {supplier_id} for '{supplier_doc.get('supplierName', 'N/A')}'")
+                else:
+                    # If not found, still keep the name for reference
+                    print(f"   ⚠️ Supplier '{supplier_name_clean}' not found in suppliers collection, will store as name only")
+                    supplier_names_mapped.append(supplier_name_clean)
+            
+            print(f"✅ Mapped {len(supplier_ids)} supplier ID(s): {supplier_ids}")
+            print(f"   Supplier names: {supplier_names_mapped}")
         
         # Validate and prepare contact persons data
         contact_persons_data = []
@@ -1706,13 +1721,15 @@ async def register_distributor(
         # Store only ingredientIds (list) - names will be fetched from IDs when needed
         # Do NOT store ingredientName - it will be fetched from IDs when querying
         # IMPORTANT: Store IDs as strings (MongoDB will handle conversion when needed)
+        # Store supplier IDs and names - primarily mapped to suppliers collection
         distributor_doc = {
             "firmName": payload["firmName"],
             "category": payload["category"],
             "registeredAddress": payload["registeredAddress"],
             "contactPersons": contact_persons_data,  # Use validated and cleaned contact persons
             "ingredientIds": ingredient_ids,  # Store ONLY list of ingredient IDs (as strings) - names fetched from IDs
-            "principlesSuppliers": payload["principlesSuppliers"],
+            "principlesSuppliers": payload["principlesSuppliers"],  # Keep original names for display
+            "principlesSupplierIds": supplier_ids,  # Store supplier IDs mapped from ingre_suppliers collection
             "yourInfo": payload["yourInfo"],
             "acceptTerms": payload["acceptTerms"],
             "status": "under review",  # under review, approved, rejected
@@ -1724,6 +1741,7 @@ async def register_distributor(
         print(f"   - Firm: {payload['firmName']}")
         print(f"   - Ingredient Name: {ingredient_name_clean}")
         print(f"   - Ingredient IDs: {ingredient_ids}")
+        print(f"   - Principal Supplier IDs: {supplier_ids}")
         print(f"   - Contact Persons: {len(contact_persons_data)}")
         
         # CRITICAL: Final verification before saving - test EXACTLY how we'll query them later
@@ -3049,6 +3067,191 @@ async def get_decode_history_detail(
         # Ensure analysis_result is None if status is pending or failed
         if item.get("status") in ["pending", "failed"]:
             item["analysis_result"] = None
+        
+        # Refresh distributor_info in analysis_result to include newly registered distributors
+        # This ensures that when viewing history, users see the latest distributors including
+        # any that were registered after the analysis was originally performed
+        if item.get("analysis_result") and isinstance(item["analysis_result"], dict):
+            analysis_result = item["analysis_result"]
+            
+            # Extract branded ingredients from analysis_result to refresh distributor info
+            branded_ingredients = []
+            
+            # Check for new format (detected) first
+            if "detected" in analysis_result and isinstance(analysis_result["detected"], list):
+                for group in analysis_result["detected"]:
+                    if isinstance(group, dict) and "items" in group:
+                        for item_data in group.get("items", []):
+                            if isinstance(item_data, dict) and "ingredient_name" in item_data:
+                                branded_ingredients.append({
+                                    "name": item_data.get("ingredient_name", ""),
+                                    "id": item_data.get("ingredient_id")
+                                })
+            
+            # Check for branded_grouped format
+            if not branded_ingredients and "branded_grouped" in analysis_result and isinstance(analysis_result["branded_grouped"], list):
+                for group in analysis_result["branded_grouped"]:
+                    if isinstance(group, dict) and "items" in group:
+                        for item_data in group.get("items", []):
+                            if isinstance(item_data, dict) and "ingredient_name" in item_data:
+                                branded_ingredients.append({
+                                    "name": item_data.get("ingredient_name", ""),
+                                    "id": item_data.get("ingredient_id")
+                                })
+            
+            # Check for branded_ingredients format (flat list)
+            if not branded_ingredients and "branded_ingredients" in analysis_result and isinstance(analysis_result["branded_ingredients"], list):
+                for item_data in analysis_result["branded_ingredients"]:
+                    if isinstance(item_data, dict) and "ingredient_name" in item_data:
+                        branded_ingredients.append({
+                            "name": item_data.get("ingredient_name", ""),
+                            "id": item_data.get("ingredient_id")
+                        })
+            
+            # Refresh distributor info if we found branded ingredients
+            # This ensures newly registered distributors appear when viewing history
+            if branded_ingredients:
+                try:
+                    # Collect ingredient IDs for querying
+                    all_ingredient_ids = []
+                    ingredient_id_map = {}  # Maps ingredient_name -> list of IDs
+                    
+                    for ing in branded_ingredients:
+                        ingredient_name = ing["name"]
+                        ingredient_id = ing.get("id")
+                        
+                        if ingredient_id:
+                            try:
+                                ObjectId(ingredient_id)  # Validate format
+                                all_ingredient_ids.append(ingredient_id)
+                                if ingredient_name not in ingredient_id_map:
+                                    ingredient_id_map[ingredient_name] = []
+                                ingredient_id_map[ingredient_name].append(ingredient_id)
+                            except:
+                                pass
+                    
+                    if all_ingredient_ids:
+                        # Build query to find distributors by ingredientIds
+                        ingredient_ids_as_objectids = []
+                        for ing_id_str in all_ingredient_ids:
+                            try:
+                                ingredient_ids_as_objectids.append(ObjectId(ing_id_str))
+                            except:
+                                pass
+                        
+                        query_conditions = []
+                        if ingredient_ids_as_objectids:
+                            query_conditions.append({
+                                "$or": [
+                                    {"ingredientIds": {"$in": ingredient_ids_as_objectids}},  # ObjectId format
+                                    {"ingredientIds": {"$in": all_ingredient_ids}}  # String format
+                                ]
+                            })
+                        
+                        # Also search by ingredient names for backward compatibility
+                        all_ingredient_names = [ing["name"] for ing in branded_ingredients]
+                        if all_ingredient_names:
+                            name_regex_conditions = [
+                                {"ingredientName": {"$regex": f"^{name}$", "$options": "i"}}
+                                for name in all_ingredient_names
+                            ]
+                            if name_regex_conditions:
+                                query_conditions.append({"$or": name_regex_conditions})
+                        
+                        if query_conditions:
+                            query = {"$or": query_conditions} if len(query_conditions) > 1 else query_conditions[0]
+                            
+                            # Query distributors
+                            all_distributors = await distributor_col.find(query).sort("createdAt", -1).to_list(length=None)
+                            
+                            # Process and group distributors by ingredient name
+                            processed_distributors = []
+                            for distributor in all_distributors:
+                                distributor["_id"] = str(distributor["_id"])
+                                
+                                # Fetch ingredientName from ingredientIds
+                                if "ingredientIds" in distributor and distributor.get("ingredientIds"):
+                                    ingredient_names = []
+                                    for ing_id in distributor["ingredientIds"]:
+                                        try:
+                                            if isinstance(ing_id, str):
+                                                try:
+                                                    ing_id_obj = ObjectId(ing_id)
+                                                except:
+                                                    continue
+                                            else:
+                                                ing_id_obj = ing_id
+                                            
+                                            ing_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
+                                            if ing_doc:
+                                                ingredient_names.append(ing_doc.get("ingredient_name", ""))
+                                        except Exception as e:
+                                            pass
+                                    
+                                    if ingredient_names:
+                                        distributor["ingredientName"] = ingredient_names[0] if len(ingredient_names) == 1 else ", ".join(ingredient_names)
+                                    else:
+                                        distributor["ingredientName"] = distributor.get("ingredientName", "")
+                                else:
+                                    distributor["ingredientName"] = distributor.get("ingredientName", "")
+                                
+                                processed_distributors.append(distributor)
+                            
+                            # Group distributors by ingredient name
+                            refreshed_distributor_info = {}
+                            for ing in branded_ingredients:
+                                ingredient_name = ing["name"]
+                                refreshed_distributor_info[ingredient_name] = []
+                            
+                            # Match distributors to ingredients
+                            for distributor in processed_distributors:
+                                distributor_ingredient_name = distributor.get("ingredientName", "")
+                                matched = False
+                                
+                                for ing in branded_ingredients:
+                                    ingredient_name = ing["name"]
+                                    normalized_name = ingredient_name.strip().lower()
+                                    distributor_normalized = distributor_ingredient_name.strip().lower()
+                                    
+                                    # Match by name or ingredient ID
+                                    if (normalized_name == distributor_normalized or 
+                                        (ingredient_name in ingredient_id_map and 
+                                         distributor.get("ingredientIds") and
+                                         any(str(ing_id) in [str(x) for x in distributor.get("ingredientIds", [])] 
+                                             for ing_id in ingredient_id_map[ingredient_name]))):
+                                        if ingredient_name not in refreshed_distributor_info:
+                                            refreshed_distributor_info[ingredient_name] = []
+                                        refreshed_distributor_info[ingredient_name].append(distributor)
+                                        matched = True
+                                        break
+                                
+                                # Fallback: fuzzy match by name
+                                if not matched and distributor_ingredient_name:
+                                    for ing in branded_ingredients:
+                                        ingredient_name = ing["name"]
+                                        if ingredient_name.strip().lower() == distributor_ingredient_name.strip().lower():
+                                            if ingredient_name not in refreshed_distributor_info:
+                                                refreshed_distributor_info[ingredient_name] = []
+                                            refreshed_distributor_info[ingredient_name].append(distributor)
+                                            break
+                            
+                            # Update analysis_result with fresh distributor info
+                            analysis_result["distributor_info"] = refreshed_distributor_info
+                            print(f"✅ Refreshed distributor_info for history {history_id}: {len(refreshed_distributor_info)} ingredients with distributors")
+                        else:
+                            # No valid query conditions
+                            if "distributor_info" not in analysis_result:
+                                analysis_result["distributor_info"] = {}
+                    else:
+                        # No ingredient IDs found
+                        if "distributor_info" not in analysis_result:
+                            analysis_result["distributor_info"] = {}
+                        print(f"ℹ️ No ingredient IDs found for history {history_id}")
+                except Exception as e:
+                    print(f"⚠️ Warning: Failed to refresh distributor_info for history {history_id}: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    # Continue with existing distributor_info if refresh fails
         
         return DecodeHistoryDetailResponse(
             item=DecodeHistoryItem(**item)
