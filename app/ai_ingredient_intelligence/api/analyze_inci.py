@@ -1616,7 +1616,6 @@ async def register_distributor(
             
             # Strategy 2: If no exact match, try normalized match (remove special chars, normalize spaces)
             if len(ingredient_ids) == 0:
-                import re
                 normalized_search = re.sub(r'[^\w\s]', '', ingredient_name_clean).strip()
                 normalized_search = re.sub(r'\s+', ' ', normalized_search)
                 print(f"🔍 Trying normalized match: '{normalized_search}'")
