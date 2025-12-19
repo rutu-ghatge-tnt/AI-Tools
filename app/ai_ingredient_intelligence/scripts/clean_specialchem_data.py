@@ -1030,10 +1030,19 @@ async def main():
                                 })
                                 break
                             
-                            # Track what was filled/enhanced
+                            # Track what was filled/enhanced in this batch
+                            batch_enhanced = 0
+                            batch_filled_inci = 0
+                            batch_filled_cat = 0
+                            batch_filled_comp = 0
+                            batch_filled_apps = 0
+                            batch_filled_props = 0
+                            batch_failed = 0
+                            
                             for j, (original_record, result) in enumerate(zip(processing_batch, all_results)):
                                 if isinstance(result, Exception):
                                     failed_count += 1
+                                    batch_failed += 1
                                     continue
                                 
                                 # Track what was filled/enhanced
@@ -1041,32 +1050,39 @@ async def main():
                                 new_inci_count = len(result.get("inci_names", []))
                                 if new_inci_count > original_inci_count:
                                     filled_inci_count += 1
+                                    batch_filled_inci += 1
                                 
                                 original_cat_count = len(original_record.get("functionality_category_tree", []))
                                 new_cat_count = len(result.get("functionality_category_tree", []))
                                 if new_cat_count > original_cat_count:
                                     filled_category_count += 1
+                                    batch_filled_cat += 1
                                 
                                 # Track compliance, applications, properties
                                 original_compliance = len(original_record.get("extra_data", {}).get("compliance", []))
                                 new_compliance = len(result.get("extra_data", {}).get("compliance", []))
                                 if new_compliance > original_compliance:
                                     filled_compliance_count += 1
+                                    batch_filled_comp += 1
                                 
                                 original_apps = len(original_record.get("extra_data", {}).get("applications", []))
                                 new_apps = len(result.get("extra_data", {}).get("applications", []))
                                 if new_apps > original_apps:
                                     filled_applications_count += 1
+                                    batch_filled_apps += 1
                                 
                                 original_props = len(original_record.get("extra_data", {}).get("properties", []))
                                 new_props = len(result.get("extra_data", {}).get("properties", []))
                                 if new_props > original_props:
                                     filled_properties_count += 1
+                                    batch_filled_props += 1
                                 
                                 if result.get("enhanced_description"):
                                     enhanced_count += 1
+                                    batch_enhanced += 1
                                 else:
                                     failed_count += 1
+                                    batch_failed += 1
                                 
                                 # Update the original record in cleaned_data
                                 for idx, orig_record in enumerate(cleaned_data):
@@ -1087,15 +1103,17 @@ async def main():
                                 'rate': f"{enhanced_count*100/active_processed:.1f}%" if active_processed > 0 else "0%"
                             })
                             
-                            # Print sample of what was enhanced every 10 batches
-                            if (i // processing_batch_size) % 10 == 0 and enhanced_count > 0:
-                                # Find a recently enhanced record to show
-                                for result in all_results[:5]:
-                                    if isinstance(result, dict) and result.get("enhanced_description"):
+                            # Print batch summary every 5 batches (more frequent updates)
+                            if (i // processing_batch_size) % 5 == 0 and batch_enhanced > 0:
+                                # Find recently enhanced records to show (show up to 2 examples)
+                                enhanced_in_batch = [r for r in all_results if isinstance(r, dict) and r.get("enhanced_description")]
+                                if enhanced_in_batch:
+                                    print(f"\n   📊 Batch {i//processing_batch_size + 1}: Enhanced {batch_enhanced}/{len(processing_batch)} ingredients | Total enhanced: {enhanced_count}/{active_processed}")
+                                    # Show up to 2 examples
+                                    for result in enhanced_in_batch[:2]:
                                         name = result.get("ingredient_name", "Unknown")[:40]
                                         category = result.get("category_decided", "N/A")
-                                        print(f"\n   ✅ Enhanced: {name} → Category: {category}")
-                                        break
+                                        print(f"      ✅ {name} → {category}")
                             
                             # Save checkpoint after each processing batch
                             save_checkpoint({
