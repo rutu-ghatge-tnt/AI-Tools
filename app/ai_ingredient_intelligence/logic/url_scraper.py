@@ -583,12 +583,51 @@ class URLScraper:
                 wait = WebDriverWait(driver, 10)
                 text_parts = []
                 
-                # FIRST: Try to click on accordions/buttons that contain ingredient-related keywords
+                # FIRST: Try to find and click tabs that contain ingredient-related keywords
+                # Many sites (like thedermaco.com) use tabs for ingredients
                 ingredient_keywords = [
                     "ingredient", "ingredients", "key ingredient", "key ingredients",
                     "inci", "composition", "formula", "formulation", "contains",
                     "ingredient list", "full ingredient", "ingredient list"
                 ]
+                
+                # Try to find tab elements first (common pattern: tabs, buttons with tab role, etc.)
+                try:
+                    # Look for tab elements
+                    tab_selectors = [
+                        "[role='tab']", "[class*='tab']", "[class*='Tab']",
+                        "button[class*='tab']", "a[class*='tab']",
+                        "[data-tab]", "[aria-controls]", "[class*='nav-tab']"
+                    ]
+                    
+                    for selector in tab_selectors:
+                        try:
+                            tabs = driver.find_elements(By.CSS_SELECTOR, selector)
+                            for tab in tabs:
+                                try:
+                                    tab_text = tab.text.strip().lower()
+                                    if any(keyword in tab_text for keyword in ingredient_keywords):
+                                        # Scroll and click the tab
+                                        driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", tab)
+                                        time.sleep(0.5)
+                                        try:
+                                            driver.execute_script("arguments[0].click();", tab)
+                                            print(f"Clicked ingredient tab: {tab.text.strip()[:50]}")
+                                            time.sleep(2)  # Wait for tab content to load
+                                        except:
+                                            try:
+                                                tab.click()
+                                                time.sleep(2)
+                                            except:
+                                                pass
+                                except:
+                                    continue
+                        except:
+                            continue
+                except Exception as e:
+                    print(f"Error clicking tabs: {e}")
+                
+                # SECOND: Try to click on accordions/buttons that contain ingredient-related keywords
                 
                 clicked_elements = set()  # Track clicked elements to avoid duplicates
                 
@@ -710,7 +749,9 @@ class URLScraper:
                         ingredient_selectors = [
                             "[class*='ingredient']", "[id*='ingredient']",
                             "[class*='composition']", "[id*='composition']",
-                            "[class*='inci']", "[id*='inci']"
+                            "[class*='inci']", "[id*='inci']",
+                            "[class*='Ingredients']", "[id*='Ingredients']",
+                            "[data-tab-content*='ingredient']", "[aria-labelledby*='ingredient']"
                         ]
                         
                         for selector in ingredient_selectors:
@@ -720,6 +761,28 @@ class URLScraper:
                                     text = element.text.strip()
                                     if text and len(text) > 20:
                                         text_parts.append(text)
+                            except:
+                                continue
+                        
+                        # Also try to find tab panel content after clicking tabs
+                        tab_panel_selectors = [
+                            "[role='tabpanel']", "[class*='tab-panel']", "[class*='tabPanel']",
+                            "[class*='tab-content']", "[id*='tab-content']", "[id*='tabpanel']"
+                        ]
+                        
+                        for selector in tab_panel_selectors:
+                            try:
+                                panels = driver.find_elements(By.CSS_SELECTOR, selector)
+                                for panel in panels:
+                                    # Check if this panel is visible (active tab)
+                                    is_visible = panel.is_displayed()
+                                    if is_visible:
+                                        text = panel.text.strip()
+                                        if text and len(text) > 20:
+                                            # Check if it contains ingredient-related content
+                                            text_lower = text.lower()
+                                            if any(keyword in text_lower for keyword in ingredient_keywords):
+                                                text_parts.append(text)
                             except:
                                 continue
                     except:
@@ -1201,23 +1264,57 @@ Return only the JSON array of INCI names:"""
             prompt = f"""
 You are an expert cosmetic ingredient analyst. Your task is to extract INCI (International Nomenclature of Cosmetic Ingredients) names from the following text scraped from an e-commerce product page.
 
-Please analyze the text and return ONLY a JSON array of INCI names in the exact format shown below.
+CRITICAL REQUIREMENTS:
+1. Extract ONLY valid INCI ingredient names - these are standardized cosmetic ingredient names
+2. Look for sections labeled "Ingredients", "Ingredients List", "INCI", "Composition", "Formula", or similar
+3. Ingredients are typically listed in order of concentration (highest to lowest), separated by commas
+4. Remove any non-ingredient text, headers, descriptions, marketing content, or explanatory text
+5. PRESERVE EXACT INGREDIENT NAMES - DO NOT SHORTEN OR SIMPLIFY:
+   - If the text says "Ethyl Ascorbic Acid", extract it as "Ethyl Ascorbic Acid" (NOT "Ascorbic Acid")
+   - If the text says "Sodium Hyaluronate", extract it as "Sodium Hyaluronate" (NOT "Hyaluronic Acid")
+   - If the text says "Tocopherol", extract it as "Tocopherol" (NOT "Vitamin E")
+   - Preserve ALL parts of compound names (e.g., "Ethylhexylglycerin", "C12-15 Alkyl Benzoate")
+   - DO NOT remove prefixes like "Ethyl", "Sodium", "Potassium", "Methyl", etc.
+   - DO NOT convert to common names or shorten scientific names
+6. Clean up formatting:
+   - Remove extra spaces, punctuation marks that aren't part of ingredient names
+   - Remove brand names, product names, or marketing claims
+   - Keep ingredient names EXACTLY as they appear in the source text
+7. Each ingredient should be a separate string in the array
+8. Preserve the exact order of ingredients as listed (order matters in cosmetics)
+9. If ingredients are listed with percentages or concentrations, remove those numbers
+10. If no valid ingredients found, return empty array []
 
-Requirements:
-1. Extract only valid INCI ingredient names
-2. Remove any non-ingredient text, headers, descriptions, or marketing content
-3. Clean up formatting (remove extra spaces, punctuation, brand names)
-4. Return as a simple JSON array of strings
-5. If no valid ingredients found, return empty array []
-6. Focus on finding ingredient lists, composition sections, or INCI lists
+COMMON INCI INGREDIENT PATTERNS:
+- Usually start with capital letters (e.g., "Water", "Glycerin", "Ascorbic Acid", "Ethyl Ascorbic Acid")
+- May contain numbers (e.g., "C12-15 Alkyl Benzoate")
+- May contain hyphens (e.g., "Ethylhexylglycerin")
+- May contain multiple words (e.g., "Ethyl Ascorbic Acid", "Sodium Hyaluronate", "Aloe Barbadensis Leaf Juice")
+- Often separated by commas in the source text
+
+IMPORTANT EXAMPLES OF COMPOUND NAMES:
+- "Ethyl Ascorbic Acid" (NOT "Ascorbic Acid") - this is a different, more stable form
+- "Sodium Hyaluronate" (NOT "Hyaluronic Acid") - these are different forms
+- "Tocopherol" (NOT "Vitamin E") - use the INCI name
+- "Aloe Barbadensis Leaf Juice" (NOT "Aloe Vera") - use the full INCI name
 
 Example output format:
-["Water", "Glycerin", "Sodium Hyaluronate", "Hyaluronic Acid"]
+["Water", "Ethyl Ascorbic Acid", "Propanediol", "Glycerin", "Sodium Hyaluronate", "Tocopherol", "Ferulic Acid"]
 
 Text to analyze:
-{raw_text[:8000]}  # Limit to 8000 chars to avoid token limits
+{raw_text[:8000]}
 
-Return only the JSON array:"""
+Return ONLY the JSON array of INCI ingredient names, nothing else:"""
+
+            # Debug logging: Check if source text contains compound names
+            raw_text_lower = raw_text[:8000].lower()
+            if "ethyl ascorbic acid" in raw_text_lower or "ethylascorbic" in raw_text_lower.replace(" ", ""):
+                print("DEBUG: Source text contains 'Ethyl Ascorbic Acid' - ensuring it's extracted correctly")
+            if "ascorbic acid" in raw_text_lower and "ethyl" not in raw_text_lower:
+                print("DEBUG: Source text contains 'Ascorbic Acid' (without Ethyl prefix)")
+            
+            # Log a sample of the text being analyzed (first 1000 chars)
+            print(f"DEBUG: Extracting ingredients from text (first 1000 chars): {raw_text[:1000]}")
 
             # Get Claude client (lazy-loaded)
             claude_client = self._get_claude_client()
@@ -1256,7 +1353,31 @@ Return only the JSON array:"""
                     
                     # Validate that we got a list of strings
                     if isinstance(ingredients, list) and all(isinstance(item, str) for item in ingredients):
-                        return ingredients
+                        # Post-processing validation: Check for common mistakes
+                        raw_text_lower = raw_text.lower()
+                        validated_ingredients = []
+                        
+                        for ing in ingredients:
+                            ing_lower = ing.lower()
+                            # Check if a longer compound name exists in the source text
+                            # Common patterns: "Ethyl Ascorbic Acid" vs "Ascorbic Acid"
+                            if "ascorbic acid" in ing_lower and "ethyl" not in ing_lower:
+                                # Check if "ethyl ascorbic acid" exists in source
+                                if "ethyl ascorbic acid" in raw_text_lower or "ethylascorbic" in raw_text_lower.replace(" ", ""):
+                                    print(f"WARNING: Found 'Ascorbic Acid' but source text contains 'Ethyl Ascorbic Acid'. Checking source...")
+                                    # Try to find the exact match in source
+                                    if "ethyl ascorbic acid" in raw_text_lower:
+                                        validated_ingredients.append("Ethyl Ascorbic Acid")
+                                        print(f"  -> Corrected to: Ethyl Ascorbic Acid")
+                                        continue
+                            
+                            # Check for other common compound names that might be shortened
+                            validated_ingredients.append(ing)
+                        
+                        if validated_ingredients != ingredients:
+                            print(f"Validation corrected ingredients: {ingredients} -> {validated_ingredients}")
+                        
+                        return validated_ingredients
                     else:
                         raise Exception("Invalid response format from Claude")
                 else:

@@ -2533,6 +2533,14 @@ async def compare_products(
                 product_data["text"] = extraction_result.get("extracted_text", "")
                 product_data["inci"] = extraction_result.get("ingredients", [])
                 product_data["product_name"] = extraction_result.get("product_name")
+                # Debug logging
+                print(f"Product {product_num} extraction result:")
+                print(f"  - URL: {product_input}")
+                print(f"  - Extracted INCI count: {len(product_data['inci'])}")
+                print(f"  - INCI list: {product_data['inci'][:10]}..." if len(product_data['inci']) > 10 else f"  - INCI list: {product_data['inci']}")
+                print(f"  - Source: {extraction_result.get('source', 'unknown')}")
+                print(f"  - Is estimated: {extraction_result.get('is_estimated', False)}")
+                print(f"  - Text length: {len(product_data['text'])} chars")
                 # Try to detect product name from text if not already extracted
                 if not product_data["product_name"] and product_data["text"]:
                     try:
@@ -2600,6 +2608,8 @@ async def compare_products(
             product_data["text_full"] = product_data["text"][:10000] if len(product_data["text"]) > 10000 else product_data["text"]
             print(f"Product {idx+1} extracted text length: {len(product_data['text'])} chars")
             print(f"Product {idx+1} text preview (first 500 chars): {product_data['text'][:500]}")
+            print(f"Product {idx+1} INCI list being sent to Claude: {product_data['inci']}")
+            print(f"Product {idx+1} INCI count: {len(product_data['inci'])}")
             if product_data["url_context"]:
                 print(f"Product {idx+1} URL: {product_data['url_context']}")
         
@@ -2608,10 +2618,15 @@ async def compare_products(
         for idx, product_data in enumerate(processed_products):
             product_num = idx + 1
             url_info = f"\n- Source URL: {product_data['url_context']}" if product_data["url_context"] else "\n- Source: INCI text input (no URL)"
+            # Format INCI list more clearly
+            inci_list_str = ', '.join(product_data['inci']) if product_data['inci'] else 'Not available'
+            inci_count = len(product_data['inci']) if product_data['inci'] else 0
+            
             product_sections.append(f"""Product {product_num} Data:
 - Product Name (if known): {product_data['product_name'] or 'Not specified'}{url_info}
-- INCI Ingredients: {', '.join(product_data['inci']) if product_data['inci'] else 'Not available'}
-- Full Extracted Text:
+- EXTRACTED INCI INGREDIENTS LIST (USE THIS - DO NOT RE-EXTRACT): {inci_list_str}
+- INCI Count: {inci_count} ingredients
+- Full Extracted Text (for reference - use INCI list above, not this text):
 {product_data['text_full']}""")
         
         products_section = "\n\n".join(product_sections)
@@ -2655,7 +2670,11 @@ CRITICAL INSTRUCTIONS:
    - If URL is provided (especially e-commerce sites like Nykaa, Amazon, Flipkart), price is almost always visible on the page
    - Extract the exact price with currency symbol as shown
 4. RATINGS: If available, extract ratings information (e.g., "4.5/5", "4.5 stars", "4322 ratings")
-5. INCI: Use the provided INCI list if available, otherwise extract from text. Ensure all ingredients are included. Look for ingredient lists, "Ingredients:" sections, or INCI declarations.
+5. INCI: THIS IS CRITICAL - You MUST use the provided INCI list if it is available and not empty. The INCI list provided above has already been extracted from the page. DO NOT re-extract from text unless the provided INCI list is empty or clearly incorrect. If the provided INCI list exists and has ingredients, use that EXACT list. Only extract from text if:
+   - The provided INCI list is empty or says "Not available"
+   - The provided INCI list is clearly wrong (e.g., contains non-ingredient text)
+   - You need to verify or supplement the list
+   If extracting from text, look for ingredient lists, "Ingredients:" sections, or INCI declarations. Ensure all ingredients are included and properly formatted as INCI names.
 6. BENEFITS: Extract all mentioned benefits (e.g., "brightens skin", "reduces wrinkles", "hydrates", "boosts glow")
 7. CLAIMS: Extract all marketing claims (e.g., "100% plant-based", "dermatologically tested", "suitable for sensitive skin", "primer & moisturizer")
 8. BOOLEAN ATTRIBUTES: This is CRITICAL - Determine these attributes carefully:
