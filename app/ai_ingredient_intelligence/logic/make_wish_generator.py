@@ -2,21 +2,20 @@
 Make a Wish - Formula Generator
 ================================
 
-This module implements the complete 5-stage AI pipeline for generating
+This module implements the complete 4-stage AI pipeline for generating
 cosmetic formulations from user wishes.
 
 STAGES:
 1. Ingredient Selection
 2. Formula Optimization
 3. Manufacturing Process
-4. Cost Analysis
-5. Compliance Check
+4. Compliance Check
 """
 
 import os
 import json
 import re
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 
 # Import prompts
@@ -24,7 +23,6 @@ from app.ai_ingredient_intelligence.logic.make_wish_prompts import (
     INGREDIENT_SELECTION_SYSTEM_PROMPT,
     FORMULA_OPTIMIZATION_SYSTEM_PROMPT,
     MANUFACTURING_PROCESS_SYSTEM_PROMPT,
-    COST_ANALYSIS_SYSTEM_PROMPT,
     COMPLIANCE_CHECK_SYSTEM_PROMPT
 )
 
@@ -37,6 +35,9 @@ from app.ai_ingredient_intelligence.logic.make_wish_rules_engine import (
     ValidationSeverity
 )
 
+# Import URL scraper for ingredient lookup
+from app.ai_ingredient_intelligence.logic.url_scraper import URLScraper
+
 # Claude API setup
 try:
     import anthropic
@@ -46,7 +47,10 @@ except ImportError:
     anthropic = None
 
 claude_api_key = os.getenv("CLAUDE_API_KEY")
+# Make a Wish uses Opus - HARDCODED (same as Formulation Report)
+# IMPORTANT: This is hardcoded to Opus, not using env vars
 claude_model = "claude-3-opus-20240229"
+print(f"✅ Make a Wish model: {claude_model} (Opus - hardcoded)")
 
 if not claude_api_key:
     raise RuntimeError("CLAUDE_API_KEY is required for Make a Wish feature")
@@ -54,7 +58,7 @@ if not claude_api_key:
 if ANTHROPIC_AVAILABLE and claude_api_key:
     try:
         claude_client = anthropic.Anthropic(api_key=claude_api_key)
-        print(f"Claude client initialized for Make a Wish with model: {claude_model}")
+        print(f"🤖 Make a Wish: Claude client initialized with model: {claude_model}")
     except Exception as e:
         print(f"Warning: Could not initialize Claude client: {e}")
         claude_client = None
@@ -77,26 +81,31 @@ def generate_ingredient_selection_prompt(wish_data: dict) -> str:
     benefits = wish_data.get('benefits', [])
     exclusions = wish_data.get('exclusions', [])
     hero_ingredients = wish_data.get('heroIngredients', [])
+    must_have_ingredients = wish_data.get('mustHaveIngredients', [])
     texture = wish_data.get('texture', 'lightweight')
-    cost_min = wish_data.get('costMin', 30)
-    cost_max = wish_data.get('costMax', 60)
     claims = wish_data.get('claims', [])
     target_audience = wish_data.get('targetAudience', [])
+    skin_types = wish_data.get('skinTypes', [])
+    age_group = wish_data.get('ageGroup', '')
     additional_notes = wish_data.get('additionalNotes', '') or wish_data.get('notes', '')
+    product_name = wish_data.get('productName', '')
     
     # Format benefits
-    benefits_text = "\n".join([f"  • {b}" for b in benefits]) if benefits else "  • General skincare/haircare"
+    if benefits:
+        benefits_text = "\n".join([f"  • {b}" for b in benefits])
+    else:
+        benefits_text = "  • General skincare/haircare"
     
-    # Format exclusions with specifics
+    # Format exclusions with detailed expansion
     exclusion_mapping = {
-        'silicone-free': 'ALL silicones (Dimethicone, Cyclomethicone, Cyclopentasiloxane, Amodimethicone, etc.)',
-        'sulfate-free': 'ALL sulfates (SLS, SLES, ALS, Sodium Coco Sulfate, etc.)',
-        'paraben-free': 'ALL parabens (Methylparaben, Propylparaben, Butylparaben, etc.)',
-        'fragrance-free': 'Parfum/Fragrance AND synthetic fragrances',
-        'alcohol-free': 'Drying alcohols (Alcohol Denat, SD Alcohol, Isopropyl Alcohol) - fatty alcohols OK',
-        'mineral-oil-free': 'Mineral Oil, Paraffinum Liquidum, Petrolatum',
-        'essential-oil-free': 'ALL essential oils',
-        'vegan': 'ALL animal-derived ingredients (Lanolin, Carmine, Collagen, Keratin from animals, etc.)',
+        'silicone-free': 'ALL silicones (Dimethicone, Cyclomethicone, Cyclopentasiloxane, Amodimethicone, Phenyl Trimethicone, etc.)',
+        'sulfate-free': 'ALL sulfates (SLS, SLES, ALS, Sodium Coco Sulfate, Ammonium Lauryl Sulfate, etc.)',
+        'paraben-free': 'ALL parabens (Methylparaben, Propylparaben, Butylparaben, Ethylparaben, etc.)',
+        'fragrance-free': 'Parfum/Fragrance AND all synthetic fragrances',
+        'alcohol-free': 'Drying alcohols (Alcohol Denat, SD Alcohol, Isopropyl Alcohol) - Note: Fatty alcohols like Cetyl Alcohol ARE allowed',
+        'mineral-oil-free': 'Mineral Oil, Paraffinum Liquidum, Petrolatum, Microcrystalline Wax',
+        'essential-oil-free': 'ALL essential oils (Lavender, Tea Tree, Peppermint, etc.)',
+        'vegan': 'ALL animal-derived ingredients (Lanolin, Carmine, Collagen, Keratin from animals, Beeswax, Squalane from shark, etc.)',
         'gluten-free': 'Wheat, Barley, Oat derivatives unless certified gluten-free'
     }
     
@@ -104,61 +113,106 @@ def generate_ingredient_selection_prompt(wish_data: dict) -> str:
     for exc in exclusions:
         exc_lower = exc.lower().replace(' ', '-').replace('_', '-')
         if exc_lower in exclusion_mapping:
-            exclusions_detailed.append(f"  • {exc}: {exclusion_mapping[exc_lower]}")
+            exclusions_detailed.append(f"  ❌ {exc}: {exclusion_mapping[exc_lower]}")
         else:
-            exclusions_detailed.append(f"  • {exc}")
+            exclusions_detailed.append(f"  ❌ {exc}")
     
     exclusions_text = "\n".join(exclusions_detailed) if exclusions_detailed else "  • None specified"
     
-    # Format hero ingredients
-    hero_text = "\n".join([f"  • {h}" for h in hero_ingredients]) if hero_ingredients else "  • None specified (select best options)"
+    # Format hero ingredients with emphasis
+    if hero_ingredients:
+        hero_text = "\n".join([f"  ⭐ {h}" for h in hero_ingredients])
+        primary_hero = hero_ingredients[0] if hero_ingredients else "Not specified"
+    else:
+        hero_text = "  • None specified (select best options for the benefits)"
+        primary_hero = "Based on benefits"
+    
+    # Format must-have ingredients
+    if must_have_ingredients:
+        must_have_text = "\n".join([f"  ✓ {ing}" for ing in must_have_ingredients])
+    else:
+        must_have_text = "  • None specified"
     
     # Format claims
     claims_text = "\n".join([f"  • {c}" for c in claims]) if claims else "  • No specific claims required"
     
     # Format target audience
-    audience_text = ", ".join(target_audience) if target_audience else "General consumer"
+    audience_parts = []
+    if skin_types:
+        audience_parts.append(f"Skin Types: {', '.join(skin_types)}")
+    if age_group:
+        audience_parts.append(f"Age Group: {age_group}")
+    if target_audience:
+        audience_parts.append(f"Target: {', '.join(target_audience)}")
+    audience_text = " | ".join(audience_parts) if audience_parts else "General consumer"
     
     # Build the prompt
     prompt = f"""
-## FORMULA REQUEST
+═══════════════════════════════════════════════════════════════════════════════
+                              FORMULA REQUEST
+═══════════════════════════════════════════════════════════════════════════════
 
-### CATEGORY & PRODUCT TYPE
-
+## PRODUCT IDENTITY
+- Product Name: {product_name if product_name else f'{primary_hero} {product_type.title()}'}
 - Category: {category.upper()}
 - Product Type: {product_type}
 - Desired Texture: {texture}
 
-### TARGET BENEFITS (in priority order)
-
-{benefits_text}
-
-### STRICT EXCLUSIONS - DO NOT INCLUDE ANY OF THESE
-
-{exclusions_text}
-
-### HERO INGREDIENTS TO PRIORITIZE
+───────────────────────────────────────────────────────────────────────────────
+                    ⚠️ MANDATORY HERO INGREDIENTS (MUST INCLUDE ALL)
+───────────────────────────────────────────────────────────────────────────────
 
 {hero_text}
 
-### COST TARGET
+🚨 CRITICAL: Every ingredient listed above MUST appear in your final formula.
+   - The formula name MUST include "{primary_hero}"
+   - If ANY hero ingredient cannot be included, you MUST add a CRITICAL warning
+   - Do NOT silently omit or substitute without explicit disclosure
 
-- Target formula cost: ₹{cost_min} - ₹{cost_max} per 100g
-- This is the RAW MATERIAL cost, not retail price
-- Optimize ingredient selection to meet this target
+───────────────────────────────────────────────────────────────────────────────
+                    ✓ USER-REQUESTED INGREDIENTS (MUST INCLUDE OR JUSTIFY)
+───────────────────────────────────────────────────────────────────────────────
 
-### PRODUCT CLAIMS TO SUPPORT
+{must_have_text}
 
-{claims_text}
+RULE: Each ingredient above was specifically requested. You MUST either:
+  1. Include it at an effective percentage, OR
+  2. Add a WARNING explaining why it was excluded/substituted
+  3. Suggest an alternative if excluded
 
-### TARGET AUDIENCE
+───────────────────────────────────────────────────────────────────────────────
+                    ❌ STRICT EXCLUSIONS (ZERO TOLERANCE)
+───────────────────────────────────────────────────────────────────────────────
+
+{exclusions_text}
+
+⛔ Do NOT include ANY ingredient matching these exclusions or their families.
+
+───────────────────────────────────────────────────────────────────────────────
+                              TARGET BENEFITS
+───────────────────────────────────────────────────────────────────────────────
+
+{benefits_text}
+
+───────────────────────────────────────────────────────────────────────────────
+                              TARGET AUDIENCE
+───────────────────────────────────────────────────────────────────────────────
 
 {audience_text}
 
-### TEXTURE & SENSORY REQUIREMENTS
+───────────────────────────────────────────────────────────────────────────────
+                         PRODUCT CLAIMS TO SUPPORT
+───────────────────────────────────────────────────────────────────────────────
+
+{claims_text}
+
+───────────────────────────────────────────────────────────────────────────────
+                         TEXTURE & SENSORY
+───────────────────────────────────────────────────────────────────────────────
 
 - Desired texture: {texture}
 - Consider Indian climate (hot, humid) for stability and feel
+- Ensure pleasant sensory experience appropriate for product type
 
 """
     
@@ -172,8 +226,8 @@ def generate_ingredient_selection_prompt(wish_data: dict) -> str:
   • Scalp health and compatibility
   • Hair fiber protection
   • Rinse-off vs leave-on requirements
-  • Hard water compatibility (common in India)
-  • Heat/humidity resistance
+  • Hard water compatibility (where applicable)
+  • Climate resistance (heat, humidity, cold as relevant)
 
 """
         
@@ -264,6 +318,19 @@ def generate_ingredient_selection_prompt(wish_data: dict) -> str:
 
 """
     
+    # Add URL if provided for ingredient reference
+    reference_url = wish_data.get('referenceUrl') or wish_data.get('url') or wish_data.get('reference_url')
+    if reference_url:
+        prompt += f"""
+### REFERENCE PRODUCT URL
+
+- Reference URL: {reference_url}
+- If ingredients are not found in standard databases, use web search to extract accurate ingredient information from this URL
+- Use the actual ingredients from this product as a reference, not random selections
+- Ensure ingredient names match what is actually listed on the product page
+
+"""
+    
     # Add additional notes if provided
     if additional_notes:
         prompt += f"""
@@ -274,18 +341,34 @@ def generate_ingredient_selection_prompt(wish_data: dict) -> str:
 """
     
     prompt += """
-### YOUR TASK
+═══════════════════════════════════════════════════════════════════════════════
+                              YOUR TASK
+═══════════════════════════════════════════════════════════════════════════════
 
-1. Select 8-15 ingredients that best deliver the requested benefits
-2. STRICTLY exclude all ingredients matching the exclusion criteria
-3. Prioritize hero ingredients if specified
-4. Organize ingredients into appropriate phases
-5. Optimize for the target cost range
-6. Provide insights explaining key ingredient choices
-7. Flag any warnings or considerations
+1. ⭐ INCLUDE ALL hero ingredients (MANDATORY - not optional)
 
-Return the complete ingredient selection as JSON following the specified format.
+2. ✓ INCLUDE ALL user-requested ingredients OR add warning explaining exclusion
 
+3. ❌ STRICTLY EXCLUDE all ingredients matching exclusion criteria
+
+4. 🔄 If substituting ANY requested ingredient:
+   - Add explicit warning with category "substitution"
+   - Explain why and what alternative was chosen
+
+5. 📊 Select supporting ingredients (total 8-15) that deliver requested benefits
+
+6. 📋 Organize ingredients into appropriate phases with temperatures
+
+7. ✅ VERIFY BEFORE RESPONDING:
+   - Every ingredient in "insights" appears in ingredients table
+   - Percentages in explanations match table exactly
+   - No phantom ingredients (explained but not included)
+   - Formula name includes the primary hero ingredient
+   - user_request_validation section is complete and accurate
+
+9. 📄 Return complete JSON following the specified format
+
+═══════════════════════════════════════════════════════════════════════════════
 """
     
     return prompt
@@ -298,15 +381,12 @@ def generate_optimization_prompt(wish_data: dict, selected_ingredients: list) ->
     category = wish_data.get('category', 'skincare')
     benefits = wish_data.get('benefits', [])
     texture = wish_data.get('texture', 'lightweight')
-    cost_min = wish_data.get('costMin', 30)
-    cost_max = wish_data.get('costMax', 60)
     
     # Format ingredients
     ingredients_text = "\n".join([
         f"  • {ing.get('ingredient_name', ing.get('name', 'Unknown'))} (INCI: {ing.get('inci_name', ing.get('inci', 'Unknown'))})\n"
         f"    - Function: {ing.get('functional_category', ing.get('function', 'Unknown'))}\n"
         f"    - Usage Range: {ing.get('usage_range', {}).get('min', 0)}-{ing.get('usage_range', {}).get('max', 0)}%\n"
-        f"    - Cost: ₹{ing.get('cost_per_kg_inr', ing.get('cost_per_kg', 0))}/kg\n"
         f"    - Phase: {ing.get('phase', 'Unknown')}\n"
         f"    - Hero: {'Yes' if ing.get('is_hero', False) else 'No'}"
         for ing in selected_ingredients
@@ -325,11 +405,6 @@ def generate_optimization_prompt(wish_data: dict, selected_ingredients: list) ->
 
 {chr(10).join([f"  • {b}" for b in benefits])}
 
-### COST TARGET
-
-- Formula cost: ₹{cost_min} - ₹{cost_max} per 100g
-- Optimize percentages to achieve this cost
-
 ### SELECTED INGREDIENTS TO OPTIMIZE
 
 {ingredients_text}
@@ -344,18 +419,13 @@ def generate_optimization_prompt(wish_data: dict, selected_ingredients: list) ->
 2. **Active Optimization**
    - Hero ingredients at optimal efficacious levels
    - Balance multiple actives for synergy
-   - Avoid excessive concentrations that increase cost without benefit
+   - Avoid excessive concentrations without benefit
 
 3. **Texture Achievement**
    - "{texture}" texture requires appropriate thickener/emollient levels
    - Consider sensory properties
 
-4. **Cost Optimization**
-   - Calculate cost contribution of each ingredient
-   - If over budget, suggest percentage adjustments
-   - Prioritize actives in cost allocation
-
-5. **Stability Considerations**
+4. **Stability Considerations**
    - Ensure preservative at effective level
    - pH adjusters sufficient for target range
    - Consider ingredient interactions
@@ -428,55 +498,6 @@ Return the complete manufacturing process as JSON following the specified format
 """
 
 
-def generate_cost_prompt(optimized_formula: dict, wish_data: dict) -> str:
-    """Generate the cost analysis prompt."""
-    
-    formula_name = optimized_formula.get('optimized_formula', {}).get('name', 'Formula')
-    ingredients = optimized_formula.get('ingredients', [])
-    cost_breakdown = optimized_formula.get('cost_breakdown', {})
-    total_cost = cost_breakdown.get('total_per_100g', 0)
-    
-    # Format ingredients with costs
-    ingredients_text = "\n".join([
-        f"  • {ing.get('name', 'Unknown')}: {ing.get('percent', 0)}% @ ₹{ing.get('cost_per_kg', 0)}/kg = ₹{ing.get('cost_contribution', 0)} per 100g"
-        for ing in ingredients
-    ])
-    
-    cost_min = wish_data.get('costMin', 30)
-    cost_max = wish_data.get('costMax', 60)
-    
-    return f"""
-## ANALYZE FORMULA COSTS
-
-### FORMULA INFORMATION
-
-- Formula Name: {formula_name}
-- Current Formula Cost: ₹{total_cost} per 100g
-- Target Cost Range: ₹{cost_min} - ₹{cost_max} per 100g
-
-### INGREDIENT COSTS
-
-{ingredients_text}
-
-### COST BREAKDOWN
-
-- Actives: ₹{cost_breakdown.get('actives_cost', 0)}
-- Base Ingredients: ₹{cost_breakdown.get('base_cost', 0)}
-- Functional Ingredients: ₹{cost_breakdown.get('functional_cost', 0)}
-- Preservation: ₹{cost_breakdown.get('preservation_cost', 0)}
-
-### YOUR TASK
-
-1. Calculate detailed cost breakdown
-2. Estimate packaging costs for common sizes (30ml, 50ml, 100ml)
-3. Calculate total product cost with packaging
-4. Provide pricing recommendations (D2C, retail, premium)
-5. Suggest cost optimization opportunities
-6. Compare with competitor products if applicable
-
-Return the complete cost analysis as JSON following the specified format.
-
-"""
 
 
 def generate_compliance_prompt(optimized_formula: dict) -> str:
@@ -542,8 +563,6 @@ async def call_ai_with_claude(
     if not claude_client:
         raise RuntimeError("Claude client not initialized. Check CLAUDE_API_KEY environment variable.")
     
-    if not claude_model:
-        raise RuntimeError("Claude model not configured. Check CLAUDE_MODEL environment variable.")
     
     # Get cache manager and check if we should use caching
     cache_manager = get_cache_manager(claude_client)
@@ -554,9 +573,10 @@ async def call_ai_with_claude(
     )
     
     # Prepare API call parameters
+    # HARDCODED to Opus (same as Formulation Report)
     api_params = {
-        "model": claude_model,
-        "max_tokens": 16384,
+        "model": "claude-3-opus-20240229",  # Hardcoded to Opus
+        "max_tokens": 4096,  # Maximum allowed for claude-3-opus-20240229
         "temperature": 0.3,
         "system": system_prompt,
         "messages": [
@@ -564,19 +584,23 @@ async def call_ai_with_claude(
         ]
     }
     
-    # Use cache_control if caching is enabled
-    # Claude's ephemeral cache automatically caches system prompts when cache_control is used
-    # This reduces costs by ~90% on system prompt tokens after the first call
+    # Debug: Log the model being used
+    print(f"🔍 Make a Wish API call - Using model: {api_params['model']} for {prompt_type}")
+    
+    # Note: cache_control is not supported in current Anthropic SDK version
+    # The cache_block_id is tracked for future use when SDK supports it
     if cache_block_id:
-        api_params["cache_control"] = {"type": "ephemeral"}
-        print(f"💾 Using cached system prompt for {prompt_type}")
+        print(f"💾 Cache tracking enabled for {prompt_type} (cache_control not yet supported in SDK)")
     else:
-        print(f"📝 Using uncached system prompt for {prompt_type} (first call)")
+        print(f"📝 No cache tracking for {prompt_type}")
     
     for attempt in range(max_retries):
         try:
             # Call Claude API with caching support
             response = claude_client.messages.create(**api_params)
+            
+            # Verify response (if available)
+            print(f"✅ API call succeeded for {prompt_type}")
             
             if not response.content or len(response.content) == 0:
                 if attempt < max_retries - 1:
@@ -633,6 +657,129 @@ async def call_ai_with_claude(
 
 
 # ============================================================================
+# INGREDIENT VALIDATION WITH URL SCRAPING
+# ============================================================================
+
+async def validate_and_enrich_ingredients_with_url_fallback(
+    selected_ingredients: List[Dict],
+    reference_url: Optional[str] = None
+) -> Tuple[List[Dict], List[str]]:
+    """
+    Validate ingredients and use URL scraping if ingredients are not found.
+    
+    Args:
+        selected_ingredients: List of ingredients from AI selection
+        reference_url: Optional URL to scrape for ingredient information
+        
+    Returns:
+        Tuple of (validated_ingredients, missing_ingredients)
+    """
+    from app.ai_ingredient_intelligence.logic.formula_generator import check_ingredient_exists_in_db
+    
+    validated_ingredients = []
+    missing_ingredients = []
+    url_scraped_ingredients = []
+    
+    # First, check which ingredients are missing from database
+    for ing in selected_ingredients:
+        ingredient_name = ing.get("ingredient_name", "")
+        inci_names = ing.get("inci_aliases", [])
+        if ing.get("inci_name"):
+            inci_names.insert(0, ing.get("inci_name"))
+        
+        # Check if ingredient exists in database
+        db_ingredient = await check_ingredient_exists_in_db(ingredient_name, inci_names)
+        
+        if db_ingredient:
+            validated_ingredients.append(ing)
+        else:
+            missing_ingredients.append(ing)
+    
+    # If we have missing ingredients and a reference URL, try to scrape
+    if missing_ingredients and reference_url:
+        print(f"🔍 {len(missing_ingredients)} ingredients not found in database. Attempting URL scrape from: {reference_url}")
+        try:
+            scraper = URLScraper()
+            extraction_result = await scraper.extract_ingredients_from_url(reference_url)
+            
+            if extraction_result and extraction_result.get("ingredients"):
+                scraped_ingredients = extraction_result.get("ingredients", [])
+                print(f"✅ Scraped {len(scraped_ingredients)} ingredients from URL")
+                
+                # Normalize scraped ingredients for better matching
+                scraped_normalized = {}
+                for scraped_ing in scraped_ingredients:
+                    scraped_lower = scraped_ing.lower().strip()
+                    # Store both full name and key words for matching
+                    scraped_normalized[scraped_lower] = scraped_ing
+                    # Also store key words (first 2-3 words) for partial matching
+                    words = scraped_lower.split()
+                    if len(words) > 1:
+                        key_phrase = ' '.join(words[:2])
+                        if key_phrase not in scraped_normalized:
+                            scraped_normalized[key_phrase] = scraped_ing
+                
+                # Match scraped ingredients with missing ones
+                for missing_ing in missing_ingredients:
+                    missing_name = missing_ing.get("ingredient_name", "").lower().strip()
+                    missing_inci = missing_ing.get("inci_name", "").lower().strip()
+                    
+                    # Check if this ingredient appears in scraped list
+                    found_in_scraped = False
+                    matched_scraped_name = None
+                    
+                    # Try exact match first
+                    if missing_name in scraped_normalized:
+                        found_in_scraped = True
+                        matched_scraped_name = scraped_normalized[missing_name]
+                    elif missing_inci and missing_inci in scraped_normalized:
+                        found_in_scraped = True
+                        matched_scraped_name = scraped_normalized[missing_inci]
+                    else:
+                        # Try partial matching - check if key words match
+                        missing_words = missing_name.split() if missing_name else []
+                        if missing_words:
+                            missing_key = ' '.join(missing_words[:2]) if len(missing_words) > 1 else missing_words[0]
+                            if missing_key in scraped_normalized:
+                                found_in_scraped = True
+                                matched_scraped_name = scraped_normalized[missing_key]
+                            else:
+                                # Check if any scraped ingredient contains the missing ingredient name or vice versa
+                                for scraped_lower, scraped_original in scraped_normalized.items():
+                                    if (missing_name and (missing_name in scraped_lower or scraped_lower in missing_name)) or \
+                                       (missing_inci and (missing_inci in scraped_lower or scraped_lower in missing_inci)):
+                                        found_in_scraped = True
+                                        matched_scraped_name = scraped_original
+                                        break
+                    
+                    if found_in_scraped:
+                        # Update ingredient with scraped information
+                        missing_ing["found_via_url"] = True
+                        missing_ing["source_url"] = reference_url
+                        missing_ing["scraped_ingredient_name"] = matched_scraped_name
+                        # If INCI name is missing, try to use the scraped name
+                        if not missing_ing.get("inci_name") and matched_scraped_name:
+                            missing_ing["inci_name"] = matched_scraped_name
+                        validated_ingredients.append(missing_ing)
+                        url_scraped_ingredients.append(missing_ing.get("ingredient_name"))
+                    else:
+                        print(f"⚠️ '{missing_ing.get('ingredient_name')}' not found in scraped ingredients from URL")
+                
+                if url_scraped_ingredients:
+                    print(f"✅ Validated {len(url_scraped_ingredients)} ingredients via URL scraping: {', '.join(url_scraped_ingredients)}")
+            else:
+                print(f"⚠️ Could not extract ingredients from URL: {reference_url}")
+        except Exception as e:
+            print(f"⚠️ Error scraping URL for ingredients: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    # Return validated ingredients and list of still-missing ingredient names
+    still_missing = [ing.get("ingredient_name") for ing in missing_ingredients if ing not in validated_ingredients]
+    return validated_ingredients, still_missing
+
+
+# ============================================================================
 # COMPLETE PIPELINE FUNCTION
 # ============================================================================
 
@@ -678,6 +825,30 @@ async def generate_formula_from_wish(wish_data: dict) -> dict:
     )
     print(f"✅ Selected {len(selected_ingredients.get('ingredients', []))} ingredients")
     
+    # Validate ingredients and use URL scraping if needed
+    reference_url = wish_data.get('referenceUrl') or wish_data.get('url') or wish_data.get('reference_url')
+    if selected_ingredients.get('ingredients'):
+        validated_ingredients, missing_ingredients = await validate_and_enrich_ingredients_with_url_fallback(
+            selected_ingredients.get('ingredients', []),
+            reference_url
+        )
+        
+        if missing_ingredients:
+            print(f"⚠️ {len(missing_ingredients)} ingredients could not be validated: {', '.join(missing_ingredients)}")
+            # Update selected ingredients to only include validated ones
+            selected_ingredients['ingredients'] = validated_ingredients
+            # Add warning to the response
+            if 'warnings' not in selected_ingredients:
+                selected_ingredients['warnings'] = []
+            selected_ingredients['warnings'].append({
+                "severity": "info",
+                "category": "ingredient_validation",
+                "text": f"The following ingredients could not be found in our database: {', '.join(missing_ingredients)}. They have been excluded from the formula.",
+                "solution": "If you have a reference product URL, provide it to enable web search for these ingredients."
+            })
+        else:
+            print(f"✅ All {len(validated_ingredients)} ingredients validated successfully")
+    
     # Stage 2: Formula Optimization
     print("🔧 Stage 2: Formula Optimization...")
     optimization_prompt = generate_optimization_prompt(
@@ -701,17 +872,7 @@ async def generate_formula_from_wish(wish_data: dict) -> dict:
     )
     print(f"✅ Generated {len(manufacturing_process.get('manufacturing_steps', []))} manufacturing steps")
     
-    # Stage 4: Cost Analysis
-    print("💰 Stage 4: Cost Analysis...")
-    cost_prompt = generate_cost_prompt(optimized_formula, wish_data)
-    cost_analysis = await call_ai_with_claude(
-        system_prompt=COST_ANALYSIS_SYSTEM_PROMPT,
-        user_prompt=cost_prompt,
-        prompt_type="cost_analysis"
-    )
-    print(f"✅ Cost analysis complete: ₹{cost_analysis.get('raw_material_cost', {}).get('total_per_100g', 0)}/100g")
-    
-    # Stage 5: Compliance Check
+    # Stage 4: Compliance Check
     print("✅ Stage 5: Compliance Check...")
     compliance_prompt = generate_compliance_prompt(optimized_formula)
     compliance = await call_ai_with_claude(
@@ -727,12 +888,11 @@ async def generate_formula_from_wish(wish_data: dict) -> dict:
         "ingredient_selection": selected_ingredients,
         "optimized_formula": optimized_formula,
         "manufacturing": manufacturing_process,
-        "cost_analysis": cost_analysis,
         "compliance": compliance,
         "metadata": {
             "generated_at": datetime.now().isoformat(),
             "formula_version": "1.0",
-            "ai_model": claude_model or "claude-sonnet-4-5-20250929",
+            "ai_model": "claude-3-opus-20240229",  # Hardcoded to Opus
             "cache_stats": get_cache_manager().get_cache_stats()
         }
     }

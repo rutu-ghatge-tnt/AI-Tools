@@ -642,15 +642,45 @@ class URLScraper:
                                         # Scroll and click the tab
                                         driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", tab)
                                         time.sleep(0.5)
+                                        
+                                        # Get tab's aria-controls or data-target to find the content panel
+                                        aria_controls = tab.get_attribute("aria-controls")
+                                        data_target = tab.get_attribute("data-target") or tab.get_attribute("data-bs-target")
+                                        
                                         try:
                                             driver.execute_script("arguments[0].click();", tab)
-                                            print(f"Clicked ingredient tab: {tab.text.strip()[:50]}")
-                                            time.sleep(2)  # Wait for tab content to load
-                                        except:
+                                            print(f"✅ Clicked ingredient tab: {tab.text.strip()[:50]}")
+                                            
+                                            # Wait for content to load - check if we have a target panel
+                                            if aria_controls or data_target:
+                                                # Wait for the panel to become visible
+                                                panel_id = aria_controls or data_target.lstrip('#')
+                                                try:
+                                                    wait.until(EC.visibility_of_element_located((By.ID, panel_id)))
+                                                    print(f"   Panel {panel_id} is now visible")
+                                                except:
+                                                    pass
+                                            
+                                            time.sleep(3)  # Wait longer for dynamic content to load
+                                            
+                                            # Try to extract content immediately after clicking
+                                            if aria_controls:
+                                                try:
+                                                    panel = driver.find_element(By.ID, aria_controls)
+                                                    if panel.is_displayed():
+                                                        panel_text = panel.text.strip()
+                                                        if panel_text and len(panel_text) > 20:
+                                                            text_parts.append(f"Tab Content ({tab.text.strip()}):\n{panel_text}")
+                                                            print(f"   ✅ Extracted {len(panel_text)} chars from tab panel")
+                                                except:
+                                                    pass
+                                            
+                                        except Exception as e:
                                             try:
                                                 tab.click()
-                                                time.sleep(2)
+                                                time.sleep(3)
                                             except:
+                                                print(f"   ⚠️ Could not click tab: {e}")
                                                 pass
                                 except:
                                     continue
@@ -776,10 +806,68 @@ class URLScraper:
                 
                 # THIRD: Extract text from the page (after clicking accordions)
                 try:
-                    # Wait a bit for all accordions to expand
-                    time.sleep(3)  # Increased wait time
+                    # Wait longer for all accordions to expand and content to load
+                    time.sleep(5)  # Increased wait time for dynamic content
                     
-                    # Get all text content
+                    # Scroll to ensure all content is loaded
+                    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                    time.sleep(2)
+                    driver.execute_script("window.scrollTo(0, 0);")
+                    time.sleep(1)
+                    
+                    # FIRST: Try to find ingredient content directly using more specific selectors
+                    # Look for common patterns where ingredients are actually displayed
+                    ingredient_content_selectors = [
+                        # Common ingredient list patterns
+                        "[class*='ingredient'] p", "[class*='ingredient'] div",
+                        "[id*='ingredient'] p", "[id*='ingredient'] div",
+                        "[class*='ingredient-list']", "[id*='ingredient-list']",
+                        "[class*='ingredients-list']", "[id*='ingredients-list']",
+                        "[data-tab-content*='ingredient']", "[aria-labelledby*='ingredient']",
+                        # Tab panel content
+                        "[role='tabpanel'][aria-hidden='false']",
+                        "[class*='tab-content'][class*='active']",
+                        "[class*='tab-panel'][class*='active']",
+                        # Expanded accordion content
+                        "[class*='accordion'][class*='active']",
+                        "[class*='collapse'][class*='show']",
+                        "[aria-expanded='true']",
+                        # Generic content areas that might contain ingredients
+                        "[class*='product-details']", "[class*='product-info']",
+                        "[class*='description']", "[class*='content']"
+                    ]
+                    
+                    for selector in ingredient_content_selectors:
+                        try:
+                            elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                            for element in elements:
+                                # Check if element is visible
+                                if not element.is_displayed():
+                                    continue
+                                    
+                                text = element.text.strip()
+                                text_lower = text.lower()
+                                
+                                # Check if this looks like ingredient content
+                                # Ingredients typically contain commas, percentages, or common ingredient words
+                                has_ingredient_indicators = (
+                                    ',' in text or  # Ingredients are usually comma-separated
+                                    any(word in text_lower for word in ['water', 'glycerin', 'acid', 'extract', 'oil', 'alcohol', 'paraben', 'sulfate']) or
+                                    len(text) > 50  # Reasonable length for ingredient list
+                                )
+                                
+                                if text and len(text) > 20 and has_ingredient_indicators:
+                                    # Check if it contains ingredient keywords
+                                    if any(keyword in text_lower for keyword in ["ingredient", "composition", "formula", "inci", "contains"]):
+                                        text_parts.append(f"Ingredients Section:\n{text}")
+                                        print(f"✅ Found ingredient content via selector: {selector[:50]} ({len(text)} chars)")
+                                    elif ',' in text and len(text.split(',')) > 3:  # Looks like a comma-separated list
+                                        text_parts.append(f"Possible Ingredients:\n{text}")
+                                        print(f"✅ Found possible ingredient list via selector: {selector[:50]} ({len(text)} chars)")
+                        except Exception as e:
+                            continue
+                    
+                    # SECOND: Get all text content and parse for ingredient sections
                     body_text = driver.find_element(By.TAG_NAME, "body").text
                     
                     # Look for sections with ingredient keywords
@@ -790,23 +878,33 @@ class URLScraper:
                     
                     for line in lines:
                         line_lower = line.lower()
+                        line_stripped = line.strip()
+                        
+                        # Skip empty lines
+                        if not line_stripped:
+                            continue
+                            
                         # Check if this line starts an ingredient section
                         if any(keyword in line_lower for keyword in keywords):
                             in_ingredient_section = True
-                            relevant_lines.append(line)
-                        elif in_ingredient_section and line.strip():
+                            relevant_lines.append(line_stripped)
+                        elif in_ingredient_section:
                             # Continue collecting lines until we hit a new section
                             # Stop if we hit another header-like section (all caps, or contains common section keywords)
-                            if (line.isupper() and len(line) > 5) or any(stop_word in line_lower for stop_word in ["description", "benefits", "how to use", "directions", "warnings", "price", "reviews", "rating"]):
+                            if (line_stripped.isupper() and len(line_stripped) > 5) or any(stop_word in line_lower for stop_word in ["description", "benefits", "how to use", "directions", "warnings", "price", "reviews", "rating", "add to cart", "buy now"]):
                                 # But if it's still ingredient-related, continue
                                 if not any(ing_keyword in line_lower for ing_keyword in keywords):
                                     break
-                            relevant_lines.append(line)
+                            relevant_lines.append(line_stripped)
                             if len(relevant_lines) > 200:  # Increased limit for longer ingredient lists
                                 break
                     
                     if relevant_lines:
-                        text_parts.append("\n".join(relevant_lines))
+                        ingredient_text = "\n".join(relevant_lines)
+                        # Only add if it looks like actual ingredients (has commas or multiple items)
+                        if ',' in ingredient_text or len(relevant_lines) > 3:
+                            text_parts.append(ingredient_text)
+                            print(f"✅ Found ingredient section in body text ({len(ingredient_text)} chars)")
                     
                     # Also get visible text from expanded sections
                     try:
@@ -871,12 +969,48 @@ class URLScraper:
                 
                 # Combine all text parts
                 result = "\n\n".join(text_parts) if text_parts else ""
+                
+                # Debug: Log what we extracted
+                print(f"📊 Extraction summary: {len(text_parts)} sections, {len(result)} total characters")
+                if text_parts:
+                    for i, part in enumerate(text_parts[:3]):  # Show first 3 parts
+                        print(f"   Part {i+1}: {len(part)} chars - {part[:100]}...")
+                
                 if not result or len(result.strip()) < 10:
-                    # Final fallback
+                    # Final fallback - try to get more comprehensive body text
+                    print("⚠️ No ingredient content found, using comprehensive body text extraction...")
                     try:
-                        body_text = driver.find_element(By.TAG_NAME, "body").text
-                        return body_text[:8000]  # Increased for better extraction
-                    except:
+                        # Try to get text from all visible elements, not just body
+                        all_text_parts = []
+                        
+                        # Get text from main content areas
+                        content_selectors = [
+                            "main", "[role='main']", 
+                            "[class*='product']", "[class*='content']",
+                            "[class*='details']", "[class*='description']"
+                        ]
+                        
+                        for selector in content_selectors:
+                            try:
+                                elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                                for elem in elements:
+                                    if elem.is_displayed():
+                                        text = elem.text.strip()
+                                        if text and len(text) > 50:
+                                            all_text_parts.append(text)
+                            except:
+                                continue
+                        
+                        if all_text_parts:
+                            body_text = "\n\n".join(all_text_parts)
+                            print(f"✅ Extracted {len(body_text)} chars from content areas")
+                            return body_text[:10000]  # Return more content
+                        else:
+                            body_text = driver.find_element(By.TAG_NAME, "body").text
+                            print(f"✅ Extracted {len(body_text)} chars from body")
+                            return body_text[:10000]  # Return more content
+                    except Exception as e:
+                        print(f"❌ Error in fallback extraction: {e}")
                         return ""
                 
                 return result
