@@ -444,37 +444,68 @@ class URLScraper:
                 driver.execute_script("window.scrollBy(0, 500);")
                 time.sleep(1)
                 
-                # SECOND: Extract from Ingredients tab
-                try:
-                    # Look for Ingredients tab
-                    ingredients_tab = driver.find_element(By.XPATH, "//h3[normalize-space()='Ingredients']")
-                    driver.execute_script("arguments[0].scrollIntoView(true);", ingredients_tab)
-                    time.sleep(0.5)
-                    driver.execute_script("arguments[0].click();", ingredients_tab)
-                    time.sleep(1.5)
-                    
-                    # Wait for content to appear
-                    wait.until(EC.presence_of_element_located((By.ID, "content-details")))
-                    
-                    # Get the content block
-                    block = driver.find_element(By.ID, "content-details")
-                    html = block.get_attribute("innerHTML")
-                    soup = BeautifulSoup(html, "html.parser")
-                    
-                    # Extract text from paragraphs and lists
-                    lines = []
-                    for p in soup.find_all("p"):
-                        lines.append(p.get_text(strip=True))
-                    for li in soup.find_all("li"):
-                        lines.append("• " + li.get_text(strip=True))
-                    if not lines:
-                        lines = [soup.get_text(separator="\n", strip=True)]
-                    
-                    ingredients_text = "\n".join(lines).strip()
-                    if ingredients_text:
-                        text_parts.append(f"Ingredients:\n{ingredients_text}")
-                except Exception as e:
-                    print(f"Could not extract Ingredients tab: {e}")
+                # SECOND: Extract from Ingredients tab - try multiple ways to find it
+                ingredients_found = False
+                
+                # Try multiple XPath patterns to find Ingredients tab
+                ingredient_tab_patterns = [
+                    "//h3[normalize-space()='Ingredients']",
+                    "//h3[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'ingredient')]",
+                    "//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'ingredient') and (self::h3 or self::h4 or self::button or self::div[@role='button'])]",
+                    "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'ingredient')]",
+                    "//div[@role='button' and contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'ingredient')]"
+                ]
+                
+                for pattern in ingredient_tab_patterns:
+                    try:
+                        ingredients_tab = driver.find_element(By.XPATH, pattern)
+                        driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", ingredients_tab)
+                        time.sleep(0.5)
+                        driver.execute_script("arguments[0].click();", ingredients_tab)
+                        time.sleep(2)  # Wait longer for content to load
+                        
+                        # Wait for content to appear - try multiple selectors
+                        content_selectors = [
+                            (By.ID, "content-details"),
+                            (By.CSS_SELECTOR, "[id*='content']"),
+                            (By.CSS_SELECTOR, "[class*='content']"),
+                            (By.CSS_SELECTOR, "[class*='ingredient']"),
+                            (By.CSS_SELECTOR, "[id*='ingredient']")
+                        ]
+                        
+                        content_element = None
+                        for selector_type, selector_value in content_selectors:
+                            try:
+                                wait.until(EC.presence_of_element_located((selector_type, selector_value)))
+                                content_element = driver.find_element(selector_type, selector_value)
+                                break
+                            except:
+                                continue
+                        
+                        if content_element:
+                            html = content_element.get_attribute("innerHTML")
+                            soup = BeautifulSoup(html, "html.parser")
+                            
+                            # Extract text from paragraphs and lists
+                            lines = []
+                            for p in soup.find_all("p"):
+                                lines.append(p.get_text(strip=True))
+                            for li in soup.find_all("li"):
+                                lines.append("• " + li.get_text(strip=True))
+                            if not lines:
+                                lines = [soup.get_text(separator="\n", strip=True)]
+                            
+                            ingredients_text = "\n".join(lines).strip()
+                            if ingredients_text and len(ingredients_text) > 10:
+                                text_parts.append(f"Ingredients:\n{ingredients_text}")
+                                ingredients_found = True
+                                print(f"Successfully extracted ingredients from tab: {ingredients_text[:100]}")
+                                break
+                    except Exception as e:
+                        continue
+                
+                if not ingredients_found:
+                    print(f"Could not extract Ingredients tab - tried {len(ingredient_tab_patterns)} patterns")
                 
                 # THIRD: Extract from Description tab
                 try:
@@ -588,7 +619,8 @@ class URLScraper:
                 ingredient_keywords = [
                     "ingredient", "ingredients", "key ingredient", "key ingredients",
                     "inci", "composition", "formula", "formulation", "contains",
-                    "ingredient list", "full ingredient", "ingredient list"
+                    "ingredient list", "full ingredient", "all ingredients", "ingredient list",
+                    "ingredients list", "complete ingredients", "full ingredient list"
                 ]
                 
                 # Try to find tab elements first (common pattern: tabs, buttons with tab role, etc.)
@@ -640,9 +672,12 @@ class URLScraper:
                     # Look for buttons, divs, spans, h3, h4, etc. that contain ingredient keywords
                     selectors_to_try = [
                         "button", "div[role='button']", "a[role='button']",
-                        "h3", "h4", "h5", "[class*='accordion']", "[class*='Accordion']",
+                        "h3", "h4", "h5", "h6", "[class*='accordion']", "[class*='Accordion']",
                         "[class*='collapse']", "[class*='expand']", "[class*='toggle']",
-                        "[aria-expanded]", "[data-toggle]", "[data-target]"
+                        "[aria-expanded]", "[data-toggle]", "[data-target]",
+                        "[class*='tab']", "[class*='Tab']", "[role='tab']",
+                        "[class*='section']", "[class*='Section']", "[class*='panel']",
+                        "summary", "[class*='details']", "[class*='Details']"
                     ]
                     
                     for selector in selectors_to_try:
@@ -654,12 +689,18 @@ class URLScraper:
                                     element_text = element.text.strip().lower()
                                     element_id = element.id or element.get_attribute("id") or ""
                                     
+                                    # Also check aria-label, title, and data attributes
+                                    aria_label = (element.get_attribute("aria-label") or "").lower()
+                                    title = (element.get_attribute("title") or "").lower()
+                                    data_label = (element.get_attribute("data-label") or "").lower()
+                                    
                                     # Skip if already clicked
                                     if element_id in clicked_elements:
                                         continue
                                     
-                                    # Check if element text contains ingredient keywords
-                                    if any(keyword in element_text for keyword in ingredient_keywords):
+                                    # Check if element text or attributes contain ingredient keywords
+                                    text_to_check = f"{element_text} {aria_label} {title} {data_label}"
+                                    if any(keyword in text_to_check for keyword in ingredient_keywords):
                                         # Scroll element into view
                                         driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", element)
                                         time.sleep(0.5)
@@ -669,15 +710,15 @@ class URLScraper:
                                             # Try JavaScript click first (more reliable)
                                             driver.execute_script("arguments[0].click();", element)
                                             clicked_elements.add(element_id)
-                                            print(f"Clicked accordion/button: {element_text[:50]}")
-                                            time.sleep(1.5)  # Wait for content to expand
+                                            print(f"Clicked accordion/button: {element_text[:50] or aria_label[:50] or title[:50]}")
+                                            time.sleep(2)  # Wait longer for content to expand
                                         except:
                                             # Try regular click as fallback
                                             try:
                                                 element.click()
                                                 clicked_elements.add(element_id)
-                                                print(f"Clicked accordion/button (regular): {element_text[:50]}")
-                                                time.sleep(1.5)
+                                                print(f"Clicked accordion/button (regular): {element_text[:50] or aria_label[:50] or title[:50]}")
+                                                time.sleep(2)
                                             except:
                                                 pass
                                 except:
@@ -685,29 +726,46 @@ class URLScraper:
                         except:
                             continue
                     
-                    # Also try XPath to find elements containing ingredient keywords
+                    # Also try XPath to find elements containing ingredient keywords (case-insensitive)
                     for keyword in ingredient_keywords:
                         try:
-                            xpath = f"//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{keyword}')]"
-                            elements = driver.find_elements(By.XPATH, xpath)
-                            for element in elements:
+                            # Try multiple XPath patterns to find elements with ingredient keywords
+                            xpath_patterns = [
+                                f"//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{keyword}')]",
+                                f"//*[contains(translate(@aria-label, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{keyword}')]",
+                                f"//*[contains(translate(@title, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{keyword}')]",
+                                f"//*[contains(translate(@data-label, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{keyword}')]"
+                            ]
+                            
+                            for xpath in xpath_patterns:
                                 try:
-                                    element_id = element.id or element.get_attribute("id") or ""
-                                    if element_id in clicked_elements:
-                                        continue
-                                    
-                                    # Check if it's a clickable element
-                                    tag_name = element.tag_name.lower()
-                                    if tag_name in ['button', 'a', 'div', 'span', 'h3', 'h4', 'h5']:
-                                        driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", element)
-                                        time.sleep(0.5)
+                                    elements = driver.find_elements(By.XPATH, xpath)
+                                    for element in elements:
                                         try:
-                                            driver.execute_script("arguments[0].click();", element)
-                                            clicked_elements.add(element_id)
-                                            print(f"Clicked element via XPath: {keyword}")
-                                            time.sleep(1.5)
+                                            element_id = element.id or element.get_attribute("id") or ""
+                                            if element_id in clicked_elements:
+                                                continue
+                                            
+                                            # Check if it's a clickable element
+                                            tag_name = element.tag_name.lower()
+                                            if tag_name in ['button', 'a', 'div', 'span', 'h3', 'h4', 'h5', 'h6', 'summary']:
+                                                driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", element)
+                                                time.sleep(0.5)
+                                                try:
+                                                    driver.execute_script("arguments[0].click();", element)
+                                                    clicked_elements.add(element_id)
+                                                    print(f"Clicked element via XPath: {keyword}")
+                                                    time.sleep(2)  # Wait longer for content
+                                                except:
+                                                    try:
+                                                        element.click()
+                                                        clicked_elements.add(element_id)
+                                                        print(f"Clicked element via XPath (regular): {keyword}")
+                                                        time.sleep(2)
+                                                    except:
+                                                        pass
                                         except:
-                                            pass
+                                            continue
                                 except:
                                     continue
                         except:
@@ -716,28 +774,35 @@ class URLScraper:
                 except Exception as e:
                     print(f"Error clicking accordions: {e}")
                 
-                # SECOND: Extract text from the page (after clicking accordions)
+                # THIRD: Extract text from the page (after clicking accordions)
                 try:
                     # Wait a bit for all accordions to expand
-                    time.sleep(2)
+                    time.sleep(3)  # Increased wait time
                     
                     # Get all text content
                     body_text = driver.find_element(By.TAG_NAME, "body").text
                     
                     # Look for sections with ingredient keywords
-                    keywords = ["ingredient", "composition", "formula", "contains", "inci"]
+                    keywords = ["ingredient", "composition", "formula", "formulation", "contains", "inci", "all ingredients"]
                     lines = body_text.split("\n")
                     relevant_lines = []
                     in_ingredient_section = False
                     
                     for line in lines:
                         line_lower = line.lower()
+                        # Check if this line starts an ingredient section
                         if any(keyword in line_lower for keyword in keywords):
                             in_ingredient_section = True
                             relevant_lines.append(line)
                         elif in_ingredient_section and line.strip():
+                            # Continue collecting lines until we hit a new section
+                            # Stop if we hit another header-like section (all caps, or contains common section keywords)
+                            if (line.isupper() and len(line) > 5) or any(stop_word in line_lower for stop_word in ["description", "benefits", "how to use", "directions", "warnings", "price", "reviews", "rating"]):
+                                # But if it's still ingredient-related, continue
+                                if not any(ing_keyword in line_lower for ing_keyword in keywords):
+                                    break
                             relevant_lines.append(line)
-                            if len(relevant_lines) > 100:  # Increased limit
+                            if len(relevant_lines) > 200:  # Increased limit for longer ingredient lists
                                 break
                     
                     if relevant_lines:
@@ -745,13 +810,17 @@ class URLScraper:
                     
                     # Also get visible text from expanded sections
                     try:
-                        # Look for common ingredient section selectors
+                        # Look for common ingredient section selectors (more comprehensive)
                         ingredient_selectors = [
                             "[class*='ingredient']", "[id*='ingredient']",
                             "[class*='composition']", "[id*='composition']",
                             "[class*='inci']", "[id*='inci']",
                             "[class*='Ingredients']", "[id*='Ingredients']",
-                            "[data-tab-content*='ingredient']", "[aria-labelledby*='ingredient']"
+                            "[data-tab-content*='ingredient']", "[aria-labelledby*='ingredient']",
+                            "[class*='formula']", "[id*='formula']", "[class*='formulation']", "[id*='formulation']",
+                            "[class*='ingredient-list']", "[id*='ingredient-list']",
+                            "[class*='ingredients-list']", "[id*='ingredients-list']",
+                            "[data-content*='ingredient']", "[data-section*='ingredient']"
                         ]
                         
                         for selector in ingredient_selectors:
@@ -791,12 +860,12 @@ class URLScraper:
                 except Exception as e:
                     print(f"Error extracting text: {e}")
                 
-                # THIRD: Fallback - get body text if nothing found
+                # FOURTH: Fallback - get body text if nothing found
                 if not text_parts:
                     try:
                         body_text = driver.find_element(By.TAG_NAME, "body").text
-                        # Return first 5000 characters
-                        return body_text[:5000]
+                        # Return first 8000 characters (increased for better extraction)
+                        return body_text[:8000]
                     except:
                         return ""
                 
@@ -806,7 +875,7 @@ class URLScraper:
                     # Final fallback
                     try:
                         body_text = driver.find_element(By.TAG_NAME, "body").text
-                        return body_text[:5000]
+                        return body_text[:8000]  # Increased for better extraction
                     except:
                         return ""
                 
@@ -1250,23 +1319,28 @@ Return only the JSON array of INCI names:"""
             print(f"Error searching ingredients by product name: {e}")
             return []
     
-    async def extract_ingredients_from_text(self, raw_text: str) -> List[str]:
+    async def extract_ingredients_from_text(self, raw_text: str, url: str = None) -> List[str]:
         """
         Use Claude API to extract INCI ingredient names from scraped text
         
         Args:
             raw_text: Raw text scraped from the product page
+            url: The product URL (optional, but recommended for better context)
             
         Returns:
             List of extracted INCI ingredient names
         """
         try:
+            url_context = f"\n\nProduct URL: {url}" if url else ""
+            
             prompt = f"""
 You are an expert cosmetic ingredient analyst. Your task is to extract INCI (International Nomenclature of Cosmetic Ingredients) names from the following text scraped from an e-commerce product page.
 
+{url_context}
+
 CRITICAL REQUIREMENTS:
 1. Extract ONLY valid INCI ingredient names - these are standardized cosmetic ingredient names
-2. Look for sections labeled "Ingredients", "Ingredients List", "INCI", "Composition", "Formula", or similar
+2. Look for sections labeled "Ingredients", "Ingredients List", "INCI", "Composition", "Formula", "Formulation", "All Ingredients", "Ingredient List", or similar
 3. Ingredients are typically listed in order of concentration (highest to lowest), separated by commas
 4. Remove any non-ingredient text, headers, descriptions, marketing content, or explanatory text
 5. PRESERVE EXACT INGREDIENT NAMES - DO NOT SHORTEN OR SIMPLIFY:
@@ -1276,6 +1350,7 @@ CRITICAL REQUIREMENTS:
    - Preserve ALL parts of compound names (e.g., "Ethylhexylglycerin", "C12-15 Alkyl Benzoate")
    - DO NOT remove prefixes like "Ethyl", "Sodium", "Potassium", "Methyl", etc.
    - DO NOT convert to common names or shorten scientific names
+   - DO NOT guess or infer ingredient names - only extract what is explicitly stated in the text
 6. Clean up formatting:
    - Remove extra spaces, punctuation marks that aren't part of ingredient names
    - Remove brand names, product names, or marketing claims
@@ -1284,6 +1359,7 @@ CRITICAL REQUIREMENTS:
 8. Preserve the exact order of ingredients as listed (order matters in cosmetics)
 9. If ingredients are listed with percentages or concentrations, remove those numbers
 10. If no valid ingredients found, return empty array []
+11. DO NOT generate or estimate ingredients - only extract what is actually present in the scraped text
 
 COMMON INCI INGREDIENT PATTERNS:
 - Usually start with capital letters (e.g., "Water", "Glycerin", "Ascorbic Acid", "Ethyl Ascorbic Acid")
@@ -1315,6 +1391,8 @@ Return ONLY the JSON array of INCI ingredient names, nothing else:"""
             
             # Log a sample of the text being analyzed (first 1000 chars)
             print(f"DEBUG: Extracting ingredients from text (first 1000 chars): {raw_text[:1000]}")
+            if url:
+                print(f"DEBUG: Product URL provided: {url}")
 
             # Get Claude client (lazy-loaded)
             claude_client = self._get_claude_client()
@@ -1359,20 +1437,41 @@ Return ONLY the JSON array of INCI ingredient names, nothing else:"""
                         
                         for ing in ingredients:
                             ing_lower = ing.lower()
+                            ing_original = ing
+                            
                             # Check if a longer compound name exists in the source text
                             # Common patterns: "Ethyl Ascorbic Acid" vs "Ascorbic Acid"
                             if "ascorbic acid" in ing_lower and "ethyl" not in ing_lower:
                                 # Check if "ethyl ascorbic acid" exists in source
                                 if "ethyl ascorbic acid" in raw_text_lower or "ethylascorbic" in raw_text_lower.replace(" ", ""):
-                                    print(f"WARNING: Found 'Ascorbic Acid' but source text contains 'Ethyl Ascorbic Acid'. Checking source...")
-                                    # Try to find the exact match in source
-                                    if "ethyl ascorbic acid" in raw_text_lower:
-                                        validated_ingredients.append("Ethyl Ascorbic Acid")
-                                        print(f"  -> Corrected to: Ethyl Ascorbic Acid")
-                                        continue
+                                    print(f"WARNING: Found '{ing}' but source text contains 'Ethyl Ascorbic Acid'. Checking source...")
+                                    # Try to find the exact match in source - look for the full compound name
+                                    # Look for "ethyl ascorbic acid" (case insensitive, with possible spaces/hyphens)
+                                    pattern = r'ethyl[\s-]?ascorbic[\s-]?acid'
+                                    if re.search(pattern, raw_text_lower):
+                                        # Extract the exact capitalization from source
+                                        match = re.search(pattern, raw_text, re.IGNORECASE)
+                                        if match:
+                                            exact_name = match.group(0)
+                                            validated_ingredients.append(exact_name)
+                                            print(f"  -> Corrected to: {exact_name}")
+                                            continue
                             
-                            # Check for other common compound names that might be shortened
-                            validated_ingredients.append(ing)
+                            # Check for other common compound name patterns that might be shortened
+                            # Sodium Hyaluronate vs Hyaluronic Acid
+                            if "hyaluronic acid" in ing_lower and "sodium" not in ing_lower:
+                                if "sodium hyaluronate" in raw_text_lower:
+                                    pattern = r'sodium[\s-]?hyaluronate'
+                                    if re.search(pattern, raw_text_lower):
+                                        match = re.search(pattern, raw_text, re.IGNORECASE)
+                                        if match:
+                                            exact_name = match.group(0)
+                                            validated_ingredients.append(exact_name)
+                                            print(f"  -> Corrected to: {exact_name}")
+                                            continue
+                            
+                            # Keep the original ingredient if no correction needed
+                            validated_ingredients.append(ing_original)
                         
                         if validated_ingredients != ingredients:
                             print(f"Validation corrected ingredients: {ingredients} -> {validated_ingredients}")
@@ -1406,8 +1505,8 @@ Return ONLY the JSON array of INCI ingredient names, nothing else:"""
             scrape_result = await self.scrape_url(url)
             extracted_text = scrape_result["extracted_text"]
             
-            # Try to extract ingredients using Claude
-            ingredients = await self.extract_ingredients_from_text(extracted_text)
+            # Try to extract ingredients using Claude (pass both URL and scraped data)
+            ingredients = await self.extract_ingredients_from_text(extracted_text, url)
             
             # If extraction succeeded, return direct results
             if ingredients and len(ingredients) > 0:
@@ -1422,26 +1521,38 @@ Return ONLY the JSON array of INCI ingredient names, nothing else:"""
                     "product_image": scrape_result.get("product_image")
                 }
             
-            # If extraction failed, try fallback: detect product name and search
-            print("Direct extraction failed, attempting fallback: detecting product name...")
-            product_name = await self.detect_product_name(extracted_text, url)
-            
-            if product_name:
-                print(f"Detected product name: {product_name}")
-                print("Searching for ingredients using AI...")
-                estimated_ingredients = await self.search_ingredients_by_product_name(product_name)
+            # If extraction failed, check if we got meaningful scraped text
+            # Only fall back to AI if scraping actually got content but no ingredients were found
+            if extracted_text and len(extracted_text.strip()) > 50:
+                print(f"WARNING: Scraped {len(extracted_text)} characters but no ingredients extracted. This may indicate:")
+                print("  1. Ingredients are not present on the page")
+                print("  2. Ingredients are in a format Claude couldn't parse")
+                print("  3. Ingredients section was not properly scraped")
+                print("Attempting fallback: detecting product name...")
                 
-                if estimated_ingredients and len(estimated_ingredients) > 0:
-                    return {
-                        "ingredients": estimated_ingredients,
-                        "extracted_text": extracted_text,
-                        "platform": scrape_result["platform"],
-                        "url": url,
-                        "is_estimated": True,
-                        "source": "ai_search",
-                        "product_name": product_name,
-                        "product_image": scrape_result.get("product_image")
-                    }
+                product_name = await self.detect_product_name(extracted_text, url)
+                
+                if product_name:
+                    print(f"Detected product name: {product_name}")
+                    print("WARNING: Using AI-generated ingredients as fallback (may not be accurate)")
+                    estimated_ingredients = await self.search_ingredients_by_product_name(product_name)
+                    
+                    if estimated_ingredients and len(estimated_ingredients) > 0:
+                        return {
+                            "ingredients": estimated_ingredients,
+                            "extracted_text": extracted_text,
+                            "platform": scrape_result["platform"],
+                            "url": url,
+                            "is_estimated": True,
+                            "source": "ai_search",
+                            "product_name": product_name,
+                            "product_image": scrape_result.get("product_image")
+                        }
+            else:
+                print("WARNING: Scraping returned very little or no content. This suggests:")
+                print("  1. The page may be blocking automated access")
+                print("  2. The page structure may be different than expected")
+                print("  3. JavaScript may not have loaded properly")
             
             # If fallback also failed, return empty
             return {
