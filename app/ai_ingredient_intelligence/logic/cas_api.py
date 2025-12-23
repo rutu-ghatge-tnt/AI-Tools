@@ -12,13 +12,17 @@ import asyncio
 CAS_API_BASE_URL = "https://commonchemistry.cas.org/api"
 CAS_API_KEY = os.getenv("CAS_API_KEY")
 
+# Make CAS_API_KEY optional - if not set, CAS API features will be disabled
 if not CAS_API_KEY:
-    raise ValueError("CAS_API_KEY environment variable is required. Please set it in your .env file.")
-
-CAS_API_HEADERS = {
-    "X-API-KEY": CAS_API_KEY,  # Note: Header name is X-API-KEY (all caps with hyphens)
-    "Accept": "application/json"
-}
+    print("⚠️  Warning: CAS_API_KEY not set. CAS API features will be disabled.")
+    CAS_API_HEADERS = {
+        "Accept": "application/json"
+    }
+else:
+    CAS_API_HEADERS = {
+        "X-API-KEY": CAS_API_KEY,  # Note: Header name is X-API-KEY (all caps with hyphens)
+        "Accept": "application/json"
+    }
 
 
 async def search_cas_by_name(ingredient_name: str, offset: Optional[str] = None, size: Optional[str] = None) -> Optional[Dict]:
