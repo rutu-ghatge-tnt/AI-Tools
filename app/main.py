@@ -13,7 +13,7 @@ logging.getLogger('absl').setLevel(logging.ERROR)
 warnings.filterwarnings('ignore', message='.*Feedback manager.*')
 warnings.filterwarnings('ignore', category=UserWarning, module='langchain')
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 
 # Import chatbot router (with error handling for missing dependencies)
 try:
@@ -250,10 +250,14 @@ else:
 # Combine origins based on environment
 if is_development:
     allowed_origins = development_origins.copy()
-    print(f"🌍 CORS: Development mode (capi.skintruth.in) - allowing development origins + localhost")
+    print(f"🌍 CORS: Development mode (capi.skintruth.in)")
 else:
     allowed_origins = production_origins.copy()
-    print(f"🌍 CORS: Production mode (capi.skinbb.com) - only allowing production domains")
+    print(f"🌍 CORS: Production mode (capi.skinbb.com)")
+
+print(f"📋 Allowed CORS origins: {allowed_origins}")
+print(f"🔍 SERVER_URL: {server_url}")
+print(f"🔍 ENVIRONMENT: {env}")
 
 app.add_middleware(
     CORSMiddleware,
@@ -402,4 +406,17 @@ async def health_check():
             "server_health": "/api/server-health",
             "test_selenium": "/api/test-selenium"
         }
+    }
+
+@app.get("/cors-debug")
+async def cors_debug(request: Request):
+    """Debug endpoint to check CORS configuration"""
+    origin = request.headers.get("origin", "No origin header")
+    return {
+        "origin": origin,
+        "allowed_origins": allowed_origins,
+        "is_development": is_development,
+        "server_url": server_url,
+        "environment": env,
+        "origin_allowed": origin in allowed_origins if origin != "No origin header" else None
     }
