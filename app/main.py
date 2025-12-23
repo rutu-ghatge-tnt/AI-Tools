@@ -218,12 +218,15 @@ production_origins = [
     "https://metaverse.skinbb.com",
     "https://formulynx.in",
     "https://www.formulynx.in"
+    "http://www.formulynx.ai", 
 ]
 
 # Development origins (for capi.skintruth.in - development server)
 development_origins = [
     "https://capi.skintruth.in",  # Development API server
     "https://tt.skintruth.in",     # Development frontend
+    "https://formulynx.in",        # Frontend (also uses dev API)
+    "https://www.formulynx.in",    # Frontend with www (also uses dev API)
     "http://localhost:5174", 
     "http://localhost:5173",
     "http://localhost:3000",
