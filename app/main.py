@@ -68,8 +68,12 @@ except ImportError as e:
 from fastapi.middleware.cors import CORSMiddleware
 from app.ai_ingredient_intelligence.db.collections import distributor_col
 from fastapi.openapi.utils import get_openapi
+from fastapi.openapi.utils import get_openapi
 
 app = FastAPI(
+    title="SkinBB API Documentation",
+    description="API documentation for SkinBB - An AI assistant for skincare queries with document retrieval and web search fallback",
+    version="1.0.0",
     title="SkinBB API Documentation",
     description="API documentation for SkinBB - An AI assistant for skincare queries with document retrieval and web search fallback",
     version="1.0.0",
@@ -221,6 +225,9 @@ app.add_middleware(
         "https://metaverse.skinbb.com",
         "https://formulynx.in",
         "https://www.formulynx.in"
+        "https://metaverse.skinbb.com",
+        "https://formulynx.in",
+        "https://www.formulynx.in"
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
@@ -268,6 +275,22 @@ try:
 except ImportError as e:
     print(f"Warning: Could not import inspiration_boards router: {e}")
     print("   Inspiration Boards API will not be available. This is not critical.")
+
+# ✅ Add Dashboard Stats API
+try:
+    from app.ai_ingredient_intelligence.api.dashboard_stats import router as dashboard_stats_router
+    app.include_router(dashboard_stats_router, prefix="/api")
+except ImportError as e:
+    print(f"Warning: Could not import dashboard_stats router: {e}")
+    print("   Dashboard Stats API will not be available. This is not critical.")
+
+# ✅ Add Authentication API (JWT login, refresh, etc.)
+try:
+    from app.ai_ingredient_intelligence.auth import auth_router
+    app.include_router(auth_router, prefix="/api")
+except ImportError as e:
+    print(f"Warning: Could not import auth router: {e}")
+    print("   Authentication API will not be available.")
 
 # ✅ Add Dashboard Stats API
 try:

@@ -547,11 +547,19 @@ async def call_ai_with_claude(
     system_prompt: str,
     user_prompt: str,
     prompt_type: str = "general",
+    prompt_type: str = "general",
     max_retries: int = 3
 ) -> Dict[str, Any]:
     """
     Call Claude API for Make a Wish pipeline with prompt caching support.
+    Call Claude API for Make a Wish pipeline with prompt caching support.
     Uses Claude as per project preference.
+    
+    Args:
+        system_prompt: The system prompt (will be cached)
+        user_prompt: The user prompt (dynamic content)
+        prompt_type: Type of prompt for cache tracking (e.g., "ingredient_selection")
+        max_retries: Maximum number of retry attempts
     
     Args:
         system_prompt: The system prompt (will be cached)
@@ -815,11 +823,32 @@ async def generate_formula_from_wish(wish_data: dict) -> dict:
     # Use fixed wish data (with auto-selections applied)
     wish_data = fixed_wish_data
     
+    # Validate and apply rules engine
+    rules_engine = get_rules_engine()
+    can_proceed, validation_results, fixed_wish_data = rules_engine.validate_wish_data(wish_data)
+    
+    if not can_proceed:
+        blocking_errors = [r for r in validation_results if r.severity == ValidationSeverity.BLOCK]
+        error_messages = [r.message for r in blocking_errors]
+        raise ValueError(f"Validation failed: {'; '.join(error_messages)}")
+    
+    # Log warnings if any
+    warnings = [r for r in validation_results if r.severity == ValidationSeverity.WARN]
+    if warnings:
+        print(f"⚠️ Validation warnings: {len(warnings)}")
+        for warning in warnings:
+            print(f"   - {warning.message}")
+    
+    # Use fixed wish data (with auto-selections applied)
+    wish_data = fixed_wish_data
+    
     # Stage 1: Ingredient Selection
     print("📋 Stage 1: Ingredient Selection...")
     selection_prompt = generate_ingredient_selection_prompt(wish_data)
     selected_ingredients = await call_ai_with_claude(
         system_prompt=INGREDIENT_SELECTION_SYSTEM_PROMPT,
+        user_prompt=selection_prompt,
+        prompt_type="ingredient_selection"
         user_prompt=selection_prompt,
         prompt_type="ingredient_selection"
     )
@@ -859,6 +888,8 @@ async def generate_formula_from_wish(wish_data: dict) -> dict:
         system_prompt=FORMULA_OPTIMIZATION_SYSTEM_PROMPT,
         user_prompt=optimization_prompt,
         prompt_type="formula_optimization"
+        user_prompt=optimization_prompt,
+        prompt_type="formula_optimization"
     )
     print(f"✅ Optimized formula: {optimized_formula.get('optimized_formula', {}).get('total_percentage', 0)}%")
     
@@ -869,6 +900,8 @@ async def generate_formula_from_wish(wish_data: dict) -> dict:
         system_prompt=MANUFACTURING_PROCESS_SYSTEM_PROMPT,
         user_prompt=manufacturing_prompt,
         prompt_type="manufacturing_process"
+        user_prompt=manufacturing_prompt,
+        prompt_type="manufacturing_process"
     )
     print(f"✅ Generated {len(manufacturing_process.get('manufacturing_steps', []))} manufacturing steps")
     
@@ -877,6 +910,8 @@ async def generate_formula_from_wish(wish_data: dict) -> dict:
     compliance_prompt = generate_compliance_prompt(optimized_formula)
     compliance = await call_ai_with_claude(
         system_prompt=COMPLIANCE_CHECK_SYSTEM_PROMPT,
+        user_prompt=compliance_prompt,
+        prompt_type="compliance_check"
         user_prompt=compliance_prompt,
         prompt_type="compliance_check"
     )

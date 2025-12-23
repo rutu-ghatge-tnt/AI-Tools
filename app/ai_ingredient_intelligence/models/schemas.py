@@ -17,21 +17,28 @@ class AnalyzeInciItem(BaseModel):
     description: Optional[str] = Field(None, description="Description (uses enhanced_description from MongoDB for branded ingredients)")
     category_decided: Optional[str] = Field(None, description="Category from MongoDB for branded ingredients: 'Active' or 'Excipient'")
     category: Optional[str] = Field(None, description="Computed category for general INCI and combinations: 'Active' or 'Excipient' (handles combinations automatically)")
+    description: Optional[str] = Field(None, description="Description (uses enhanced_description from MongoDB for branded ingredients)")
+    category_decided: Optional[str] = Field(None, description="Category from MongoDB for branded ingredients: 'Active' or 'Excipient'")
+    category: Optional[str] = Field(None, description="Computed category for general INCI and combinations: 'Active' or 'Excipient' (handles combinations automatically)")
     functionality_category_tree: Optional[List[List[str]]] = []
     chemical_class_category_tree: Optional[List[List[str]]] = []
     match_score: float
     matched_inci: List[str]
     tag: Optional[str] = Field(None, description="Tag: 'B' for branded, 'G' for general INCI")
     match_method: Optional[str] = Field(None, description="Match method: 'exact', 'fuzzy', 'synonym', or 'combination'")
+    match_method: Optional[str] = Field(None, description="Match method: 'exact', 'fuzzy', 'synonym', or 'combination'")
 
 class InciGroup(BaseModel):
     inci_list: List[str]                  # the set of INCI names matched
     items: List[AnalyzeInciItem]          # all branded ingredients that matched this INCI set
     count: int = Field(..., description="Number of items (can be computed as len(items))")    
+    count: int = Field(..., description="Number of items (can be computed as len(items))")    
     
 class AnalyzeInciResponse(BaseModel):
     detected: List[InciGroup] = Field(default_factory=list, description="All detected ingredients (branded + general) grouped by INCI")
+    detected: List[InciGroup] = Field(default_factory=list, description="All detected ingredients (branded + general) grouped by INCI")
     unable_to_decode: List[str] = Field(default_factory=list, description="Ingredients that couldn't be decoded - for 'Unable to Decode' tab")
+    processing_time: float = Field(..., description="Time taken to process (in seconds)")
     processing_time: float = Field(..., description="Time taken to process (in seconds)")
     bis_cautions: Optional[Dict[str, List[str]]] = Field(None, description="BIS cautions for ingredients")
     categories: Optional[Dict[str, str]] = Field(None, description="Individual INCI categories mapping for bifurcation: { 'inci_name': 'Active' | 'Excipient' }")
@@ -81,14 +88,26 @@ class ProductInput(BaseModel):
     """Schema for a single product input"""
     input: str = Field(..., description="URL or INCI string")
     input_type: str = Field(..., description="Type of input: 'url' or 'inci'")
+    selected_method: Optional[str] = Field(None, description="Input method used: 'url' or 'inci'")
+    url: Optional[str] = Field(None, description="URL of the product (if input_type was 'url')")
+
+
+class ProductInput(BaseModel):
+    """Schema for a single product input"""
+    input: str = Field(..., description="URL or INCI string")
+    input_type: str = Field(..., description="Type of input: 'url' or 'inci'")
 
 
 class CompareProductsRequest(BaseModel):
     """Request schema for product comparison - supports multiple products"""
     products: List[ProductInput] = Field(..., description="List of products to compare (minimum 2)")
+    """Request schema for product comparison - supports multiple products"""
+    products: List[ProductInput] = Field(..., description="List of products to compare (minimum 2)")
 
 
 class CompareProductsResponse(BaseModel):
+    """Response schema for product comparison - supports multiple products"""
+    products: List[ProductComparisonItem] = Field(..., description="List of compared products")
     """Response schema for product comparison - supports multiple products"""
     products: List[ProductComparisonItem] = Field(..., description="List of compared products")
     processing_time: float = Field(..., description="Time taken for comparison (in seconds)")
@@ -185,7 +204,24 @@ class DecodeHistoryItemSummary(BaseModel):
     has_report: bool = Field(False, description="Whether report_data exists")
 
 
+class DecodeHistoryItemSummary(BaseModel):
+    """Summary schema for decode history item (used in list endpoints - excludes large fields)"""
+    id: Optional[str] = Field(None, description="History item ID")
+    user_id: Optional[str] = Field(None, description="User ID who created this history")
+    name: str = Field(..., description="Name for this decode")
+    tag: Optional[str] = Field(None, description="Tag for categorization")
+    input_type: str = Field(..., description="Input type: 'inci' or 'url'")
+    input_data: Optional[str] = Field(None, description="Input data preview (truncated for list view)")
+    status: str = Field(..., description="Status: 'pending' (analysis in progress), 'analyzed' (completed), or 'failed'")
+    notes: Optional[str] = Field(None, description="User notes for this decode")
+    created_at: Optional[str] = Field(None, description="Creation timestamp")
+    # Summary fields from analysis_result (if available)
+    has_analysis: bool = Field(False, description="Whether analysis_result exists")
+    has_report: bool = Field(False, description="Whether report_data exists")
+
+
 class DecodeHistoryItem(BaseModel):
+    """Full schema for decode history item (used in detail endpoints - includes all fields)"""
     """Full schema for decode history item (used in detail endpoints - includes all fields)"""
     id: Optional[str] = Field(None, description="History item ID")
     user_id: Optional[str] = Field(None, description="User ID who created this history")
@@ -219,8 +255,18 @@ class FormulationSummary(BaseModel):
     compliance_status: Optional[str] = Field(None, description="Overall compliance status (e.g., Compliant, Review Needed)")
     critical_concerns: Optional[str] = Field(None, description="Comma-separated list of critical concerns or warnings")
 
+class FormulationSummary(BaseModel):
+    """Summary fields for formulation report"""
+    formulation_type: Optional[str] = Field(None, description="Overall formulation type (e.g., Water-based Serum)")
+    key_active_ingredients: Optional[str] = Field(None, description="Comma-separated list of key active ingredients")
+    primary_benefits: Optional[str] = Field(None, description="Comma-separated list of primary benefits")
+    recommended_ph_range: Optional[str] = Field(None, description="Recommended pH range (e.g., 5.0-6.5)")
+    compliance_status: Optional[str] = Field(None, description="Overall compliance status (e.g., Compliant, Review Needed)")
+    critical_concerns: Optional[str] = Field(None, description="Comma-separated list of critical concerns or warnings")
+
 class FormulationReportResponse(BaseModel):
     """Response schema for formulation report as JSON"""
+    summary: Optional[FormulationSummary] = Field(None, description="Executive summary fields of the formulation analysis")
     summary: Optional[FormulationSummary] = Field(None, description="Executive summary fields of the formulation analysis")
     inci_list: List[str] = Field(..., description="List of submitted INCI ingredients")
     analysis_table: List[ReportTableRow] = Field(..., description="Analysis table with columns: Ingredient | Category | Functions/Notes | BIS Cautions")
@@ -244,6 +290,8 @@ class SaveDecodeHistoryRequest(BaseModel):
 
 
 class GetDecodeHistoryResponse(BaseModel):
+    """Response schema for getting decode history (returns summaries only)"""
+    items: List[DecodeHistoryItemSummary] = Field(..., description="List of history item summaries")
     """Response schema for getting decode history (returns summaries only)"""
     items: List[DecodeHistoryItemSummary] = Field(..., description="List of history item summaries")
     total: int = Field(..., description="Total number of items")
@@ -270,12 +318,36 @@ class CompareHistoryItemSummary(BaseModel):
     product_count: int = Field(..., description="Number of products being compared")
 
 
+class DecodeHistoryDetailResponse(BaseModel):
+    """Response schema for getting decode history detail (returns full data)"""
+    item: DecodeHistoryItem = Field(..., description="Full history item with all data")
+
+
+class CompareHistoryItemSummary(BaseModel):
+    """Summary schema for compare history item (used in list endpoints - excludes large fields)"""
+    id: Optional[str] = Field(None, description="History item ID")
+    user_id: Optional[str] = Field(None, description="User ID who created this history")
+    name: str = Field(..., description="Name for this comparison")
+    tag: Optional[str] = Field(None, description="Tag for categorization")
+    # Products array - unified format for all comparisons (2-product or multi-product)
+    products: List[Dict[str, str]] = Field(..., description="List of products with 'input' and 'input_type' (inputs truncated for preview)")
+    status: str = Field(..., description="Status: 'pending' (comparison in progress), 'analyzed' (completed), or 'failed'")
+    notes: Optional[str] = Field(None, description="User notes for this comparison")
+    created_at: Optional[str] = Field(None, description="Creation timestamp")
+    # Summary fields
+    has_comparison: bool = Field(False, description="Whether comparison_result exists")
+    product_count: int = Field(..., description="Number of products being compared")
+
+
 class CompareHistoryItem(BaseModel):
+    """Full schema for compare history item (used in detail endpoints - includes all fields)"""
     """Full schema for compare history item (used in detail endpoints - includes all fields)"""
     id: Optional[str] = Field(None, description="History item ID")
     user_id: Optional[str] = Field(None, description="User ID who created this history")
     name: str = Field(..., description="Name for this comparison")
     tag: Optional[str] = Field(None, description="Tag for categorization")
+    # Products array - unified format for all comparisons (2-product or multi-product)
+    products: List[Dict[str, str]] = Field(..., description="List of products with 'input' and 'input_type' - unified format for all comparisons")
     # Products array - unified format for all comparisons (2-product or multi-product)
     products: List[Dict[str, str]] = Field(..., description="List of products with 'input' and 'input_type' - unified format for all comparisons")
     status: str = Field(..., description="Status: 'pending' (comparison in progress), 'analyzed' (completed), or 'failed'")
@@ -298,7 +370,14 @@ class SaveCompareHistoryRequest(BaseModel):
 class GetCompareHistoryResponse(BaseModel):
     """Response schema for getting compare history (returns summaries only)"""
     items: List[CompareHistoryItemSummary] = Field(..., description="List of history item summaries")
+    """Response schema for getting compare history (returns summaries only)"""
+    items: List[CompareHistoryItemSummary] = Field(..., description="List of history item summaries")
     total: int = Field(..., description="Total number of items")
+
+
+class CompareHistoryDetailResponse(BaseModel):
+    """Response schema for getting compare history detail (returns full data)"""
+    item: CompareHistoryItem = Field(..., description="Full history item with all data")
 
 
 class CompareHistoryDetailResponse(BaseModel):
@@ -361,7 +440,24 @@ class MarketResearchHistoryItemSummary(BaseModel):
     total_products: Optional[int] = Field(None, description="Total number of products found (if available)")
 
 
+class MarketResearchHistoryItemSummary(BaseModel):
+    """Summary schema for market research history item (used in list endpoints - excludes large fields)"""
+    id: Optional[str] = Field(None, description="History item ID")
+    user_id: Optional[str] = Field(None, description="User ID who created this history")
+    name: str = Field(..., description="Name for this market research")
+    tag: Optional[str] = Field(None, description="Tag for categorization")
+    input_type: str = Field(..., description="Input type: 'inci' or 'url'")
+    input_data: Optional[str] = Field(None, description="Input data preview (truncated for list view)")
+    ai_product_type: Optional[str] = Field(None, description="Product type identified by AI")
+    notes: Optional[str] = Field(None, description="User notes for this research")
+    created_at: Optional[str] = Field(None, description="Creation timestamp")
+    # Summary fields from research_result (if available)
+    has_research: bool = Field(False, description="Whether research_result exists")
+    total_products: Optional[int] = Field(None, description="Total number of products found (if available)")
+
+
 class MarketResearchHistoryItem(BaseModel):
+    """Full schema for market research history item (used in detail endpoints - includes all fields)"""
     """Full schema for market research history item (used in detail endpoints - includes all fields)"""
     id: Optional[str] = Field(None, description="History item ID")
     user_id: Optional[str] = Field(None, description="User ID who created this history")
@@ -393,7 +489,14 @@ class SaveMarketResearchHistoryRequest(BaseModel):
 class GetMarketResearchHistoryResponse(BaseModel):
     """Response schema for getting market research history (returns summaries only)"""
     items: List[MarketResearchHistoryItemSummary] = Field(..., description="List of history item summaries")
+    """Response schema for getting market research history (returns summaries only)"""
+    items: List[MarketResearchHistoryItemSummary] = Field(..., description="List of history item summaries")
     total: int = Field(..., description="Total number of items")
+
+
+class MarketResearchHistoryDetailResponse(BaseModel):
+    """Response schema for getting market research history detail (returns full data)"""
+    item: MarketResearchHistoryItem = Field(..., description="Full history item with all data")
 
 
 class MarketResearchHistoryDetailResponse(BaseModel):

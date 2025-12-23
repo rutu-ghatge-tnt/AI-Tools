@@ -1,5 +1,6 @@
 # app/api/analyze_inci.py
 from fastapi import APIRouter, HTTPException, Form, Request, Depends
+from fastapi import APIRouter, HTTPException, Form, Request, Depends
 from fastapi.responses import Response
 import time
 import os
@@ -7,7 +8,12 @@ import json
 import re
 import asyncio
 from typing import List, Optional, Dict, Tuple
+import asyncio
+from typing import List, Optional, Dict, Tuple
 from collections import defaultdict
+
+# Import authentication - JWT
+from app.ai_ingredient_intelligence.auth import verify_jwt_token
 
 # Import authentication - JWT
 from app.ai_ingredient_intelligence.auth import verify_jwt_token
@@ -55,21 +61,30 @@ from app.ai_ingredient_intelligence.models.schemas import (
     ProductComparisonItem,  # ⬅️ new schema for comparison
     DecodeHistoryItem,  # ⬅️ full schema for decode history (detail endpoint)
     DecodeHistoryItemSummary,  # ⬅️ summary schema for decode history (list endpoint)
+    DecodeHistoryItem,  # ⬅️ full schema for decode history (detail endpoint)
+    DecodeHistoryItemSummary,  # ⬅️ summary schema for decode history (list endpoint)
     SaveDecodeHistoryRequest,  # ⬅️ new schema for saving history
     GetDecodeHistoryResponse,  # ⬅️ new schema for getting history
+    DecodeHistoryDetailResponse,  # ⬅️ new schema for getting history detail
+    CompareHistoryItem,  # ⬅️ full schema for compare history (detail endpoint)
+    CompareHistoryItemSummary,  # ⬅️ summary schema for compare history (list endpoint)
     DecodeHistoryDetailResponse,  # ⬅️ new schema for getting history detail
     CompareHistoryItem,  # ⬅️ full schema for compare history (detail endpoint)
     CompareHistoryItemSummary,  # ⬅️ summary schema for compare history (list endpoint)
     SaveCompareHistoryRequest,  # ⬅️ new schema for saving compare history
     GetCompareHistoryResponse,  # ⬅️ new schema for getting compare history
     CompareHistoryDetailResponse,  # ⬅️ new schema for getting compare history detail
+    CompareHistoryDetailResponse,  # ⬅️ new schema for getting compare history detail
     MarketResearchRequest,  # ⬅️ new schema for market research
     MarketResearchResponse,  # ⬅️ new schema for market research response
     MarketResearchProduct,  # ⬅️ new schema for market research product
     MarketResearchHistoryItem,  # ⬅️ full schema for market research history (detail endpoint)
     MarketResearchHistoryItemSummary,  # ⬅️ summary schema for market research history (list endpoint)
+    MarketResearchHistoryItem,  # ⬅️ full schema for market research history (detail endpoint)
+    MarketResearchHistoryItemSummary,  # ⬅️ summary schema for market research history (list endpoint)
     SaveMarketResearchHistoryRequest,  # ⬅️ new schema for saving market research history
     GetMarketResearchHistoryResponse,  # ⬅️ new schema for getting market research history
+    MarketResearchHistoryDetailResponse,  # ⬅️ new schema for getting market research history detail
     MarketResearchHistoryDetailResponse,  # ⬅️ new schema for getting market research history detail
 )
 from app.ai_ingredient_intelligence.db.mongodb import db
@@ -474,6 +489,12 @@ async def server_health():
     """
     Comprehensive server health check endpoint.
     Tests: Chrome availability, Claude API, environment variables.
+    
+    NOTE: This endpoint is PUBLIC (no authentication required) for monitoring purposes.
+    """
+    """
+    Comprehensive server health check endpoint.
+    Tests: Chrome availability, Claude API, environment variables.
     """
     health_status = {
         "status": "healthy",
@@ -551,6 +572,12 @@ async def server_health():
 
 @router.get("/bis-rag/health")
 async def bis_rag_health():
+    """
+    Health check endpoint for BIS RAG functionality.
+    Uses the comprehensive health check function from bis_rag module.
+    
+    NOTE: This endpoint is PUBLIC (no authentication required) for monitoring purposes.
+    """
     """
     Health check endpoint for BIS RAG functionality.
     Uses the comprehensive health check function from bis_rag module.
@@ -706,8 +733,15 @@ async def test_selenium():
 @router.post("/analyze-inci-form", response_model=AnalyzeInciResponse)
 async def analyze_inci_form(
     current_user: dict = Depends(verify_jwt_token),  # JWT token validation
+    current_user: dict = Depends(verify_jwt_token),  # JWT token validation
     inci_names: List[str] = Form(..., description="Raw INCI names from product label")
 ):
+    """
+    DEPRECATED: Use /api/analyze-inci instead (supports both JSON and form data).
+    This endpoint is kept for backward compatibility only.
+    """
+    # Convert form data to JSON payload format and call the main endpoint
+    return await analyze_inci({"inci_names": inci_names})
     """
     DEPRECATED: Use /api/analyze-inci instead (supports both JSON and form data).
     This endpoint is kept for backward compatibility only.
@@ -718,6 +752,10 @@ async def analyze_inci_form(
 
 # URL-based ingredient extraction endpoint (ONLY extracts, doesn't analyze)
 @router.post("/extract-ingredients-from-url", response_model=ExtractIngredientsResponse)
+async def extract_ingredients_from_url(
+    payload: dict,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
 async def extract_ingredients_from_url(
     payload: dict,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
@@ -872,7 +910,23 @@ async def analyze_ingredients_core(ingredients: List[str]) -> AnalyzeInciRespons
     start = time.time()
     
     try:
+# Core analysis function that can be called directly (without HTTP/authentication)
+async def analyze_ingredients_core(ingredients: List[str]) -> AnalyzeInciResponse:
+    """
+    Core ingredient analysis logic that can be called directly.
+    This function performs the analysis without history saving or authentication.
+    
+    Args:
+        ingredients: List of ingredient names to analyze
+        
+    Returns:
+        AnalyzeInciResponse with analysis results
+    """
+    start = time.time()
+    
+    try:
         if not ingredients:
+            raise ValueError("No ingredients provided")
             raise ValueError("No ingredients provided")
         
         # 🔹 Get synonyms from CAS API for better matching
@@ -893,6 +947,7 @@ async def analyze_ingredients_core(ingredients: List[str]) -> AnalyzeInciRespons
         
     except Exception as e:
         print(f"Error in analyze_ingredients_core: {e}")
+        print(f"Error in analyze_ingredients_core: {e}")
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
     # Convert to objects
@@ -902,13 +957,22 @@ async def analyze_ingredients_core(ingredients: List[str]) -> AnalyzeInciRespons
     print("Fetching ingredient categories for INCI-based bifurcation...")
     inci_categories, items_processed = await fetch_and_compute_categories(items)
     print(f"Found categories for {len(inci_categories)} INCI names")
+    # 🔹 Fetch categories for INCI-based bifurcation (only for general INCI, not branded)
+    print("Fetching ingredient categories for INCI-based bifurcation...")
+    inci_categories, items_processed = await fetch_and_compute_categories(items)
+    print(f"Found categories for {len(inci_categories)} INCI names")
 
+    # 🔹 Group ALL detected ingredients (branded + general) by matched_inci
+    detected_dict = defaultdict(list)
+    for item in items_processed:
     # 🔹 Group ALL detected ingredients (branded + general) by matched_inci
     detected_dict = defaultdict(list)
     for item in items_processed:
         key = tuple(sorted(item.matched_inci))
         detected_dict[key].append(item)
+        detected_dict[key].append(item)
 
+    detected: List[InciGroup] = [
     detected: List[InciGroup] = [
         InciGroup(
             inci_list=list(key),
@@ -916,8 +980,10 @@ async def analyze_ingredients_core(ingredients: List[str]) -> AnalyzeInciRespons
             count=len(val)
         )
         for key, val in detected_dict.items()
+        for key, val in detected_dict.items()
     ]
     # Sort by number of INCI: more INCI first, then lower, single at last
+    detected.sort(key=lambda x: len(x.inci_list), reverse=True)
     detected.sort(key=lambda x: len(x.inci_list), reverse=True)
 
     # Filter out water-related BIS cautions
@@ -1140,7 +1206,19 @@ async def analyze_url(
     payload: dict,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
+async def analyze_url(
+    payload: dict,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
+    Extract ingredients from a product URL and analyze them with automatic history saving.
+    
+    Auto-saving behavior:
+    - If name is provided, automatically saves to decode history
+    - Saves with "in_progress" status before analysis
+    - Updates with "completed" status and analysis_result after analysis
+    - Saving errors don't fail the analysis (graceful degradation)
+    - If history_id is provided, updates existing history item instead of creating new one
     Extract ingredients from a product URL and analyze them with automatic history saving.
     
     Auto-saving behavior:
@@ -1163,6 +1241,17 @@ async def analyze_url(
     Authentication:
     - Requires JWT token in Authorization header
     - User ID is automatically extracted from the JWT token
+        "url": "https://example.com/product/...",
+        "name": "Product Name" (optional, for auto-saving),
+        "tag": "optional-tag" (optional),
+        "notes": "User notes" (optional),
+        "expected_benefits": "Expected benefits" (optional),
+        "history_id": "existing_history_id" (optional, if frontend already created history item)
+    }
+    
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
     
     The endpoint will:
     1. Scrape the URL to extract text content
@@ -1172,6 +1261,38 @@ async def analyze_url(
     """
     start = time.time()
     scraper = None
+    history_id = None
+    
+    # Extract user_id from JWT token (already verified by verify_jwt_token)
+    user_id_value = current_user.get("user_id") or current_user.get("_id") or payload.get("user_id")
+    name = payload.get("name", "").strip()
+    tag = payload.get("tag")
+    notes = payload.get("notes", "")
+    expected_benefits = payload.get("expected_benefits")
+    
+    # 🔹 Check if history_id is provided (frontend may have already created a history item)
+    provided_history_id = payload.get("history_id")
+    if provided_history_id:
+        # Validate the provided history_id
+        try:
+            if ObjectId.is_valid(provided_history_id):
+                # Verify the history item exists and belongs to the user
+                existing_history = await decode_history_col.find_one({
+                    "_id": ObjectId(provided_history_id),
+                    "user_id": user_id_value
+                })
+                if existing_history:
+                    history_id = provided_history_id
+                    print(f"[AUTO-SAVE] Using existing history_id: {history_id}")
+                else:
+                    print(f"[AUTO-SAVE] Warning: Provided history_id {provided_history_id} not found or doesn't belong to user, creating new one")
+                    provided_history_id = None  # Reset to None so we create a new one
+            else:
+                print(f"[AUTO-SAVE] Warning: Invalid history_id format: {provided_history_id}, creating new one")
+                provided_history_id = None
+        except Exception as e:
+            print(f"[AUTO-SAVE] Warning: Error validating history_id: {e}, creating new one")
+            provided_history_id = None
     history_id = None
     
     # Extract user_id from JWT token (already verified by verify_jwt_token)
@@ -1264,6 +1385,52 @@ async def analyze_url(
                 print(f"[AUTO-SAVE] Warning: Failed to save initial state: {e}")
                 # Continue with analysis even if saving fails
         
+        # 🔹 Auto-save: Save initial state with "in_progress" status if user_id provided and no existing history_id
+        # Auto-save always happens if user_id is provided (name is optional, will use default if not provided)
+        if user_id_value and not history_id:
+            try:
+                # 🔹 BUG FIX: Check if a history item with the same input_data (URL) already exists for this user
+                # This prevents creating duplicate history items when the same analysis is run multiple times
+                existing_history_item = await decode_history_col.find_one({
+                    "user_id": user_id_value,
+                    "input_type": "url",
+                    "input_data": url
+                }, sort=[("created_at", -1)])  # Get the most recent one
+                
+                if existing_history_item:
+                    history_id = str(existing_history_item["_id"])
+                    print(f"[AUTO-SAVE] Found existing history item with same URL, reusing history_id: {history_id}")
+                    # Update the existing item's status to "in_progress" if it was completed/failed
+                    if existing_history_item.get("status") in ["completed", "failed"]:
+                        await decode_history_col.update_one(
+                            {"_id": existing_history_item["_id"]},
+                            {"$set": {"status": "in_progress"}}
+                        )
+                        print(f"[AUTO-SAVE] Reset existing history item {history_id} status to 'in_progress'")
+                else:
+                    # Use provided name or generate default name from URL
+                    display_name = name if name else (url.split('/')[-1] if url else "Untitled Analysis")
+                    if not display_name or len(display_name) > 100:
+                        display_name = "Untitled Analysis"
+                    
+                    history_doc = {
+                        "user_id": user_id_value,
+                        "name": display_name,
+                        "tag": tag,
+                        "input_type": "url",
+                        "input_data": url,
+                        "status": "in_progress",
+                        "notes": notes,
+                        "expected_benefits": expected_benefits,
+                        "created_at": (datetime.now(timezone(timedelta(hours=5, minutes=30)))).isoformat()
+                    }
+                    result = await decode_history_col.insert_one(history_doc)
+                    history_id = str(result.inserted_id)
+                    print(f"[AUTO-SAVE] Saved initial state with history_id: {history_id}")
+            except Exception as e:
+                print(f"[AUTO-SAVE] Warning: Failed to save initial state: {e}")
+                # Continue with analysis even if saving fails
+        
         # Initialize URL scraper
         scraper = URLScraper()
         
@@ -1308,6 +1475,15 @@ async def analyze_url(
                 )
             except:
                 pass
+        # Update history status to "failed" if we have history_id
+        if history_id and user_id_value:
+            try:
+                await decode_history_col.update_one(
+                    {"_id": ObjectId(history_id), "user_id": user_id_value},
+                    {"$set": {"status": "failed"}}
+                )
+            except:
+                pass
         if scraper:
             try:
                 await scraper.close()
@@ -1315,6 +1491,15 @@ async def analyze_url(
                 pass
         raise
     except Exception as e:
+        # Update history status to "failed" if we have history_id
+        if history_id and user_id_value:
+            try:
+                await decode_history_col.update_one(
+                    {"_id": ObjectId(history_id), "user_id": user_id_value},
+                    {"$set": {"status": "failed"}}
+                )
+            except:
+                pass
         # Update history status to "failed" if we have history_id
         if history_id and user_id_value:
             try:
@@ -1340,13 +1525,22 @@ async def analyze_url(
     print("Fetching ingredient categories for INCI-based bifurcation...")
     inci_categories, items_processed = await fetch_and_compute_categories(items)
     print(f"Found categories for {len(inci_categories)} INCI names")
+    # 🔹 Fetch categories for INCI-based bifurcation (only for general INCI, not branded)
+    print("Fetching ingredient categories for INCI-based bifurcation...")
+    inci_categories, items_processed = await fetch_and_compute_categories(items)
+    print(f"Found categories for {len(inci_categories)} INCI names")
 
+    # 🔹 Group ALL detected ingredients (branded + general) by matched_inci
+    detected_dict = defaultdict(list)
+    for item in items_processed:
     # 🔹 Group ALL detected ingredients (branded + general) by matched_inci
     detected_dict = defaultdict(list)
     for item in items_processed:
         key = tuple(sorted(item.matched_inci))
         detected_dict[key].append(item)
+        detected_dict[key].append(item)
 
+    detected: List[InciGroup] = [
     detected: List[InciGroup] = [
         InciGroup(
             inci_list=list(key),
@@ -1354,8 +1548,10 @@ async def analyze_url(
             count=len(val)
         )
         for key, val in detected_dict.items()
+        for key, val in detected_dict.items()
     ]
     # Sort by number of INCI: more INCI first, then lower, single at last
+    detected.sort(key=lambda x: len(x.inci_list), reverse=True)
     detected.sort(key=lambda x: len(x.inci_list), reverse=True)
 
     # Filter out water-related BIS cautions
@@ -1412,6 +1608,7 @@ async def analyze_url(
 
 @router.get("/suppliers")
 async def get_suppliers(current_user: dict = Depends(verify_jwt_token)):  # JWT token validation
+async def get_suppliers(current_user: dict = Depends(verify_jwt_token)):  # JWT token validation
     """
     Get all suppliers from ingre_suppliers collection
     Returns list of supplier names
@@ -1431,6 +1628,10 @@ async def get_suppliers(current_user: dict = Depends(verify_jwt_token)):  # JWT 
 
 
 @router.post("/ingredients/categories")
+async def get_ingredient_categories(
+    payload: dict,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
 async def get_ingredient_categories(
     payload: dict,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
@@ -1610,6 +1811,10 @@ async def get_ingredients_by_supplier(
 
 
 @router.post("/distributor/register")
+async def register_distributor(
+    payload: dict,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
 async def register_distributor(
     payload: dict,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
@@ -1886,6 +2091,10 @@ async def verify_ingredient_id(
     ingredient_id: str,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
+async def verify_ingredient_id(
+    ingredient_id: str,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Debug endpoint to verify if an ingredient ID exists in the branded ingredients collection
     """
@@ -1945,6 +2154,11 @@ async def verify_ingredient_id(
 
 
 @router.get("/distributor/by-ingredient/{ingredient_name}")
+async def get_distributor_by_ingredient(
+    ingredient_name: str,
+    ingredient_id: Optional[str] = None,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
 async def get_distributor_by_ingredient(
     ingredient_name: str,
     ingredient_id: Optional[str] = None,
@@ -2154,6 +2368,10 @@ async def get_distributor_by_ingredient(
 
 
 @router.post("/distributor/by-ingredients")
+async def get_distributors_by_ingredients(
+    payload: dict,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
 async def get_distributors_by_ingredients(
     payload: dict,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
@@ -2452,11 +2670,21 @@ async def compare_products(
     payload: dict,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
+async def compare_products(
+    payload: dict,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
+    Compare multiple products based on URLs or INCI strings.
     Compare multiple products based on URLs or INCI strings.
     
     Request body:
     {
+        "products": [
+            {"input": "https://example.com/product1", "input_type": "url"},
+            {"input": "Water, Glycerin, ...", "input_type": "inci"},
+            ...
+        ]
         "products": [
             {"input": "https://example.com/product1", "input_type": "url"},
             {"input": "Water, Glycerin, ...", "input_type": "inci"},
@@ -2468,7 +2696,14 @@ async def compare_products(
     1. If URL: Scrape the URL to extract product data
     2. If INCI: Use the INCI string directly
     3. Send all products to Claude for structured comparison
+    3. Send all products to Claude for structured comparison
     4. Return comparison data with INCI, benefits, claims, price, and attributes
+    
+    Response:
+    {
+        "products": [ProductComparisonItem, ...],
+        "processing_time": float
+    }
     
     Response:
     {
@@ -2483,7 +2718,15 @@ async def compare_products(
         # Parse products from payload
         if "products" not in payload or not payload["products"]:
             raise HTTPException(status_code=400, detail="Missing required field: 'products' array")
+        # Parse products from payload
+        if "products" not in payload or not payload["products"]:
+            raise HTTPException(status_code=400, detail="Missing required field: 'products' array")
         
+        products_list = payload["products"]
+        if not isinstance(products_list, list):
+            raise HTTPException(status_code=400, detail="products must be an array")
+        if len(products_list) < 2:
+            raise HTTPException(status_code=400, detail="At least 2 products are required for comparison")
         products_list = payload["products"]
         if not isinstance(products_list, list):
             raise HTTPException(status_code=400, detail="products must be an array")
@@ -2497,7 +2740,17 @@ async def compare_products(
             product["input_type"] = product["input_type"].lower()
             if product["input_type"] not in ["url", "inci"]:
                 raise HTTPException(status_code=400, detail=f"Product {i+1} input_type must be 'url' or 'inci'")
+        # Validate all products
+        for i, product in enumerate(products_list):
+            if "input" not in product or "input_type" not in product:
+                raise HTTPException(status_code=400, detail=f"Product {i+1} is missing 'input' or 'input_type' field")
+            product["input_type"] = product["input_type"].lower()
+            if product["input_type"] not in ["url", "inci"]:
+                raise HTTPException(status_code=400, detail=f"Product {i+1} input_type must be 'url' or 'inci'")
         
+        # Initialize scraper if any product is a URL
+        needs_scraper = any(p["input_type"] == "url" for p in products_list)
+        if needs_scraper:
         # Initialize scraper if any product is a URL
         needs_scraper = any(p["input_type"] == "url" for p in products_list)
         if needs_scraper:
@@ -2565,8 +2818,27 @@ async def compare_products(
             if product_scraper != scraper_instance and product_scraper:
                 try:
                     await product_scraper.close()
+                    await product_scraper.close()
                 except:
                     pass
+                # Clean up scraper if we created a new one
+                if product_scraper != scraper_instance and product_scraper:
+                    try:
+                        await product_scraper.close()
+                    except:
+                        pass
+            
+            return product_data
+        
+        # Process all products in parallel for better performance
+        print(f"Processing {len(products_list)} products in parallel...")
+        # Create tasks for parallel processing
+        tasks = [
+            process_single_product(idx, product, scraper if needs_scraper else None)
+            for idx, product in enumerate(products_list)
+        ]
+        # Wait for all products to be processed
+        processed_products = await asyncio.gather(*tasks)
                 # Clean up scraper if we created a new one
                 if product_scraper != scraper_instance and product_scraper:
                     try:
@@ -2658,6 +2930,17 @@ IMPORTANT: If a URL is provided, use it as context to verify and extract informa
 Please analyze all {len(processed_products)} products CAREFULLY and extract ALL available information from the extracted text. Return a JSON object with the following structure:
 {{
 {products_json_structure}
+  }}''' for i in range(len(processed_products))])
+        
+        comparison_prompt = f"""You are an expert cosmetic product analyst. Compare {len(processed_products)} cosmetic products and provide a structured comparison.
+
+IMPORTANT: If a URL is provided, use it as context to verify and extract information. The URL may contain additional product details like price, ratings, and specifications that might not be fully captured in the scraped text.
+
+{products_section}
+
+Please analyze all {len(processed_products)} products CAREFULLY and extract ALL available information from the extracted text. Return a JSON object with the following structure:
+{{
+{products_json_structure}
 }}
 
 CRITICAL INSTRUCTIONS:
@@ -2716,6 +2999,19 @@ Return the JSON comparison:"""
                 temperature=0.1,
                 messages=[{"role": "user", "content": comparison_prompt}]
             )
+        # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
+        max_tokens = 4096 if "claude-3-opus-20240229" in model_name else 8192
+        
+        # Run synchronous Claude API call in thread pool to avoid blocking
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: claude_client.messages.create(
+                model=model_name,
+                max_tokens=max_tokens,
+                temperature=0.1,
+                messages=[{"role": "user", "content": comparison_prompt}]
+            )
         )
         
         # Extract response content
@@ -2738,6 +3034,16 @@ Return the JSON comparison:"""
                 status_code=500,
                 detail=f"Failed to parse comparison response from AI: {str(e)}"
             )
+        
+        # Extract product data from Claude response
+        all_products_data = []
+        for idx in range(len(processed_products)):
+            product_key = f"product{idx+1}"
+            if product_key in comparison_data:
+                all_products_data.append(comparison_data[product_key])
+            else:
+                # Fallback: create empty product data
+                all_products_data.append({})
         
         # Extract product data from Claude response
         all_products_data = []
@@ -2831,6 +3137,36 @@ Return the JSON comparison:"""
                     print(f"Fallback: Set product{idx+1}.{attr} = {attrs[attr]} from INCI analysis")
             
             final_products_data.append(claude_product_data)
+        # Build response with extracted text for all products
+        final_products_data = []
+        all_attrs = []
+        
+        for idx, product_data in enumerate(processed_products):
+            claude_product_data = all_products_data[idx] if idx < len(all_products_data) else {}
+            
+            # Merge with actual INCI if we extracted it (prefer our extraction if available)
+            final_inci = claude_product_data.get("inci", []) if claude_product_data.get("inci") else product_data["inci"]
+            claude_product_data["inci"] = final_inci
+            
+            # Add extracted text
+            claude_product_data["extracted_text"] = product_data["text"]
+            
+            # Add selected_method (input_type) and url from original request
+            original_product = products_list[idx]
+            claude_product_data["selected_method"] = original_product.get("input_type", "inci")
+            claude_product_data["url"] = product_data.get("url_context") if original_product.get("input_type") == "url" else None
+            
+            # Fallback: Determine boolean attributes from INCI if Claude didn't extract them
+            attrs = determine_attributes_from_inci(final_inci, product_data["text"])
+            all_attrs.append(attrs)
+            
+            # Update attributes only if they're null in Claude's response
+            for attr in ["sulphate_free", "paraben_free", "fragrance_free"]:
+                if claude_product_data.get(attr) is None and attrs.get(attr) is not None:
+                    claude_product_data[attr] = attrs[attr]
+                    print(f"Fallback: Set product{idx+1}.{attr} = {attrs[attr]} from INCI analysis")
+            
+            final_products_data.append(claude_product_data)
         
         # SECOND PASS: Fill missing fields using deep analysis
         print("\n=== SECOND PASS: Filling Missing Fields ===")
@@ -2873,6 +3209,17 @@ Return the JSON comparison:"""
             
             print(f"Attempting to fill {len(missing_fields)} missing fields for Product {product_num}...")
             fill_prompt = f"""You are an expert cosmetic product researcher. Use your knowledge base, web search capabilities, and deep analysis to find missing information about this product.
+        # Helper function to fill missing fields for a single product
+        async def fill_missing_fields_for_product(idx: int, product_data: Dict, current_product: Dict, claude_client_instance, model_name: str) -> Dict:
+            """Fill missing fields for a single product - can run in parallel"""
+            product_num = idx + 1
+            missing_fields = identify_missing_fields(product_data, product_num)
+            
+            if not missing_fields:
+                return product_data
+            
+            print(f"Attempting to fill {len(missing_fields)} missing fields for Product {product_num}...")
+            fill_prompt = f"""You are an expert cosmetic product researcher. Use your knowledge base, web search capabilities, and deep analysis to find missing information about this product.
 
 Product Information:
 - Product Name: {product_data.get('product_name') or 'Unknown'}
@@ -2882,8 +3229,16 @@ Product Information:
 - Source URL: {current_product['url_context'] or 'Not provided'}
 - Current Benefits: {', '.join(product_data.get('benefits', [])) or 'None'}
 - Current Claims: {', '.join(product_data.get('claims', [])) or 'None'}
+- Product Name: {product_data.get('product_name') or 'Unknown'}
+- Brand Name: {product_data.get('brand_name') or 'Unknown'}
+- INCI Ingredients: {', '.join(product_data.get('inci', [])) if product_data.get('inci') else 'Not available'}
+- Current Extracted Text: {current_product['text'][:5000] if current_product['text'] else 'Not available'}
+- Source URL: {current_product['url_context'] or 'Not provided'}
+- Current Benefits: {', '.join(product_data.get('benefits', [])) or 'None'}
+- Current Claims: {', '.join(product_data.get('claims', [])) or 'None'}
 
 MISSING FIELDS TO FILL:
+{', '.join(missing_fields)}
 {', '.join(missing_fields)}
 
 INSTRUCTIONS:
@@ -2936,8 +3291,27 @@ CRITICAL: NEVER use null. Always provide a value (even if it's "Unknown" for tex
                         temperature=0.2,
                         messages=[{"role": "user", "content": fill_prompt}]
                     )
+                # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
+                max_tokens = 4096 if "claude-3-opus-20240229" in model_name else 8192
+                
+                # Run synchronous Claude API call in thread pool to avoid blocking
+                loop = asyncio.get_event_loop()
+                fill_response = await loop.run_in_executor(
+                    None,
+                    lambda: claude_client_instance.messages.create(
+                        model=model_name,
+                        max_tokens=max_tokens,
+                        temperature=0.2,
+                        messages=[{"role": "user", "content": fill_prompt}]
+                    )
                 )
                 
+                fill_content = fill_response.content[0].text.strip()
+                if '{' in fill_content and '}' in fill_content:
+                    json_start = fill_content.find('{')
+                    json_end = fill_content.rfind('}') + 1
+                    json_str = fill_content[json_start:json_end]
+                    fill_data = json.loads(json_str)
                 fill_content = fill_response.content[0].text.strip()
                 if '{' in fill_content and '}' in fill_content:
                     json_start = fill_content.find('{')
@@ -2948,8 +3322,14 @@ CRITICAL: NEVER use null. Always provide a value (even if it's "Unknown" for tex
                     # Merge filled fields into product_data
                     for field in missing_fields:
                         if field in fill_data and fill_data[field] is not None:
+                    # Merge filled fields into product_data
+                    for field in missing_fields:
+                        if field in fill_data and fill_data[field] is not None:
                             # Handle list fields
                             if field in ["benefits", "claims"]:
+                                if isinstance(fill_data[field], list) and len(fill_data[field]) > 0:
+                                    product_data[field] = fill_data[field]
+                                    print(f"✓ Filled product{product_num}.{field} with {len(fill_data[field])} items")
                                 if isinstance(fill_data[field], list) and len(fill_data[field]) > 0:
                                     product_data[field] = fill_data[field]
                                     print(f"✓ Filled product{product_num}.{field} with {len(fill_data[field])} items")
@@ -2958,12 +3338,30 @@ CRITICAL: NEVER use null. Always provide a value (even if it's "Unknown" for tex
                                 if fill_data[field] is not None:
                                     product_data[field] = fill_data[field]
                                     print(f"✓ Filled product{product_num}.{field} = {fill_data[field]}")
+                                if fill_data[field] is not None:
+                                    product_data[field] = fill_data[field]
+                                    print(f"✓ Filled product{product_num}.{field} = {fill_data[field]}")
                             # Handle string fields
                             else:
                                 if fill_data[field] and fill_data[field] != "null":
                                     product_data[field] = fill_data[field]
                                     print(f"✓ Filled product{product_num}.{field} = {fill_data[field]}")
+                                if fill_data[field] and fill_data[field] != "null":
+                                    product_data[field] = fill_data[field]
+                                    print(f"✓ Filled product{product_num}.{field} = {fill_data[field]}")
             except Exception as e:
+                print(f"Warning: Failed to fill missing fields for Product {product_num}: {e}")
+            
+            return product_data
+        
+        # Fill missing fields for all products in parallel
+        print(f"Filling missing fields for {len(final_products_data)} products in parallel...")
+        fill_tasks = [
+            fill_missing_fields_for_product(idx, product_data, processed_products[idx], claude_client, model_name)
+            for idx, product_data in enumerate(final_products_data)
+        ]
+        # Wait for all fill operations to complete
+        final_products_data = await asyncio.gather(*fill_tasks)
                 print(f"Warning: Failed to fill missing fields for Product {product_num}: {e}")
             
             return product_data
@@ -3010,10 +3408,24 @@ CRITICAL: NEVER use null. Always provide a value (even if it's "Unknown" for tex
         # Final pass: Ensure no null values remain for all products
         for idx, product_data in enumerate(final_products_data):
             ensure_no_nulls(product_data, idx + 1, all_attrs[idx])
+        # Final pass: Ensure no null values remain for all products
+        for idx, product_data in enumerate(final_products_data):
+            ensure_no_nulls(product_data, idx + 1, all_attrs[idx])
         
+        # Calculate processing time
         # Calculate processing time
         processing_time = time.time() - start
         
+        # Convert to ProductComparisonItem objects
+        product_items = [ProductComparisonItem(**product_data) for product_data in final_products_data]
+        
+        # Build response
+        response_data = {
+            "products": product_items,
+            "processing_time": processing_time
+        }
+        
+        return CompareProductsResponse(**response_data)
         # Convert to ProductComparisonItem objects
         product_items = [ProductComparisonItem(**product_data) for product_data in final_products_data]
         
@@ -3042,6 +3454,10 @@ async def save_decode_history(
     payload: dict,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
+async def save_decode_history(
+    payload: dict,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Save decode history with name and tag (user-specific)
     
@@ -3064,6 +3480,9 @@ async def save_decode_history(
         "status": "in_progress" | "completed" | "failed" (default: "completed")
     }
     
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
     Authentication:
     - Requires JWT token in Authorization header
     - User ID is automatically extracted from the JWT token
@@ -3097,7 +3516,10 @@ async def save_decode_history(
         
         # Extract user_id from JWT token (already verified by verify_jwt_token)
         user_id_value = current_user.get("user_id") or current_user.get("_id") or payload.get("user_id")
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id_value = current_user.get("user_id") or current_user.get("_id") or payload.get("user_id")
         if not user_id_value:
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
             raise HTTPException(status_code=400, detail="User ID not found in JWT token")
         
         # Create history document
@@ -3149,6 +3571,7 @@ async def get_decode_history(
     limit: int = 50,
     skip: int = 0,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
     Get decode history with optional unified search by name or tag (user-specific)
@@ -3170,11 +3593,17 @@ async def get_decode_history(
     Authentication:
     - Requires JWT token in Authorization header
     - User ID is automatically extracted from the JWT token
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
     """
     try:
         # Extract user_id from JWT token (already verified by verify_jwt_token)
         user_id = current_user.get("user_id") or current_user.get("_id")
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
         if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
             raise HTTPException(status_code=400, detail="User ID not found in JWT token")
         
         # Build query - ALWAYS filter by user_id
@@ -3207,15 +3636,45 @@ async def get_decode_history(
                 "report_data": 1  # Check if exists, but don't return full data
             }
         ).sort("created_at", -1).skip(skip).limit(limit)
+        # Fetch items - only get summary fields (exclude large fields)
+        cursor = decode_history_col.find(
+            query,
+            {
+                "_id": 1,
+                "user_id": 1,
+                "name": 1,
+                "tag": 1,
+                "input_type": 1,
+                "input_data": 1,
+                "status": 1,
+                "notes": 1,
+                "created_at": 1,
+                "analysis_result": 1,  # Check if exists, but don't return full data
+                "report_data": 1  # Check if exists, but don't return full data
+            }
+        ).sort("created_at", -1).skip(skip).limit(limit)
         items = await cursor.to_list(length=limit)
         
         # Convert to summary format (exclude large fields)
         summary_items = []
+        # Convert to summary format (exclude large fields)
+        summary_items = []
         for item in items:
+            item_id = str(item["_id"])
             item_id = str(item["_id"])
             del item["_id"]
             
+            
             # Map status for frontend: "in_progress" -> "pending", "completed" -> "analyzed"
+            status_mapping = {
+                "in_progress": "pending",
+                "pending": "pending",  # Handle if already mapped
+                "completed": "analyzed",
+                "failed": "failed"
+            }
+            raw_status = item.get("status")
+            if raw_status:
+                status = status_mapping.get(raw_status, raw_status)  # Keep original if not in mapping
             status_mapping = {
                 "in_progress": "pending",
                 "pending": "pending",  # Handle if already mapped
@@ -3247,8 +3706,30 @@ async def get_decode_history(
                 "has_report": item.get("report_data") is not None and status == "analyzed"
             }
             summary_items.append(summary_item)
+                status = "pending"  # Default to pending if status is missing (likely in progress)
+            
+            # Truncate input_data for preview (max 100 chars)
+            input_data = item.get("input_data", "")
+            if input_data and len(input_data) > 100:
+                input_data = input_data[:100] + "..."
+            
+            summary_item = {
+                "id": item_id,
+                "user_id": item.get("user_id"),
+                "name": item.get("name", ""),
+                "tag": item.get("tag"),
+                "input_type": item.get("input_type", ""),
+                "input_data": input_data,
+                "status": status,
+                "notes": item.get("notes"),
+                "created_at": item.get("created_at"),
+                "has_analysis": item.get("analysis_result") is not None and status == "analyzed",
+                "has_report": item.get("report_data") is not None and status == "analyzed"
+            }
+            summary_items.append(summary_item)
         
         return GetDecodeHistoryResponse(
+            items=[DecodeHistoryItemSummary(**item) for item in summary_items],
             items=[DecodeHistoryItemSummary(**item) for item in summary_items],
             total=total
         )
@@ -3596,14 +4077,24 @@ async def update_decode_history(
     payload: dict,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
+async def update_decode_history(
+    history_id: str,
+    payload: dict,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
+    Update a decode history item - all fields are optional and can be updated
     Update a decode history item - all fields are optional and can be updated
     
     HISTORY FUNCTIONALITY:
     - All fields can be edited to support regeneration scenarios
     - Allows updating analysis results, report data, and other fields when regenerating
     - Useful for saving regenerated content back to history
+    - All fields can be edited to support regeneration scenarios
+    - Allows updating analysis results, report data, and other fields when regenerating
+    - Useful for saving regenerated content back to history
     
+    Editable fields (all optional):
     Editable fields (all optional):
     - name: Update the name of the decode history item
     - tag: Update or add a categorization tag
@@ -3620,11 +4111,26 @@ async def update_decode_history(
     Authentication:
     - Requires JWT token in Authorization header
     - User ID is automatically extracted from the JWT token
+    - input_data: Update input data (for regeneration)
+    - input_type: Update input type (for regeneration)
+    - report_data: Update report data (for regeneration)
+    - status: Update status (for regeneration)
+    - analysis_result: Update analysis result (for regeneration)
+    - expected_benefits: Update expected benefits (for regeneration)
+    
+    Note: user_id and created_at are automatically preserved and should not be included in payload
+    
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
     """
     try:
         # Extract user_id from JWT token (already verified by verify_jwt_token)
         user_id = current_user.get("user_id") or current_user.get("_id")
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
         if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
             raise HTTPException(status_code=400, detail="User ID not found in JWT token")
         
         # Validate ObjectId
@@ -3632,7 +4138,13 @@ async def update_decode_history(
             raise HTTPException(status_code=400, detail="Invalid history ID")
         
         # Build update document - allow all fields except user_id and created_at
+        # Build update document - allow all fields except user_id and created_at
         update_doc = {}
+        excluded_fields = ["user_id", "created_at", "_id"]  # These should never be updated
+        
+        for key, value in payload.items():
+            if key not in excluded_fields:
+                update_doc[key] = value
         excluded_fields = ["user_id", "created_at", "_id"]  # These should never be updated
         
         for key, value in payload.items():
@@ -3673,6 +4185,10 @@ async def delete_decode_history(
     history_id: str,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
+async def delete_decode_history(
+    history_id: str,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Delete a decode history item by ID (user-specific)
     
@@ -3685,11 +4201,17 @@ async def delete_decode_history(
     Authentication:
     - Requires JWT token in Authorization header
     - User ID is automatically extracted from the JWT token
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
     """
     try:
         # Extract user_id from JWT token (already verified by verify_jwt_token)
         user_id = current_user.get("user_id") or current_user.get("_id")
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
         if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
             raise HTTPException(status_code=400, detail="User ID not found in JWT token")
         
         # Validate ObjectId
@@ -3729,8 +4251,13 @@ async def save_compare_history(
     payload: dict,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
+async def save_compare_history(
+    payload: dict,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Save compare history with name and tag (user-specific)
+    Supports both 2-product and multi-product comparisons
     Supports both 2-product and multi-product comparisons
     
     HISTORY FUNCTIONALITY:
@@ -3741,7 +4268,9 @@ async def save_compare_history(
     - History items can be searched by name or tag
     - History persists across sessions and page refreshes
     - Supports both 2-product (input1/input2) and multi-product (products array) comparisons
+    - Supports both 2-product (input1/input2) and multi-product (products array) comparisons
     
+    Request body (2-product format - backward compatible):
     Request body (2-product format - backward compatible):
     {
         "name": "Comparison Name",
@@ -3754,6 +4283,22 @@ async def save_compare_history(
         "status": "in_progress" | "completed" | "failed" (default: "completed")
     }
     
+    Request body (multi-product format):
+    {
+        "name": "Comparison Name",
+        "tag": "optional-tag",
+        "products": [
+            {"input": "URL or INCI", "input_type": "url" or "inci"},
+            {"input": "URL or INCI", "input_type": "url" or "inci"},
+            ...
+        ],
+        "comparison_result": {...} (optional if status is "in_progress"),
+        "status": "in_progress" | "completed" | "failed" (default: "completed")
+    }
+    
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
     Request body (multi-product format):
     {
         "name": "Comparison Name",
@@ -3792,7 +4337,68 @@ async def save_compare_history(
         
         # Extract user_id from JWT token (already verified by verify_jwt_token)
         user_id_value = current_user.get("user_id") or current_user.get("_id") or payload.get("user_id")
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id_value = current_user.get("user_id") or current_user.get("_id") or payload.get("user_id")
         if not user_id_value:
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
+        
+        # Check if it's multi-product format (products array) or 2-product format (input1/input2)
+        if "products" in payload:
+            # Multi-product format
+            products = payload["products"]
+            if not isinstance(products, list) or len(products) < 2:
+                raise HTTPException(status_code=400, detail="products must be an array with at least 2 items")
+            
+            # Validate each product
+            for i, product in enumerate(products):
+                if not isinstance(product, dict):
+                    raise HTTPException(status_code=400, detail=f"Product {i+1} must be an object")
+                if "input" not in product or "input_type" not in product:
+                    raise HTTPException(status_code=400, detail=f"Product {i+1} is missing 'input' or 'input_type' field")
+                if product["input_type"] not in ["url", "inci"]:
+                    raise HTTPException(status_code=400, detail=f"Product {i+1} input_type must be 'url' or 'inci'")
+            
+            # Create history document with products array
+            history_doc = {
+                "user_id": user_id_value,
+                "name": name,
+                "tag": tag,
+                "products": products,
+                "status": status,
+                "notes": notes,
+                "created_at": (datetime.now(timezone(timedelta(hours=5, minutes=30)))).isoformat()
+            }
+        elif "input1" in payload and "input2" in payload:
+            # 2-product format (backward compatible) - convert to products array
+            if "input1_type" not in payload or "input2_type" not in payload:
+                raise HTTPException(status_code=400, detail="Missing required fields: input1_type and input2_type")
+            
+            input1 = payload["input1"]
+            input2 = payload["input2"]
+            input1_type = payload["input1_type"]
+            input2_type = payload["input2_type"]
+            
+            # Normalize to products array format (unified format)
+            products = [
+                {"input": input1, "input_type": input1_type},
+                {"input": input2, "input_type": input2_type}
+            ]
+            
+            # Create history document with products array (unified format)
+            history_doc = {
+                "user_id": user_id_value,
+                "name": name,
+                "tag": tag,
+                "products": products,  # Store in unified format
+                "status": status,
+                "notes": notes,
+                "created_at": (datetime.now(timezone(timedelta(hours=5, minutes=30)))).isoformat()
+            }
+        else:
+            raise HTTPException(
+                status_code=400, 
+                detail="Must provide either 'products' array (for multi-product) or 'input1'/'input2' (for 2-product comparison)"
+            )
             raise HTTPException(status_code=400, detail="User ID not found in JWT token")
         
         # Check if it's multi-product format (products array) or 2-product format (input1/input2)
@@ -3885,11 +4491,18 @@ async def save_compare_history(
 # OPTIONS handler removed - CORS middleware handles this automatically
 
 
+# OPTIONS handler removed - CORS middleware handles this automatically
+
+
+# OPTIONS handler removed - CORS middleware handles this automatically
+
+
 @router.get("/compare-history")
 async def get_compare_history(
     search: Optional[str] = None,
     limit: int = 50,
     skip: int = 0,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
@@ -3912,11 +4525,17 @@ async def get_compare_history(
     Authentication:
     - Requires JWT token in Authorization header
     - User ID is automatically extracted from the JWT token
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
     """
     try:
         # Extract user_id from JWT token (already verified by verify_jwt_token)
         user_id = current_user.get("user_id") or current_user.get("_id")
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
         if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
             raise HTTPException(status_code=400, detail="User ID not found in JWT token")
         
         # Build query - ALWAYS filter by user_id
@@ -3951,15 +4570,47 @@ async def get_compare_history(
                 "comparison_result": 1  # Check if exists, but don't return full data
             }
         ).sort("created_at", -1).skip(skip).limit(limit)
+        # Fetch items - only get summary fields (exclude large fields)
+        cursor = compare_history_col.find(
+            query,
+            {
+                "_id": 1,
+                "user_id": 1,
+                "name": 1,
+                "tag": 1,
+                "input1": 1,
+                "input2": 1,
+                "input1_type": 1,
+                "input2_type": 1,
+                "products": 1,
+                "status": 1,
+                "notes": 1,
+                "created_at": 1,
+                "comparison_result": 1  # Check if exists, but don't return full data
+            }
+        ).sort("created_at", -1).skip(skip).limit(limit)
         items = await cursor.to_list(length=limit)
         
         # Convert to summary format (exclude large fields and normalize to products array)
         summary_items = []
+        # Convert to summary format (exclude large fields and normalize to products array)
+        summary_items = []
         for item in items:
+            item_id = str(item["_id"])
             item_id = str(item["_id"])
             del item["_id"]
             
+            
             # Map status for frontend: "in_progress" -> "pending", "completed" -> "analyzed"
+            status_mapping = {
+                "in_progress": "pending",
+                "pending": "pending",  # Handle if already mapped
+                "completed": "analyzed",
+                "failed": "failed"
+            }
+            raw_status = item.get("status")
+            if raw_status:
+                status = status_mapping.get(raw_status, raw_status)  # Keep original if not in mapping
             status_mapping = {
                 "in_progress": "pending",
                 "pending": "pending",  # Handle if already mapped
@@ -4013,8 +4664,52 @@ async def get_compare_history(
                 "product_count": product_count
             }
             summary_items.append(summary_item)
+                status = "pending"  # Default to pending if status is missing (likely in progress)
+            
+            # Normalize to products array format (convert input1/input2 if present)
+            products = item.get("products")
+            if not products or not isinstance(products, list):
+                # Convert legacy input1/input2 to products array
+                products = []
+                if item.get("input1") and item.get("input1_type"):
+                    products.append({
+                        "input": item["input1"],
+                        "input_type": item["input1_type"]
+                    })
+                if item.get("input2") and item.get("input2_type"):
+                    products.append({
+                        "input": item["input2"],
+                        "input_type": item["input2_type"]
+                    })
+            
+            # Truncate products inputs for preview (max 100 chars)
+            product_count = len(products) if products else 0
+            truncated_products = []
+            for product in products:
+                if isinstance(product, dict):
+                    truncated_product = product.copy()
+                    if "input" in truncated_product and truncated_product["input"]:
+                        input_val = truncated_product["input"]
+                        if len(input_val) > 100:
+                            truncated_product["input"] = input_val[:100] + "..."
+                    truncated_products.append(truncated_product)
+            
+            summary_item = {
+                "id": item_id,
+                "user_id": item.get("user_id"),
+                "name": item.get("name", ""),
+                "tag": item.get("tag"),
+                "products": truncated_products,
+                "status": status,
+                "notes": item.get("notes"),
+                "created_at": item.get("created_at"),
+                "has_comparison": item.get("comparison_result") is not None and status == "analyzed",
+                "product_count": product_count
+            }
+            summary_items.append(summary_item)
         
         return GetCompareHistoryResponse(
+            items=[CompareHistoryItemSummary(**item) for item in summary_items],
             items=[CompareHistoryItemSummary(**item) for item in summary_items],
             total=total
         )
@@ -4026,6 +4721,110 @@ async def get_compare_history(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to fetch compare history: {str(e)}"
+        )
+
+
+@router.get("/compare-history/{history_id}/details", response_model=CompareHistoryDetailResponse)
+async def get_compare_history_detail(
+    history_id: str,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
+    """
+    Get full details of a specific compare history item (includes all large fields)
+    
+    This endpoint returns the complete data including:
+    - Full comparison_result (large Dict with all comparison data)
+    - All other fields
+    
+    Use this endpoint when you need to display the full comparison results.
+    The list endpoint (/compare-history) only returns summaries.
+    
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
+    - Only returns items belonging to the authenticated user
+    """
+    try:
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
+        
+        # Validate ObjectId
+        if not ObjectId.is_valid(history_id):
+            raise HTTPException(status_code=400, detail="Invalid history ID")
+        
+        # Fetch full item (including large fields)
+        item = await compare_history_col.find_one({
+            "_id": ObjectId(history_id),
+            "user_id": user_id
+        })
+        
+        if not item:
+            raise HTTPException(status_code=404, detail="History item not found")
+        
+        # Convert ObjectId to string
+        item["id"] = str(item["_id"])
+        del item["_id"]
+        
+        # Ensure all fields are included
+        if "comparison_result" not in item:
+            item["comparison_result"] = None
+        
+        # Normalize to products array format (convert input1/input2 if present)
+        products = item.get("products")
+        if not products or not isinstance(products, list):
+            # Convert legacy input1/input2 to products array
+            products = []
+            if item.get("input1") and item.get("input1_type"):
+                products.append({
+                    "input": item["input1"],
+                    "input_type": item["input1_type"]
+                })
+            if item.get("input2") and item.get("input2_type"):
+                products.append({
+                    "input": item["input2"],
+                    "input_type": item["input2_type"]
+                })
+        
+        # Remove legacy fields and set normalized products array
+        item["products"] = products
+        # Remove input1/input2 fields from response (redundant)
+        item.pop("input1", None)
+        item.pop("input2", None)
+        item.pop("input1_type", None)
+        item.pop("input2_type", None)
+        
+        # Map status for frontend
+        status_mapping = {
+            "in_progress": "pending",
+            "pending": "pending",  # Handle if already mapped
+            "completed": "analyzed",
+            "failed": "failed"
+        }
+        raw_status = item.get("status")
+        if raw_status:
+            item["status"] = status_mapping.get(raw_status, raw_status)  # Keep original if not in mapping
+        else:
+            item["status"] = "pending"  # Default to pending if status is missing (likely in progress)
+        
+        # Ensure comparison_result is None if status is pending or failed
+        if item.get("status") in ["pending", "failed"]:
+            item["comparison_result"] = None
+        
+        return CompareHistoryDetailResponse(
+            item=CompareHistoryItem(**item)
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error fetching compare history detail: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch compare history detail: {str(e)}"
         )
 
 
@@ -4164,11 +4963,44 @@ async def update_compare_history(
     Authentication:
     - Requires JWT token in Authorization header
     - User ID is automatically extracted from the JWT token
+async def update_compare_history(
+    history_id: str, 
+    payload: dict, 
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
+    """
+    Update a compare history item - all fields are optional and can be updated
+    
+    HISTORY FUNCTIONALITY:
+    - All fields can be edited to support regeneration scenarios
+    - Allows updating comparison results, input data, and other fields when regenerating
+    - Useful for saving regenerated content back to history
+    
+    Editable fields (all optional):
+    - name: Update the name of the compare history item
+    - tag: Update or add a categorization tag
+    - notes: Update user notes
+    - input1: Update input1 (URL or INCI) - for 2-product comparisons (for regeneration)
+    - input2: Update input2 (URL or INCI) - for 2-product comparisons (for regeneration)
+    - input1_type: Update input1_type - for 2-product comparisons (for regeneration)
+    - input2_type: Update input2_type - for 2-product comparisons (for regeneration)
+    - products: Update products array - for multi-product comparisons (for regeneration)
+    - status: Update status (for regeneration)
+    - comparison_result: Update comparison result (for regeneration)
+    
+    Note: user_id and created_at are automatically preserved and should not be included in payload
+    
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
     """
     try:
         # Extract user_id from JWT token (already verified by verify_jwt_token)
         user_id = current_user.get("user_id") or current_user.get("_id")
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
         if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
             raise HTTPException(status_code=400, detail="User ID not found in JWT token")
         
         # Validate ObjectId
@@ -4176,7 +5008,13 @@ async def update_compare_history(
             raise HTTPException(status_code=400, detail="Invalid history ID")
         
         # Build update document - allow all fields except user_id and created_at
+        # Build update document - allow all fields except user_id and created_at
         update_doc = {}
+        excluded_fields = ["user_id", "created_at", "_id"]  # These should never be updated
+        
+        for key, value in payload.items():
+            if key not in excluded_fields:
+                update_doc[key] = value
         excluded_fields = ["user_id", "created_at", "_id"]  # These should never be updated
         
         for key, value in payload.items():
@@ -4217,9 +5055,16 @@ async def delete_compare_history(
     history_id: str,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
+async def delete_compare_history(
+    history_id: str,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Delete a compare history item by ID (user-specific)
     
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
     Authentication:
     - Requires JWT token in Authorization header
     - User ID is automatically extracted from the JWT token
@@ -4227,7 +5072,10 @@ async def delete_compare_history(
     try:
         # Extract user_id from JWT token (already verified by verify_jwt_token)
         user_id = current_user.get("user_id") or current_user.get("_id")
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
         if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
             raise HTTPException(status_code=400, detail="User ID not found in JWT token")
         
         # Validate ObjectId
@@ -4353,8 +5201,12 @@ Return your analysis as JSON with the structure specified in the system prompt."
         # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
         max_tokens = 4096 if "claude-3-opus-20240229" in claude_model else 8192
         
+        # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
+        max_tokens = 4096 if "claude-3-opus-20240229" in claude_model else 8192
+        
         response = claude_client.messages.create(
             model=claude_model,
+            max_tokens=max_tokens,
             max_tokens=max_tokens,
             temperature=0.2,  # Lower temperature for more consistent classification
             system=system_prompt,
@@ -4497,8 +5349,12 @@ Return your ranking as JSON with the structure specified in the system prompt.""
         # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
         max_tokens = 4096 if "claude-3-opus-20240229" in claude_model else 8192
         
+        # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
+        max_tokens = 4096 if "claude-3-opus-20240229" in claude_model else 8192
+        
         response = claude_client.messages.create(
             model=claude_model,
+            max_tokens=max_tokens,
             max_tokens=max_tokens,
             temperature=0.2,
             system=system_prompt,
@@ -4655,6 +5511,7 @@ async def get_market_research_history(
     limit: int = 50,
     skip: int = 0,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
     Get market research history (user-specific)
@@ -4667,11 +5524,17 @@ async def get_market_research_history(
     Authentication:
     - Requires JWT token in Authorization header
     - User ID is automatically extracted from the JWT token
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
     """
     try:
         # Extract user_id from JWT token (already verified by verify_jwt_token)
         user_id = current_user.get("user_id") or current_user.get("_id")
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
         if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
             raise HTTPException(status_code=400, detail="User ID not found in JWT token")
         
         query = {"user_id": user_id}
@@ -4700,13 +5563,61 @@ async def get_market_research_history(
                 "research_result": 1  # Check if exists, but don't return full data
             }
         ).sort("created_at", -1).skip(skip).limit(limit)
+        
+        # Fetch items - only get summary fields (exclude large fields)
+        cursor = market_research_history_col.find(
+            query,
+            {
+                "_id": 1,
+                "user_id": 1,
+                "name": 1,
+                "tag": 1,
+                "input_type": 1,
+                "input_data": 1,
+                "ai_product_type": 1,
+                "notes": 1,
+                "created_at": 1,
+                "research_result": 1  # Check if exists, but don't return full data
+            }
+        ).sort("created_at", -1).skip(skip).limit(limit)
         items = await cursor.to_list(length=limit)
         
         # Convert to summary format (exclude large fields)
         summary_items = []
+        # Convert to summary format (exclude large fields)
+        summary_items = []
         for item in items:
             item_id = str(item["_id"])
+            item_id = str(item["_id"])
             del item["_id"]
+            
+            # Truncate input_data for preview (max 100 chars)
+            input_data = item.get("input_data", "")
+            if input_data and len(input_data) > 100:
+                input_data = input_data[:100] + "..."
+            
+            # Get total products count from research_result if available
+            total_products = None
+            research_result = item.get("research_result")
+            if research_result and isinstance(research_result, dict):
+                products = research_result.get("products", [])
+                if isinstance(products, list):
+                    total_products = len(products)
+            
+            summary_item = {
+                "id": item_id,
+                "user_id": item.get("user_id"),
+                "name": item.get("name", ""),
+                "tag": item.get("tag"),
+                "input_type": item.get("input_type", ""),
+                "input_data": input_data,
+                "ai_product_type": item.get("ai_product_type"),
+                "notes": item.get("notes"),
+                "created_at": item.get("created_at"),
+                "has_research": research_result is not None,
+                "total_products": total_products
+            }
+            summary_items.append(summary_item)
             
             # Truncate input_data for preview (max 100 chars)
             input_data = item.get("input_data", "")
@@ -4738,6 +5649,7 @@ async def get_market_research_history(
         
         return GetMarketResearchHistoryResponse(
             items=[MarketResearchHistoryItemSummary(**item) for item in summary_items],
+            items=[MarketResearchHistoryItemSummary(**item) for item in summary_items],
             total=total
         )
         
@@ -4750,6 +5662,75 @@ async def get_market_research_history(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to fetch market research history: {str(e)}"
+        )
+
+
+@router.get("/market-research-history/{history_id}/details", response_model=MarketResearchHistoryDetailResponse)
+async def get_market_research_history_detail(
+    history_id: str,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
+    """
+    Get full details of a specific market research history item (includes all large fields)
+    
+    This endpoint returns the complete data including:
+    - Full research_result (large Dict with all products)
+    - All other fields
+    
+    Use this endpoint when you need to display the full research results.
+    The list endpoint (/market-research-history) only returns summaries.
+    
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
+    - Only returns items belonging to the authenticated user
+    """
+    try:
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
+        
+        # Validate ObjectId
+        if not ObjectId.is_valid(history_id):
+            raise HTTPException(status_code=400, detail="Invalid history ID")
+        
+        # Fetch full item (including large fields)
+        item = await market_research_history_col.find_one({
+            "_id": ObjectId(history_id),
+            "user_id": user_id
+        })
+        
+        if not item:
+            raise HTTPException(status_code=404, detail="History item not found")
+        
+        # Convert ObjectId to string
+        item["id"] = str(item["_id"])
+        del item["_id"]
+        
+        # Ensure all fields are included
+        if "research_result" not in item:
+            item["research_result"] = None
+        if "ai_analysis" not in item:
+            item["ai_analysis"] = None
+        if "ai_product_type" not in item:
+            item["ai_product_type"] = None
+        if "ai_reasoning" not in item:
+            item["ai_reasoning"] = None
+        
+        return MarketResearchHistoryDetailResponse(
+            item=MarketResearchHistoryItem(**item)
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error fetching market research history detail: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch market research history detail: {str(e)}"
         )
 
 
@@ -4852,11 +5833,43 @@ async def update_market_research_history(
     Authentication:
     - Requires JWT token in Authorization header
     - User ID is automatically extracted from the JWT token
+async def update_market_research_history(
+    history_id: str, 
+    payload: dict, 
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
+    """
+    Update market research history item - all fields are optional and can be updated
+    
+    HISTORY FUNCTIONALITY:
+    - All fields can be edited to support regeneration scenarios
+    - Allows updating research results, AI analysis, and other fields when regenerating
+    - Useful for saving regenerated content back to history
+    
+    Editable fields (all optional):
+    - name: Update the name of the market research history item
+    - tag: Update or add a categorization tag
+    - notes: Update user notes
+    - input_data: Update input data (URL or INCI) (for regeneration)
+    - input_type: Update input type (for regeneration)
+    - research_result: Update research result (for regeneration)
+    - ai_analysis: Update AI analysis (for regeneration)
+    - ai_product_type: Update AI product type (for regeneration)
+    - ai_reasoning: Update AI reasoning (for regeneration)
+    
+    Note: user_id and created_at are automatically preserved and should not be included in payload
+    
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
     """
     try:
         # Extract user_id from JWT token (already verified by verify_jwt_token)
         user_id = current_user.get("user_id") or current_user.get("_id")
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
         if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
             raise HTTPException(status_code=400, detail="User ID not found in JWT token")
         
         # Validate ObjectId
@@ -4864,7 +5877,21 @@ async def update_market_research_history(
             raise HTTPException(status_code=400, detail="Invalid history ID")
         
         # Build update document - allow all fields except user_id and created_at
+        # Validate ObjectId
+        if not ObjectId.is_valid(history_id):
+            raise HTTPException(status_code=400, detail="Invalid history ID")
+        
+        # Build update document - allow all fields except user_id and created_at
         update_data = {}
+        excluded_fields = ["user_id", "created_at", "_id"]  # These should never be updated
+        
+        for key, value in payload.items():
+            if key not in excluded_fields:
+                # Handle string fields with strip if they are strings
+                if isinstance(value, str):
+                    update_data[key] = value.strip() if value.strip() else None
+                else:
+                    update_data[key] = value
         excluded_fields = ["user_id", "created_at", "_id"]  # These should never be updated
         
         for key, value in payload.items():
@@ -4908,8 +5935,16 @@ async def delete_market_research_history(
     history_id: str,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
+async def delete_market_research_history(
+    history_id: str,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
     """
     Delete market research history item (user-specific)
+    
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
     
     Authentication:
     - Requires JWT token in Authorization header
@@ -4918,7 +5953,10 @@ async def delete_market_research_history(
     try:
         # Extract user_id from JWT token (already verified by verify_jwt_token)
         user_id = current_user.get("user_id") or current_user.get("_id")
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
         if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
             raise HTTPException(status_code=400, detail="User ID not found in JWT token")
         
         result = await market_research_history_col.delete_one({
@@ -4948,6 +5986,10 @@ async def delete_market_research_history(
 
 # Market Research endpoint - matches ingredients with externalProducts collection
 @router.post("/market-research", response_model=MarketResearchResponse)
+async def market_research(
+    payload: dict,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
 async def market_research(
     payload: dict,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation

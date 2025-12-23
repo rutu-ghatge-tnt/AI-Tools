@@ -27,7 +27,6 @@ INPUT_FILE = "output_specialChem_1765800534743.json"
 OUTPUT_FILE = "cleaned_specialchem_ingredients.json"
 CHECKPOINT_FILE = "cleaning_checkpoint.json"  # For resume capability
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or ""
-CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY") or ""
 
 if not OPENAI_API_KEY:
     print("⚠️  WARNING: OPENAI_API_KEY not found. Description enhancement will be skipped.")
@@ -309,63 +308,6 @@ async def test_openai_connection(session: aiohttp.ClientSession) -> bool:
         print(f"\n⚠️  WARNING: Could not test OpenAI connection: {e}")
         return False
 
-def build_optimized_enrichment_prompt(ingredients_data: List[Dict[str, Any]]) -> str:
-    """
-    Token-efficient batch prompt for Active ingredient enrichment.
-    Designed for gpt-4o-mini / claude-3-5-haiku.
-    Target: 60% token reduction while maintaining output quality.
-    """
-    
-    # Compact system context + output schema
-    prompt = """You enrich cosmetic ACTIVE ingredients for a formulation database.
-
-OUTPUT FORMAT: JSON array, one object per ingredient, preserve order.
-```json
-[{
-  "description": "Rewritten 50-60 word description. Professional, unique phrasing.",
-  "inci_names": ["Primary INCI", "Alternate INCI"],
-  "functions": ["Antioxidant", "Moisturizing"],
-  "compliance": ["COSMOS", "Vegan", "REACH"],
-  "applications": ["Skin Care", "Anti-aging"],
-  "properties": [{"name": "pH Range", "value": "4.0-6.0"}]
-}]
-```
-
-RULES:
-- Rewrite descriptions in your own words (avoid source plagiarism)
-- Extract INCI names from description and existing data
-- Return [] for fields with no data
-- JSON only, no markdown, no commentary
-
----
-INGREDIENTS:
-"""
-    
-    # Compact ingredient formatting
-    for idx, ing in enumerate(ingredients_data, 1):
-        prompt += f"\n[{idx}] {ing['ingredient_name']}\n"
-        
-        # Description (truncate if excessive)
-        desc = ing.get('description', '')[:5000]
-        if desc:
-            prompt += f"DESC: {desc}\n"
-        
-        # Only include non-empty fields with compact labels
-        if ing.get('existing_inci'):
-            prompt += f"INCI: {' | '.join(ing['existing_inci'][:6])}\n"
-        
-        if ing.get('product_family'):
-            prompt += f"FAMILY: {' | '.join(ing['product_family'][:4])}\n"
-        
-        if ing.get('existing_compliance'):
-            prompt += f"COMP: {' | '.join(ing['existing_compliance'][:6])}\n"
-        
-        if ing.get('existing_applications'):
-            prompt += f"APPS: {' | '.join(ing['existing_applications'][:6])}\n"
-    
-    return prompt
-
-
 async def process_batch_with_openai(
     session: aiohttp.ClientSession,
     batch_records: List[Dict[str, Any]]
@@ -375,37 +317,96 @@ async def process_batch_with_openai(
     if not OPENAI_API_KEY or not batch_records:
         return [None] * len(batch_records)
     
-    # Build compact ingredient data
+    # Build batch prompt
     ingredients_data = []
     for record in batch_records:
         ingredient_name = record.get("ingredient_name", "")
         description = record.get("description", "")
         existing_inci = record.get("inci_names", [])
+        characteristics = record.get("extra_data", {}).get("characteristics", {})
         product_family = [
             cat[0] if isinstance(cat, list) and len(cat) > 0 else str(cat)
             for cat in record.get("functionality_category_tree", [])
         ]
         existing_compliance = record.get("extra_data", {}).get("compliance", [])
         existing_applications = record.get("extra_data", {}).get("applications", [])
+        existing_properties = record.get("extra_data", {}).get("properties", [])
         
         ingredients_data.append({
             "ingredient_name": str(ingredient_name or 'Unknown').strip(),
-            "description": str(description or '').strip(),
+            "description": str(description or 'No description available').strip(),
             "existing_inci": existing_inci,
             "product_family": product_family,
             "existing_compliance": existing_compliance,
             "existing_applications": existing_applications,
         })
     
-    # Build optimized prompt
-    prompt = build_optimized_enrichment_prompt(ingredients_data)
+    # Build combined prompt for batch processing
+    prompt_parts = [
+        "You are a cosmetic ingredient expert. Analyze these ACTIVE ingredients and provide responses in EXACT JSON format.",
+        "",
+        "For each ingredient, provide a JSON object with these exact fields:",
+        "{",
+        '    "category": "Active",',
+        '    "description": "Enhanced description (~100 words for Active ingredients)",',
+        '    "inci_names": ["INCI Name 1", "INCI Name 2", ...],',
+        '    "functional_categories": ["Category 1", "Category 2", ...],',
+        '    "compliance": ["Compliance 1", "Compliance 2", ...],',
+        '    "applications": ["Application 1", "Application 2", ...],',
+        '    "properties": [',
+        '        {"properties": "Property Name", "value_unit": "Value Unit", "test_condition": "", "test_method": ""},',
+        '        ...',
+        '    ]',
+        "}",
+        "",
+        "INGREDIENTS TO PROCESS:",
+    ]
     
-    # Model priority (cheapest first - gpt-4o-mini is best value)
+    for idx, ing_data in enumerate(ingredients_data, 1):
+        prompt_parts.append(f"\n--- INGREDIENT {idx} ---")
+        prompt_parts.append(f"INGREDIENT NAME: {ing_data['ingredient_name']}")
+        prompt_parts.append(f"DESCRIPTION: {ing_data['description']}")
+        prompt_parts.append(f"EXISTING INCI NAMES: {' | '.join(ing_data['existing_inci']) if ing_data['existing_inci'] else 'None'}")
+        prompt_parts.append(f"EXISTING PRODUCT FAMILY: {' | '.join(ing_data['product_family']) if ing_data['product_family'] else 'None'}")
+        prompt_parts.append(f"EXISTING COMPLIANCE: {' | '.join(ing_data['existing_compliance']) if ing_data['existing_compliance'] else 'None'}")
+        prompt_parts.append(f"EXISTING APPLICATIONS: {' | '.join(ing_data['existing_applications']) if ing_data['existing_applications'] else 'None'}")
+    
+    prompt_parts.extend([
+        "",
+        "Provide a JSON array with one object per ingredient in the same order:",
+        "[",
+        "  {ingredient 1 data},",
+        "  {ingredient 2 data},",
+        "  ...",
+        "]",
+        "",
+        "RULES:",
+        "1. DESCRIPTION: Enhance the description to ~100 words for Active ingredients. Keep it informative and professional.",
+        "2. INCI NAMES: Extract all INCI names. Use existing ones and add any additional found. Return empty array [] if none found.",
+        "3. FUNCTIONAL CATEGORIES: Extract from description and product family. Return empty array [] if none found.",
+        "4. COMPLIANCE: Extract compliance info (COSMOS, REACH, Vegan, Organic, etc.). Return empty array [] if none found.",
+        "5. APPLICATIONS: Extract applications (skin care, hair care, etc.). Return empty array [] if none found.",
+        "6. PROPERTIES: Extract physical/chemical properties (pH, viscosity, etc.). Return empty array [] if none found.",
+        "",
+        "IMPORTANT:",
+        "- Output ONLY valid JSON array, no other text, no markdown, no explanations",
+        "- Ensure JSON is properly formatted with double quotes",
+        "- Return empty arrays if no data can be extracted for a field",
+        "- Array must have exactly " + str(len(ingredients_data)) + " objects, one per ingredient"
+    ])
+    
+    prompt = "\n".join(prompt_parts)
+    
+    # Model priority (cheaper models first to reduce costs)
     models_to_try = [
-        {"name": "gpt-4o-mini", "max_tokens": 1500, "endpoint": "chat", "rpm": 500, "tpm": 2000000},
-        {"name": "gpt-4o", "max_tokens": 1500, "endpoint": "chat", "rpm": 500, "tpm": 2000000},
-        {"name": "gpt-4o-2024-11-20", "max_tokens": 1500, "endpoint": "chat", "rpm": 500, "tpm": 2000000},
-        {"name": "gpt-3.5-turbo", "max_tokens": 1500, "endpoint": "chat", "rpm": 500, "tpm": 2000000},
+        {"name": "gpt-5-mini", "max_tokens": 2000, "endpoint": "chat", "rpm": 500, "tpm": 200000},
+        {"name": "gpt-5-mini-2025-08-07", "max_tokens": 2000, "endpoint": "chat", "rpm": 500, "tpm": 200000},
+        {"name": "gpt-5", "max_tokens": 2000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
+        {"name": "gpt-5-chat-latest", "max_tokens": 2000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
+        {"name": "gpt-4.1", "max_tokens": 2000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
+        {"name": "chatgpt-4o-latest", "max_tokens": 2000, "endpoint": "chat", "rpm": 200, "tpm": 500000},
+        {"name": "gpt-4o-2024-11-20", "max_tokens": 2000, "endpoint": "chat", "rpm": 500, "tpm": 30000},
+        {"name": "gpt-3.5-turbo", "max_tokens": 2000, "endpoint": "chat", "rpm": 500, "tpm": 200000},
     ]
     
     for model_config in models_to_try:
@@ -421,9 +422,12 @@ async def process_batch_with_openai(
             if endpoint == "chat":
                 payload = {
                     "model": model_name,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": max_tokens
+                    "messages": [{"role": "user", "content": prompt}]
                 }
+                if model_name.startswith("gpt-5"):
+                    payload["max_completion_tokens"] = max_tokens
+                else:
+                    payload["max_tokens"] = max_tokens
             else:
                 payload = {
                     "model": model_name,
@@ -454,17 +458,12 @@ async def process_batch_with_openai(
                         content = data["choices"][0]["text"].strip()
                     
                     # Try to extract JSON array from response
-                    # Look for array pattern (handle code blocks)
-                    json_array_match = re.search(r'\[[\s\S]*?\]', content, re.DOTALL)
+                    # Look for array pattern
+                    json_array_match = re.search(r'\[[\s\S]*\]', content)
                     if json_array_match:
                         try:
                             results_array = json.loads(json_array_match.group())
-                            if isinstance(results_array, list):
-                                # Pad or truncate to match batch size
-                                if len(results_array) < len(batch_records):
-                                    results_array.extend([{}] * (len(batch_records) - len(results_array)))
-                                elif len(results_array) > len(batch_records):
-                                    results_array = results_array[:len(batch_records)]
+                            if isinstance(results_array, list) and len(results_array) == len(batch_records):
                                 return results_array
                         except json.JSONDecodeError:
                             pass
@@ -472,22 +471,16 @@ async def process_batch_with_openai(
                     # Try parsing whole content as array
                     try:
                         results_array = json.loads(content)
-                        if isinstance(results_array, list):
-                            if len(results_array) < len(batch_records):
-                                results_array.extend([{}] * (len(batch_records) - len(results_array)))
-                            elif len(results_array) > len(batch_records):
-                                results_array = results_array[:len(batch_records)]
+                        if isinstance(results_array, list) and len(results_array) == len(batch_records):
                             return results_array
                     except json.JSONDecodeError:
                         pass
                     
                     # Fallback: try to extract individual JSON objects
                     json_objects = re.findall(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', content, re.DOTALL)
-                    if json_objects:
+                    if len(json_objects) == len(batch_records):
                         try:
-                            results_array = [json.loads(obj) for obj in json_objects[:len(batch_records)]]
-                            if len(results_array) < len(batch_records):
-                                results_array.extend([{}] * (len(batch_records) - len(results_array)))
+                            results_array = [json.loads(obj) for obj in json_objects]
                             return results_array
                         except json.JSONDecodeError:
                             pass
@@ -588,7 +581,7 @@ def needs_enhancement(cleaned_record: Dict[str, Any]) -> bool:
 
 
 def apply_batch_result_to_record(cleaned_record: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
-    """Apply batch processing result to a single record (handles compact field names)"""
+    """Apply batch processing result to a single record"""
     if not result or result.get("error"):
         return cleaned_record
     
@@ -601,17 +594,13 @@ def apply_batch_result_to_record(cleaned_record: Dict[str, Any], result: Dict[st
     existing_applications = cleaned_record.get("extra_data", {}).get("applications", [])
     existing_properties = cleaned_record.get("extra_data", {}).get("properties", [])
     
-    # Update enhanced description (handle both "description" and "desc")
+    # Update enhanced description
     if "description" in result:
         cleaned_record["enhanced_description"] = normalize_unicode_text(result["description"])
-    elif "desc" in result:
-        cleaned_record["enhanced_description"] = normalize_unicode_text(result["desc"])
     
-    # Update category (default to Active for actives)
+    # Update category
     if "category" in result:
         cleaned_record["category_decided"] = result["category"]
-    elif not cleaned_record.get("category_decided"):
-        cleaned_record["category_decided"] = "Active"
     
     # Merge INCI names
     extracted_inci = result.get("inci_names", [])
@@ -622,8 +611,8 @@ def apply_batch_result_to_record(cleaned_record: Dict[str, Any], result: Dict[st
         if not cleaned_record.get("original_inci_name", "").strip():
             cleaned_record["original_inci_name"] = " | ".join(combined_inci)
     
-    # Merge functional categories (handle both "functional_categories" and "functions")
-    extracted_categories = result.get("functional_categories", []) or result.get("functions", [])
+    # Merge functional categories
+    extracted_categories = result.get("functional_categories", [])
     if extracted_categories:
         normalized_categories = [normalize_unicode_text(cat) for cat in extracted_categories]
         combined_categories = list(set(product_family + normalized_categories))
@@ -643,28 +632,20 @@ def apply_batch_result_to_record(cleaned_record: Dict[str, Any], result: Dict[st
         combined_applications = list(set(existing_applications + normalized_apps))
         cleaned_record["extra_data"]["applications"] = combined_applications
     
-    # Merge properties (handle both old and new format)
+    # Merge properties
     extracted_properties = result.get("properties", [])
     if extracted_properties:
         normalized_props = []
         for prop in extracted_properties:
             normalized_prop = {}
-            # Handle new format: {"name": "...", "value": "..."}
-            if "name" in prop:
-                normalized_prop["properties"] = normalize_unicode_text(prop.get("name", ""))
-                normalized_prop["value_unit"] = normalize_unicode_text(prop.get("value", ""))
-                normalized_prop["test_condition"] = ""
-                normalized_prop["test_method"] = ""
-            # Handle old format: {"properties": "...", "value_unit": "..."}
-            else:
-                for k, v in prop.items():
-                    normalized_prop[k] = normalize_unicode_text(v) if isinstance(v, str) else v
+            for k, v in prop.items():
+                normalized_prop[k] = normalize_unicode_text(v) if isinstance(v, str) else v
             normalized_props.append(normalized_prop)
         
         existing_prop_names = {prop.get("properties", "") for prop in existing_properties}
         new_properties = [
             prop for prop in normalized_props
-            if prop.get("properties", "") and prop.get("properties", "") not in existing_prop_names
+            if prop.get("properties", "") not in existing_prop_names
         ]
         cleaned_record["extra_data"]["properties"] = existing_properties + new_properties
     
@@ -766,124 +747,99 @@ async def main():
         print(f"   ⚠️  WARNING: Missing OPENAI_API_KEY - enhancement will be skipped")
     print("=" * 80)
     
-    # Check if cleaned file already exists and is complete
-    cleaned_data = []
-    skip_cleaning = False
-    
-    if os.path.exists(OUTPUT_FILE):
-        print(f"\n📁 Found existing cleaned file: {OUTPUT_FILE}")
-        try:
-            with open(OUTPUT_FILE, 'r', encoding='utf-8') as f:
-                cleaned_data = json.load(f)
-            if cleaned_data and len(cleaned_data) > 0:
-                print(f"   ✅ Loaded {len(cleaned_data)} already-cleaned records")
-                print(f"   ⏭️  SKIPPING cleaning phase - using existing cleaned data")
-                skip_cleaning = True
-                total_records = len(cleaned_data)
-                skipped_count = 0
-        except Exception as e:
-            print(f"   ⚠️  Error reading existing file: {e}")
-            print(f"   🔄 Will re-clean from raw input")
-            skip_cleaning = False
-    
     # Check for existing checkpoint
     checkpoint = load_checkpoint()
     start_index = checkpoint.get("last_processed_index", 0)
     existing_cleaned = checkpoint.get("cleaned_data", [])
     checkpoint_total = checkpoint.get("total_records", 0)
     
-    if not skip_cleaning:
-        if start_index > 0 and os.path.exists(CHECKPOINT_FILE):
-            print(f"\n🔄 CHECKPOINT FOUND - Resuming from previous run")
-            print(f"   📊 Progress: {start_index}/{checkpoint_total} records already processed ({start_index*100/checkpoint_total:.1f}%)")
-            print(f"   ✅ Already cleaned: {len(existing_cleaned)} records")
-            print(f"   ⏭️  Continuing from record {start_index + 1}...")
-            print(f"   📁 Checkpoint file: {CHECKPOINT_FILE}")
-        else:
-            print("\n🆕 Starting fresh (no checkpoint found)")
-        
-        # Read input file
-        print("\n📖 Reading input file...")
-        raw_data = []
-        with open(INPUT_FILE, 'r', encoding='utf-8') as f:
-            for line_num, line in enumerate(f, 1):
-                line = line.strip()
-                if line:
-                    try:
-                        raw_data.append(json.loads(line))
-                    except json.JSONDecodeError as e:
-                        print(f"⚠️  Error parsing line {line_num}: {e}")
-                        continue
-        
-        total_records = len(raw_data)
-        print(f"✅ Loaded {total_records} records")
-        
-        # Use existing cleaned data if resuming
-        cleaned_data = existing_cleaned if start_index > 0 else []
-        
-        # Clean and transform data (skip already processed if resuming)
-        print("\n🧹 Cleaning and transforming data...")
-        skipped_count = checkpoint.get("skipped_count", 0)
-        
-        # Create progress bar with detailed info
-        pbar = tqdm(
-            enumerate(raw_data[start_index:], start=start_index),
-            desc="🧹 Cleaning",
-            total=total_records,
-            initial=start_index,
-            unit="records",
-            ncols=100,
-            bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]'
-        )
-        
-        for current_index, raw_item in pbar:
-            try:
-                cleaned_record = clean_ingredient_record(raw_item)
-                
-                # Validate record
-                if validate_record(cleaned_record):
-                    cleaned_data.append(cleaned_record)
-                    pbar.set_postfix({
-                        'cleaned': len(cleaned_data),
-                        'skipped': skipped_count,
-                        'valid': f"{len(cleaned_data)*100/(current_index+1):.1f}%"
-                    })
-                else:
-                    skipped_count += 1
-                    pbar.set_postfix({
-                        'cleaned': len(cleaned_data),
-                        'skipped': skipped_count,
-                        'valid': f"{len(cleaned_data)*100/(current_index+1):.1f}%"
-                    })
-                
-                # Save checkpoint every 100 records
-                if (current_index + 1) % 100 == 0:
-                    save_checkpoint({
-                        "last_processed_index": current_index + 1,
-                        "total_records": total_records,
-                        "cleaned_data": cleaned_data,
-                        "skipped_count": skipped_count
-                    })
-                    pbar.set_description(f"🧹 Cleaning (saved @ {current_index + 1})")
-            except Exception as e:
-                print(f"\n⚠️  Error cleaning record {current_index + 1}: {e}")
+    if start_index > 0 and os.path.exists(CHECKPOINT_FILE):
+        print(f"\n🔄 CHECKPOINT FOUND - Resuming from previous run")
+        print(f"   📊 Progress: {start_index}/{checkpoint_total} records already processed ({start_index*100/checkpoint_total:.1f}%)")
+        print(f"   ✅ Already cleaned: {len(existing_cleaned)} records")
+        print(f"   ⏭️  Continuing from record {start_index + 1}...")
+        print(f"   📁 Checkpoint file: {CHECKPOINT_FILE}")
+    else:
+        print("\n🆕 Starting fresh (no checkpoint found)")
+    
+    # Read input file
+    print("\n📖 Reading input file...")
+    raw_data = []
+    with open(INPUT_FILE, 'r', encoding='utf-8') as f:
+        for line_num, line in enumerate(f, 1):
+            line = line.strip()
+            if line:
+                try:
+                    raw_data.append(json.loads(line))
+                except json.JSONDecodeError as e:
+                    print(f"⚠️  Error parsing line {line_num}: {e}")
+                    continue
+    
+    total_records = len(raw_data)
+    print(f"✅ Loaded {total_records} records")
+    
+    # Use existing cleaned data if resuming
+    cleaned_data = existing_cleaned if start_index > 0 else []
+    
+    # Clean and transform data (skip already processed if resuming)
+    print("\n🧹 Cleaning and transforming data...")
+    skipped_count = checkpoint.get("skipped_count", 0)
+    
+    # Create progress bar with detailed info
+    pbar = tqdm(
+        enumerate(raw_data[start_index:], start=start_index),
+        desc="🧹 Cleaning",
+        total=total_records,
+        initial=start_index,
+        unit="records",
+        ncols=100,
+        bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]'
+    )
+    
+    for current_index, raw_item in pbar:
+        try:
+            cleaned_record = clean_ingredient_record(raw_item)
+            
+            # Validate record
+            if validate_record(cleaned_record):
+                cleaned_data.append(cleaned_record)
+                pbar.set_postfix({
+                    'cleaned': len(cleaned_data),
+                    'skipped': skipped_count,
+                    'valid': f"{len(cleaned_data)*100/(current_index+1):.1f}%"
+                })
+            else:
                 skipped_count += 1
                 pbar.set_postfix({
                     'cleaned': len(cleaned_data),
                     'skipped': skipped_count,
-                    'error': 'yes'
+                    'valid': f"{len(cleaned_data)*100/(current_index+1):.1f}%"
                 })
-                continue
-        
-        pbar.close()
-        print(f"\n✅ Cleaning Complete!")
-        print(f"   ✅ Cleaned: {len(cleaned_data)} records")
-        print(f"   ⚠️  Skipped: {skipped_count} invalid records")
-        print(f"   📊 Success rate: {len(cleaned_data)*100/total_records:.1f}%")
-    else:
-        print(f"\n✅ Using existing cleaned data (skipped cleaning phase)")
-        print(f"   ✅ Loaded: {len(cleaned_data)} records")
-        total_records = len(cleaned_data)
+            
+            # Save checkpoint every 100 records
+            if (current_index + 1) % 100 == 0:
+                save_checkpoint({
+                    "last_processed_index": current_index + 1,
+                    "total_records": total_records,
+                    "cleaned_data": cleaned_data,
+                    "skipped_count": skipped_count
+                })
+                pbar.set_description(f"🧹 Cleaning (saved @ {current_index + 1})")
+        except Exception as e:
+            print(f"\n⚠️  Error cleaning record {current_index + 1}: {e}")
+            skipped_count += 1
+            pbar.set_postfix({
+                'cleaned': len(cleaned_data),
+                'skipped': skipped_count,
+                'error': 'yes'
+            })
+            continue
+    
+    pbar.close()
+    print(f"\n✅ Cleaning Complete!")
+    print(f"   ✅ Cleaned: {len(cleaned_data)} records")
+    print(f"   ⚠️  Skipped: {skipped_count} invalid records")
+    print(f"   📊 Success rate: {len(cleaned_data)*100/total_records:.1f}%")
     
     # Fill missing values and enhance descriptions if OpenAI is available
     use_openai = bool(OPENAI_API_KEY)
@@ -913,16 +869,13 @@ async def main():
             if uncategorized:
                 print(f"   ⚠️  Uncategorized: {len(uncategorized)} (will be SKIPPED)")
             print(f"   💰 Cost savings: Only processing {len(active_records)}/{len(cleaned_data)} records ({len(active_records)*100/len(cleaned_data):.1f}%)")
-            print(f"\n⚡ OPTIMIZATION ENABLED (v2 - Token-Efficient):")
-            print(f"   📦 Batch processing: 30 ingredients per API call (reduces API calls by ~97%)")
+            print(f"\n⚡ OPTIMIZATION ENABLED:")
+            print(f"   📦 Batch processing: 8 ingredients per API call (reduces API calls by ~87%)")
             print(f"   🔄 Combined operations: Fill missing values + enhance description in one call")
-            print(f"   💵 Cheapest models first: gpt-4o-mini prioritized ($0.15/1M input tokens)")
-            print(f"   📉 Reduced tokens: 1500 max tokens, compact prompts (60% token reduction)")
-            print(f"   📝 Shorter descriptions: 50-60 words (down from ~100 words)")
-            print(f"   🏷️  Compact field names: 'desc', 'func', 'comp' instead of full names")
+            print(f"   💵 Cheaper models first: gpt-5-mini prioritized (lower cost)")
+            print(f"   📉 Reduced tokens: 2000 max tokens (down from 4000)")
             print(f"   ⏭️  Smart skipping: Records with complete data are skipped")
-            print(f"   💰 Estimated cost reduction: ~90-95% compared to original approach")
-            print(f"   💵 Estimated cost: ~$0.50-0.80 per 1,000 ingredients (vs $5-8 original)")
+            print(f"   💰 Estimated cost reduction: ~85-90% compared to original approach")
             
             enhanced_count = checkpoint.get("enhanced_count", 0)
             filled_inci_count = checkpoint.get("filled_inci_count", 0)
@@ -971,22 +924,20 @@ async def main():
                 print(f"   💡 Run categorize_ingredients.py first to categorize ingredients")
                 use_openai = False
             else:
-                # OPTIMIZED: Use batch processing with 25-30 ingredients per API call to reduce costs
-                api_batch_size = 30  # Process 30 ingredients in one API call (increased from 8)
+                # OPTIMIZED: Use batch processing with 8 ingredients per API call to reduce costs
+                api_batch_size = 8  # Process 8 ingredients in one API call
                 processing_batch_size = 50  # Process 50 records at a time for checkpointing
-                
-                # Create the range of indices to process
-                batch_range = list(range(enhancement_start, len(active_data), processing_batch_size))
-                actual_batch_count = len(batch_range)
+                total_batches = (len(active_data) - enhancement_start + processing_batch_size - 1) // processing_batch_size
                 
                 async with aiohttp.ClientSession() as session:
                     pbar = tqdm(
-                        batch_range,
-                        desc="🤖 Enhancing Actives",
-                        total=actual_batch_count,
+                        range(enhancement_start, len(active_data), processing_batch_size),
+                        desc="🤖 Enhancing (Batched, Actives Only)",
+                        initial=enhancement_start // processing_batch_size,
+                        total=total_batches,
                         unit="batch",
                         ncols=100,
-                        bar_format='{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]'
+                        bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} batches [{elapsed}<{remaining}, {rate_fmt}]'
                     )
                     
                     for i in pbar:
@@ -1006,9 +957,9 @@ async def main():
                                 # Check for credits exhausted
                                 if batch_results and isinstance(batch_results[0], dict) and batch_results[0].get("error") == "insufficient_quota":
                                     credits_exhausted_detected = True
-                                    tqdm.write(f"\n❌ CREDITS EXHAUSTED detected!")
-                                    tqdm.write(f"   Message: {batch_results[0].get('message', 'Insufficient quota')}")
-                                    tqdm.write(f"   ⏭️  Stopping enhancement - will continue with cleaning only")
+                                    print(f"\n❌ CREDITS EXHAUSTED detected!")
+                                    print(f"   Message: {batch_results[0].get('message', 'Insufficient quota')}")
+                                    print(f"   ⏭️  Stopping enhancement - will continue with cleaning only")
                                     break
                                 
                                 all_results.extend(batch_results)
@@ -1032,19 +983,10 @@ async def main():
                                 })
                                 break
                             
-                            # Track what was filled/enhanced in this batch
-                            batch_enhanced = 0
-                            batch_filled_inci = 0
-                            batch_filled_cat = 0
-                            batch_filled_comp = 0
-                            batch_filled_apps = 0
-                            batch_filled_props = 0
-                            batch_failed = 0
-                            
+                            # Track what was filled/enhanced
                             for j, (original_record, result) in enumerate(zip(processing_batch, all_results)):
                                 if isinstance(result, Exception):
                                     failed_count += 1
-                                    batch_failed += 1
                                     continue
                                 
                                 # Track what was filled/enhanced
@@ -1052,39 +994,32 @@ async def main():
                                 new_inci_count = len(result.get("inci_names", []))
                                 if new_inci_count > original_inci_count:
                                     filled_inci_count += 1
-                                    batch_filled_inci += 1
                                 
                                 original_cat_count = len(original_record.get("functionality_category_tree", []))
                                 new_cat_count = len(result.get("functionality_category_tree", []))
                                 if new_cat_count > original_cat_count:
                                     filled_category_count += 1
-                                    batch_filled_cat += 1
                                 
                                 # Track compliance, applications, properties
                                 original_compliance = len(original_record.get("extra_data", {}).get("compliance", []))
                                 new_compliance = len(result.get("extra_data", {}).get("compliance", []))
                                 if new_compliance > original_compliance:
                                     filled_compliance_count += 1
-                                    batch_filled_comp += 1
                                 
                                 original_apps = len(original_record.get("extra_data", {}).get("applications", []))
                                 new_apps = len(result.get("extra_data", {}).get("applications", []))
                                 if new_apps > original_apps:
                                     filled_applications_count += 1
-                                    batch_filled_apps += 1
                                 
                                 original_props = len(original_record.get("extra_data", {}).get("properties", []))
                                 new_props = len(result.get("extra_data", {}).get("properties", []))
                                 if new_props > original_props:
                                     filled_properties_count += 1
-                                    batch_filled_props += 1
                                 
                                 if result.get("enhanced_description"):
                                     enhanced_count += 1
-                                    batch_enhanced += 1
                                 else:
                                     failed_count += 1
-                                    batch_failed += 1
                                 
                                 # Update the original record in cleaned_data
                                 for idx, orig_record in enumerate(cleaned_data):
@@ -1105,17 +1040,15 @@ async def main():
                                 'rate': f"{enhanced_count*100/active_processed:.1f}%" if active_processed > 0 else "0%"
                             })
                             
-                            # Print batch summary every 5 batches (more frequent updates)
-                            if (i // processing_batch_size) % 5 == 0 and batch_enhanced > 0:
-                                # Find recently enhanced records to show (show up to 2 examples)
-                                enhanced_in_batch = [r for r in all_results if isinstance(r, dict) and r.get("enhanced_description")]
-                                if enhanced_in_batch:
-                                    tqdm.write(f"\n   📊 Batch {i//processing_batch_size + 1}: Enhanced {batch_enhanced}/{len(processing_batch)} ingredients | Total enhanced: {enhanced_count}/{active_processed}")
-                                    # Show up to 2 examples
-                                    for result in enhanced_in_batch[:2]:
+                            # Print sample of what was enhanced every 10 batches
+                            if (i // processing_batch_size) % 10 == 0 and enhanced_count > 0:
+                                # Find a recently enhanced record to show
+                                for result in all_results[:5]:
+                                    if isinstance(result, dict) and result.get("enhanced_description"):
                                         name = result.get("ingredient_name", "Unknown")[:40]
                                         category = result.get("category_decided", "N/A")
-                                        tqdm.write(f"      ✅ {name} → {category}")
+                                        print(f"\n   ✅ Enhanced: {name} → Category: {category}")
+                                        break
                             
                             # Save checkpoint after each processing batch
                             save_checkpoint({
@@ -1133,11 +1066,9 @@ async def main():
                                 "failed_count": failed_count,
                                 "skipped_excipients": skipped_excipients
                             })
-                            # Update description less frequently to avoid overlapping text
-                            if (i // processing_batch_size) % 10 == 0:
-                                pbar.set_description(f"🤖 Enhancing Actives (saved @ {i + processing_batch_size})")
+                            pbar.set_description(f"🤖 Enhancing Actives (saved @ {i + processing_batch_size})")
                         except Exception as e:
-                            tqdm.write(f"\n⚠️  Error processing batch {i//processing_batch_size + 1}: {e}")
+                            print(f"\n⚠️  Error processing batch {i//processing_batch_size + 1}: {e}")
                             failed_count += len(processing_batch)
                             pbar.set_postfix({'error': 'yes', 'failed': failed_count})
                     

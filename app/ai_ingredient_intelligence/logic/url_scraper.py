@@ -1565,9 +1565,14 @@ class URLScraper:
             # Extract product image
             product_image = await self.extract_product_image(driver, url)
             
+            # Extract product image
+            product_image = await self.extract_product_image(driver, url)
+            
             return {
                 "extracted_text": extracted_text,
                 "platform": platform,
+                "url": url,
+                "product_image": product_image
                 "url": url,
                 "product_image": product_image
             }
@@ -1579,6 +1584,243 @@ class URLScraper:
         finally:
             # Don't close driver here - keep it for reuse
             pass
+    
+    async def extract_product_image(self, driver: webdriver.Chrome, url: str) -> Optional[str]:
+        """
+        Extract product image URL from the page using Selenium
+        
+        Args:
+            driver: Selenium WebDriver instance
+            url: The product URL (for platform detection)
+            
+        Returns:
+            Image URL string or None if not found
+        """
+        try:
+            loop = asyncio.get_event_loop()
+            
+            def extract():
+                image_urls = set()
+                candidate_images = []  # Store images with metadata for better selection
+                
+                try:
+                    # Method 1: Look for common product image selectors (most reliable)
+                    product_image_selectors = [
+                        # Nykaa specific
+                        'img[class*="product-image"]',
+                        'img[class*="ProductImage"]',
+                        'img[class*="product-img"]',
+                        '[class*="product-image"] img',
+                        '[class*="ProductImage"] img',
+                        # Amazon specific
+                        '#landingImage',
+                        '#main-image',
+                        '#imgBlkFront',
+                        '[data-a-image-name="landingImage"]',
+                        # Flipkart specific
+                        'img[class*="_396cs4"]',
+                        '[class*="product-image"] img',
+                        # Generic product image containers
+                        '[class*="product-gallery"] img',
+                        '[class*="product-slider"] img',
+                        '[class*="main-image"] img',
+                        '[id*="product-image"] img',
+                        '[id*="main-image"] img',
+                        '[data-testid*="product-image"]',
+                        '[data-testid*="main-image"]',
+                    ]
+                    
+                    for selector in product_image_selectors:
+                        try:
+                            imgs = driver.find_elements(By.CSS_SELECTOR, selector)
+                            for img in imgs[:5]:  # Limit to first 5 matches per selector
+                                try:
+                                    src = img.get_attribute('src') or img.get_attribute('data-src') or ''
+                                    srcset = img.get_attribute('srcset') or ''
+                                    
+                                    # Collect all candidate URLs
+                                    candidates = []
+                                    if src and src.startswith(('http://', 'https://', '//')):
+                                        candidates.append(src)
+                                    if srcset:
+                                        # Parse srcset (format: "url1 size1, url2 size2")
+                                        for item in srcset.split(','):
+                                            url_part = item.strip().split(' ')[0]
+                                            if url_part and url_part.startswith(('http://', 'https://', '//')):
+                                                candidates.append(url_part)
+                                    
+                                    for candidate_url in candidates:
+                                        if candidate_url:
+                                            # Convert protocol-relative URLs
+                                            if candidate_url.startswith('//'):
+                                                candidate_url = 'https:' + candidate_url
+                                            
+                                            # Filter out placeholders, logos, icons
+                                            if not any(exclude in candidate_url.lower() for exclude in [
+                                                'placeholder', 'logo', 'icon', 'avatar', 'banner', 
+                                                'spinner', 'loading', 'default', 'no-image', 'not-found'
+                                            ]):
+                                                # Get image dimensions for prioritization
+                                                try:
+                                                    width = img.size.get('width', 0)
+                                                    height = img.size.get('height', 0)
+                                                    area = width * height
+                                                except:
+                                                    area = 0
+                                                
+                                                clean_url = candidate_url.split('?')[0]
+                                                if clean_url and clean_url not in image_urls:
+                                                    image_urls.add(clean_url)
+                                                    candidate_images.append({
+                                                        'url': clean_url,
+                                                        'area': area,
+                                                        'has_product_keyword': 'product' in clean_url.lower()
+                                                    })
+                                except Exception as e:
+                                    continue
+                        except Exception as e:
+                            continue
+                    
+                    # Method 2: Comprehensive extraction - get all images and filter intelligently
+                    if not image_urls:
+                        try:
+                            imgs = driver.find_elements(By.CSS_SELECTOR, 'img[src], img[data-src], source[srcset]')
+                            for img in imgs:
+                                try:
+                                    src = img.get_attribute('src') or img.get_attribute('data-src') or ''
+                                    srcset = img.get_attribute('srcset') or ''
+                                    
+                                    candidates = []
+                                    if src and src.startswith(('http://', 'https://', '//')):
+                                        candidates.append(src)
+                                    if srcset:
+                                        for item in srcset.split(','):
+                                            url_part = item.strip().split(' ')[0]
+                                            if url_part and url_part.startswith(('http://', 'https://', '//')):
+                                                candidates.append(url_part)
+                                    
+                                    for candidate_url in candidates:
+                                        if candidate_url:
+                                            # Convert protocol-relative URLs
+                                            if candidate_url.startswith('//'):
+                                                candidate_url = 'https:' + candidate_url
+                                            
+                                            # More lenient filtering - exclude only obvious non-product images
+                                            exclude_patterns = [
+                                                'placeholder', 'logo', 'icon', 'avatar', 'banner',
+                                                'spinner', 'loading', 'default', 'no-image', 'not-found',
+                                                'social', 'share', 'facebook', 'twitter', 'instagram',
+                                                'favicon', 'sprite', 'advertisement', 'ad-'
+                                            ]
+                                            
+                                            # Check if URL looks like a product image
+                                            url_lower = candidate_url.lower()
+                                            is_likely_product = (
+                                                # Has image extension
+                                                any(ext in url_lower for ext in ['.jpg', '.jpeg', '.png', '.webp', '.gif']) or
+                                                # Contains product-related keywords
+                                                any(keyword in url_lower for keyword in ['product', 'catalog', 'item', 'sku']) or
+                                                # Is from known e-commerce domains
+                                                any(domain in url_lower for domain in ['nykaa', 'amazon', 'flipkart', 'myntra', 'purplle'])
+                                            )
+                                            
+                                            if is_likely_product and not any(exclude in url_lower for exclude in exclude_patterns):
+                                                try:
+                                                    width = img.size.get('width', 0)
+                                                    height = img.size.get('height', 0)
+                                                    area = width * height
+                                                except:
+                                                    area = 0
+                                                
+                                                clean_url = candidate_url.split('?')[0]
+                                                if clean_url and clean_url not in image_urls:
+                                                    image_urls.add(clean_url)
+                                                    candidate_images.append({
+                                                        'url': clean_url,
+                                                        'area': area,
+                                                        'has_product_keyword': 'product' in clean_url.lower()
+                                                    })
+                                except Exception as e:
+                                    continue
+                        except Exception as e:
+                            print(f"Error in comprehensive image extraction: {e}")
+                    
+                    # Method 3: Fallback - simpler extraction for product images
+                    if not image_urls:
+                        try:
+                            img_elements = driver.find_elements(By.CSS_SELECTOR, 'img[src], img[data-src]')
+                            for img in img_elements[:20]:  # Check first 20 images
+                                try:
+                                    src = img.get_attribute('src') or img.get_attribute('data-src')
+                                    if src and src.startswith(('http://', 'https://', '//')):
+                                        if src.startswith('//'):
+                                            src = 'https:' + src
+                                        
+                                        # Very basic filtering - just exclude obvious non-images
+                                        if not any(exclude in src.lower() for exclude in [
+                                            'logo', 'icon', 'favicon', 'spinner', 'loading'
+                                        ]):
+                                            # Check if it's a reasonable size (likely a product image)
+                                            try:
+                                                width = img.size.get('width', 0)
+                                                height = img.size.get('height', 0)
+                                                if width > 100 and height > 100:  # Reasonable minimum size
+                                                    clean_url = src.split('?')[0]
+                                                    if clean_url:
+                                                        image_urls.add(clean_url)
+                                                        candidate_images.append({
+                                                            'url': clean_url,
+                                                            'area': width * height,
+                                                            'has_product_keyword': 'product' in clean_url.lower()
+                                                        })
+                                            except:
+                                                # If we can't get size, still consider it
+                                                clean_url = src.split('?')[0]
+                                                if clean_url:
+                                                    image_urls.add(clean_url)
+                                                    candidate_images.append({
+                                                        'url': clean_url,
+                                                        'area': 0,
+                                                        'has_product_keyword': 'product' in clean_url.lower()
+                                                    })
+                                except Exception as e:
+                                    continue
+                        except Exception as e:
+                            print(f"Error in fallback image extraction: {e}")
+                    
+                    # Select the best image
+                    if candidate_images:
+                        # Sort by: 1) has product keyword, 2) larger area
+                        candidate_images.sort(key=lambda x: (
+                            x['has_product_keyword'],
+                            x['area']
+                        ), reverse=True)
+                        
+                        selected = candidate_images[0]['url']
+                        print(f"Selected product image: {selected}")
+                        return selected
+                    
+                    # Fallback: return first image if we have any
+                    if image_urls:
+                        selected = list(image_urls)[0]
+                        print(f"Selected first available image: {selected}")
+                        return selected
+                    
+                    print("No product image found")
+                    return None
+                    
+                except Exception as e:
+                    print(f"Error extracting product image: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    return None
+            
+            return await loop.run_in_executor(None, extract)
+        except Exception as e:
+            print(f"Error in extract_product_image: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
     
     async def extract_product_image(self, driver: webdriver.Chrome, url: str) -> Optional[str]:
         """
@@ -1858,8 +2100,12 @@ Product name:"""
             # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
             max_tokens = 4096 if "claude-3-opus-20240229" in model_name else 8192
             
+            # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
+            max_tokens = 4096 if "claude-3-opus-20240229" in model_name else 8192
+            
             response = claude_client.messages.create(
                 model=model_name,
+                max_tokens=max_tokens,
                 max_tokens=max_tokens,
                 temperature=0.1,
                 messages=[{"role": "user", "content": prompt}]
@@ -1935,8 +2181,12 @@ Return only the JSON array of INCI names:"""
             # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
             max_tokens = 4096 if "claude-3-opus-20240229" in model_name else 8192
             
+            # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
+            max_tokens = 4096 if "claude-3-opus-20240229" in model_name else 8192
+            
             response = claude_client.messages.create(
                 model=model_name,
+                max_tokens=max_tokens,
                 max_tokens=max_tokens,
                 temperature=0.2,
                 messages=[{"role": "user", "content": prompt}]
@@ -2162,14 +2412,19 @@ Return ONLY the JSON array of ALL INCI ingredient names from the complete list, 
             claude_client = self._get_claude_client()
             
             # Call Claude API - use config model (defaults to claude-sonnet-4-5-20250929)
+            # Call Claude API - use config model (defaults to claude-sonnet-4-5-20250929)
             from app.config import CLAUDE_MODEL
             model_name = CLAUDE_MODEL if CLAUDE_MODEL else (os.getenv("CLAUDE_MODEL") or os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929")
             
             # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
             max_tokens = 4096 if "claude-3-opus-20240229" in model_name else 8192
             
+            # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
+            max_tokens = 4096 if "claude-3-opus-20240229" in model_name else 8192
+            
             response = claude_client.messages.create(
                 model=model_name,
+                max_tokens=max_tokens,
                 max_tokens=max_tokens,
                 temperature=0.1,
                 messages=[
@@ -2375,6 +2630,8 @@ Return ONLY the JSON array of ALL INCI ingredient names from the complete list, 
                     "source": "url_extraction",
                     "product_name": None,
                     "product_image": scrape_result.get("product_image")
+                    "product_name": None,
+                    "product_image": scrape_result.get("product_image")
                 }
             
             # If extraction failed, check if we got meaningful scraped text
@@ -2420,6 +2677,8 @@ Return ONLY the JSON array of ALL INCI ingredient names from the complete list, 
                 "source": "url_extraction",
                 "product_name": product_name,
                 "product_image": scrape_result.get("product_image")
+                "product_name": product_name,
+                "product_image": scrape_result.get("product_image")
             }
             
         except Exception as e:
@@ -2437,6 +2696,8 @@ Return ONLY the JSON array of ALL INCI ingredient names from the complete list, 
                             "url": url,
                             "is_estimated": True,
                             "source": "ai_search",
+                            "product_name": product_name,
+                            "product_image": None
                             "product_name": product_name,
                             "product_image": None
                         }
