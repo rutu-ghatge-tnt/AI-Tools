@@ -1,5 +1,6 @@
-# Nginx configuration for capi.skintruth.in
+# Nginx configuration for capi.skintruth.in (Simple CORS version)
 # Place this in: /etc/nginx/sites-available/capi.skintruth.in
+# Then create symlink: ln -s /etc/nginx/sites-available/capi.skintruth.in /etc/nginx/sites-enabled/
 
 # HTTP server - redirect to HTTPS
 server {
@@ -37,7 +38,7 @@ server {
     location / {
         # Handle preflight OPTIONS requests with CORS
         if ($request_method = 'OPTIONS') {
-            # Determine allowed origin (matching FastAPI CORS config)
+            # Determine allowed origin
             set $cors_origin "";
             if ($http_origin ~* "^https://tt\.skintruth\.in$") { set $cors_origin $http_origin; }
             if ($http_origin ~* "^https://capi\.skintruth\.in$") { set $cors_origin $http_origin; }
@@ -88,7 +89,7 @@ server {
         proxy_request_buffering off;
         
         # CORS headers for actual requests (FastAPI should handle this, but adding as fallback)
-        # Determine allowed origin for response (matching FastAPI CORS config)
+        # Determine allowed origin for response
         set $cors_origin "";
         if ($http_origin ~* "^https://tt\.skintruth\.in$") { set $cors_origin $http_origin; }
         if ($http_origin ~* "^https://capi\.skintruth\.in$") { set $cors_origin $http_origin; }
