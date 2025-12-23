@@ -167,7 +167,7 @@ def custom_openapi():
             "description": "Production server" if node_env == "production" else "Development server",
         },
         {
-            "url": "https://metaverse.skinbb.com",
+            "url": "https://capi.skinbb.com",
             "description": "Production server",
         },
         {
