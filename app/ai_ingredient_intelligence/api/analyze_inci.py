@@ -2777,28 +2777,13 @@ async def compare_products(
         # Parse products from payload
         if "products" not in payload or not payload["products"]:
             raise HTTPException(status_code=400, detail="Missing required field: 'products' array")
-        # Parse products from payload
-        if "products" not in payload or not payload["products"]:
-            raise HTTPException(status_code=400, detail="Missing required field: 'products' array")
         
         products_list = payload["products"]
         if not isinstance(products_list, list):
             raise HTTPException(status_code=400, detail="products must be an array")
         if len(products_list) < 2:
             raise HTTPException(status_code=400, detail="At least 2 products are required for comparison")
-        products_list = payload["products"]
-        if not isinstance(products_list, list):
-            raise HTTPException(status_code=400, detail="products must be an array")
-        if len(products_list) < 2:
-            raise HTTPException(status_code=400, detail="At least 2 products are required for comparison")
         
-        # Validate all products
-        for i, product in enumerate(products_list):
-            if "input" not in product or "input_type" not in product:
-                raise HTTPException(status_code=400, detail=f"Product {i+1} is missing 'input' or 'input_type' field")
-            product["input_type"] = product["input_type"].lower()
-            if product["input_type"] not in ["url", "inci"]:
-                raise HTTPException(status_code=400, detail=f"Product {i+1} input_type must be 'url' or 'inci'")
         # Validate all products
         for i, product in enumerate(products_list):
             if "input" not in product or "input_type" not in product:
@@ -2874,15 +2859,8 @@ async def compare_products(
             if product_scraper != scraper_instance and product_scraper:
                 try:
                     await product_scraper.close()
-                    await product_scraper.close()
                 except:
                     pass
-                # Clean up scraper if we created a new one
-                if product_scraper != scraper_instance and product_scraper:
-                    try:
-                        await product_scraper.close()
-                    except:
-                        pass
             
             return product_data
         
@@ -2894,7 +2872,6 @@ async def compare_products(
             for idx, product in enumerate(products_list)
         ]
         # Wait for all products to be processed
-        processed_products = await asyncio.gather(*tasks)
         processed_products = await asyncio.gather(*tasks)
         
         # If scraper wasn't initialized but we need Claude for comparison
@@ -3060,16 +3037,6 @@ Return the JSON comparison:"""
                 # Fallback: create empty product data
                 all_products_data.append({})
         
-        # Extract product data from Claude response
-        all_products_data = []
-        for idx in range(len(processed_products)):
-            product_key = f"product{idx+1}"
-            if product_key in comparison_data:
-                all_products_data.append(comparison_data[product_key])
-            else:
-                # Fallback: create empty product data
-                all_products_data.append({})
-        
         # Helper function to determine boolean attributes from INCI list
         def determine_attributes_from_inci(inci_list: List[str], text: str = "") -> Dict[str, Optional[bool]]:
             """Determine boolean attributes from INCI ingredients and text"""
@@ -3122,36 +3089,6 @@ Return the JSON comparison:"""
             
             return attributes
         
-        # Build response with extracted text for all products
-        final_products_data = []
-        all_attrs = []
-        
-        for idx, product_data in enumerate(processed_products):
-            claude_product_data = all_products_data[idx] if idx < len(all_products_data) else {}
-            
-            # Merge with actual INCI if we extracted it (prefer our extraction if available)
-            final_inci = claude_product_data.get("inci", []) if claude_product_data.get("inci") else product_data["inci"]
-            claude_product_data["inci"] = final_inci
-            
-            # Add extracted text
-            claude_product_data["extracted_text"] = product_data["text"]
-            
-            # Add selected_method (input_type) and url from original request
-            original_product = products_list[idx]
-            claude_product_data["selected_method"] = original_product.get("input_type", "inci")
-            claude_product_data["url"] = product_data.get("url_context") if original_product.get("input_type") == "url" else None
-            
-            # Fallback: Determine boolean attributes from INCI if Claude didn't extract them
-            attrs = determine_attributes_from_inci(final_inci, product_data["text"])
-            all_attrs.append(attrs)
-            
-            # Update attributes only if they're null in Claude's response
-            for attr in ["sulphate_free", "paraben_free", "fragrance_free"]:
-                if claude_product_data.get(attr) is None and attrs.get(attr) is not None:
-                    claude_product_data[attr] = attrs[attr]
-                    print(f"Fallback: Set product{idx+1}.{attr} = {attrs[attr]} from INCI analysis")
-            
-            final_products_data.append(claude_product_data)
         # Build response with extracted text for all products
         final_products_data = []
         all_attrs = []
@@ -3295,12 +3232,6 @@ CRITICAL: NEVER use null. Always provide a value (even if it's "Unknown" for tex
                     json_end = fill_content.rfind('}') + 1
                     json_str = fill_content[json_start:json_end]
                     fill_data = json.loads(json_str)
-                fill_content = fill_response.content[0].text.strip()
-                if '{' in fill_content and '}' in fill_content:
-                    json_start = fill_content.find('{')
-                    json_end = fill_content.rfind('}') + 1
-                    json_str = fill_content[json_start:json_end]
-                    fill_data = json.loads(json_str)
                     
                     # Merge filled fields into product_data
                     for field in missing_fields:
@@ -3310,14 +3241,8 @@ CRITICAL: NEVER use null. Always provide a value (even if it's "Unknown" for tex
                                 if isinstance(fill_data[field], list) and len(fill_data[field]) > 0:
                                     product_data[field] = fill_data[field]
                                     print(f"✓ Filled product{product_num}.{field} with {len(fill_data[field])} items")
-                                if isinstance(fill_data[field], list) and len(fill_data[field]) > 0:
-                                    product_data[field] = fill_data[field]
-                                    print(f"✓ Filled product{product_num}.{field} with {len(fill_data[field])} items")
                             # Handle boolean fields - never allow null
                             elif field in ["cruelty_free", "sulphate_free", "paraben_free", "vegan", "organic", "fragrance_free", "non_comedogenic", "hypoallergenic"]:
-                                if fill_data[field] is not None:
-                                    product_data[field] = fill_data[field]
-                                    print(f"✓ Filled product{product_num}.{field} = {fill_data[field]}")
                                 if fill_data[field] is not None:
                                     product_data[field] = fill_data[field]
                                     print(f"✓ Filled product{product_num}.{field} = {fill_data[field]}")
@@ -3326,22 +3251,10 @@ CRITICAL: NEVER use null. Always provide a value (even if it's "Unknown" for tex
                                 if fill_data[field] and fill_data[field] != "null":
                                     product_data[field] = fill_data[field]
                                     print(f"✓ Filled product{product_num}.{field} = {fill_data[field]}")
-                                if fill_data[field] and fill_data[field] != "null":
-                                    product_data[field] = fill_data[field]
-                                    print(f"✓ Filled product{product_num}.{field} = {fill_data[field]}")
             except Exception as e:
                 print(f"Warning: Failed to fill missing fields for Product {product_num}: {e}")
             
             return product_data
-        
-        # Fill missing fields for all products in parallel
-        print(f"Filling missing fields for {len(final_products_data)} products in parallel...")
-        fill_tasks = [
-            fill_missing_fields_for_product(idx, product_data, processed_products[idx], claude_client, model_name)
-            for idx, product_data in enumerate(final_products_data)
-        ]
-        # Wait for all fill operations to complete
-        final_products_data = await asyncio.gather(*fill_tasks)
         
         # Fill missing fields for all products in parallel
         print(f"Filling missing fields for {len(final_products_data)} products in parallel...")
@@ -3385,24 +3298,10 @@ CRITICAL: NEVER use null. Always provide a value (even if it's "Unknown" for tex
         # Final pass: Ensure no null values remain for all products
         for idx, product_data in enumerate(final_products_data):
             ensure_no_nulls(product_data, idx + 1, all_attrs[idx])
-        # Final pass: Ensure no null values remain for all products
-        for idx, product_data in enumerate(final_products_data):
-            ensure_no_nulls(product_data, idx + 1, all_attrs[idx])
         
-        # Calculate processing time
         # Calculate processing time
         processing_time = time.time() - start
         
-        # Convert to ProductComparisonItem objects
-        product_items = [ProductComparisonItem(**product_data) for product_data in final_products_data]
-        
-        # Build response
-        response_data = {
-            "products": product_items,
-            "processing_time": processing_time
-        }
-        
-        return CompareProductsResponse(**response_data)
         # Convert to ProductComparisonItem objects
         product_items = [ProductComparisonItem(**product_data) for product_data in final_products_data]
         
