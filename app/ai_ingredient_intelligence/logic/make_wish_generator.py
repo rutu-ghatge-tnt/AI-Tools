@@ -881,37 +881,37 @@ async def validate_and_enrich_ingredients_with_url_fallback(
             
             # Match scraped ingredients with missing ones
             for missing_ing in missing_ingredients:
-                    missing_name = missing_ing.get("ingredient_name", "").lower().strip()
-                    missing_inci = missing_ing.get("inci_name", "").lower().strip()
-                    
-                    # Check if this ingredient appears in scraped list
-                    found_in_scraped = False
-                    matched_scraped_name = None
-                    
-                    # Try exact match first
-                    if missing_name in scraped_normalized:
-                        found_in_scraped = True
-                        matched_scraped_name = scraped_normalized[missing_name]
-                    elif missing_inci and missing_inci in scraped_normalized:
-                        found_in_scraped = True
-                        matched_scraped_name = scraped_normalized[missing_inci]
-                    else:
-                        # Try partial matching - check if key words match
-                        missing_words = missing_name.split() if missing_name else []
-                        if missing_words:
-                            missing_key = ' '.join(missing_words[:2]) if len(missing_words) > 1 else missing_words[0]
-                            if missing_key in scraped_normalized:
-                                found_in_scraped = True
-                                matched_scraped_name = scraped_normalized[missing_key]
-                            else:
-                                # Check if any scraped ingredient contains the missing ingredient name or vice versa
-                                for scraped_lower, scraped_original in scraped_normalized.items():
-                                    if (missing_name and (missing_name in scraped_lower or scraped_lower in missing_name)) or \
-                                       (missing_inci and (missing_inci in scraped_lower or scraped_lower in missing_inci)):
-                                        found_in_scraped = True
-                                        matched_scraped_name = scraped_original
-                                        break
-                    
+                missing_name = missing_ing.get("ingredient_name", "").lower().strip()
+                missing_inci = missing_ing.get("inci_name", "").lower().strip()
+                
+                # Check if this ingredient appears in scraped list
+                found_in_scraped = False
+                matched_scraped_name = None
+                
+                # Try exact match first
+                if missing_name in scraped_normalized:
+                    found_in_scraped = True
+                    matched_scraped_name = scraped_normalized[missing_name]
+                elif missing_inci and missing_inci in scraped_normalized:
+                    found_in_scraped = True
+                    matched_scraped_name = scraped_normalized[missing_inci]
+                else:
+                    # Try partial matching - check if key words match
+                    missing_words = missing_name.split() if missing_name else []
+                    if missing_words:
+                        missing_key = ' '.join(missing_words[:2]) if len(missing_words) > 1 else missing_words[0]
+                        if missing_key in scraped_normalized:
+                            found_in_scraped = True
+                            matched_scraped_name = scraped_normalized[missing_key]
+                        else:
+                            # Check if any scraped ingredient contains the missing ingredient name or vice versa
+                            for scraped_lower, scraped_original in scraped_normalized.items():
+                                if (missing_name and (missing_name in scraped_lower or scraped_lower in missing_name)) or \
+                                   (missing_inci and (missing_inci in scraped_lower or scraped_lower in missing_inci)):
+                                    found_in_scraped = True
+                                    matched_scraped_name = scraped_original
+                                    break
+                
                 if found_in_scraped:
                     # Update ingredient with scraped information
                     missing_ing["found_via_url"] = True
