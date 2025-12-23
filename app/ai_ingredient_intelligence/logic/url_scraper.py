@@ -16,7 +16,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, WebDriverException
 from webdriver_manager.chrome import ChromeDriverManager
 from bs4 import BeautifulSoup
-from anthropic import Anthropic
+from anthropic import Anthropic, APIError, APIStatusError, BadRequestError, RateLimitError
 import os
 
 
@@ -418,12 +418,67 @@ class URLScraper:
                     
                     # Get brand name - usually before product name or in breadcrumbs
                     try:
-                        brand_elements = driver.find_elements(By.CSS_SELECTOR, "[class*='brand'], [class*='Brand'], a[href*='/brand/']")
-                        for elem in brand_elements:
-                            text = elem.text.strip()
-                            if text and len(text) > 2 and len(text) < 50:
-                                product_info.append(f"Brand: {text}")
-                                break
+                        # Try multiple selectors for brand name on Nykaa
+                        brand_selectors = [
+                            "[class*='brand']",
+                            "[class*='Brand']",
+                            "a[href*='/brand/']",
+                            "[data-testid*='brand']",
+                            "[class*='seller']",
+                            "[class*='vendor']",
+                            # Try to find brand in breadcrumbs
+                            "nav[class*='breadcrumb'] a",
+                            "[class*='breadcrumb'] a",
+                            # Try to find brand link in product header
+                            "h1 ~ * a[href*='/brand/']",
+                            "h1 ~ * [class*='brand']",
+                        ]
+                        
+                        brand_found = False
+                        for selector in brand_selectors:
+                            try:
+                                brand_elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                                for elem in brand_elements:
+                                    text = elem.text.strip()
+                                    # Filter out common non-brand text
+                                    if (text and len(text) > 2 and len(text) < 50 and 
+                                        text.lower() not in ['brand', 'by', 'from', 'seller', 'vendor', 'shop', 'store']):
+                                        product_info.append(f"Brand: {text}")
+                                        brand_found = True
+                                        break
+                                if brand_found:
+                                    break
+                            except:
+                                continue
+                        
+                        # If brand not found, try to extract from product name (first word before common separators)
+                        if not brand_found:
+                            try:
+                                # Get product name first
+                                product_name_elem = None
+                                for selector in product_selectors:
+                                    try:
+                                        elems = driver.find_elements(By.CSS_SELECTOR, selector)
+                                        if elems:
+                                            product_name_elem = elems[0]
+                                            break
+                                    except:
+                                        continue
+                                
+                                if product_name_elem:
+                                    product_name_text = product_name_elem.text.strip()
+                                    # Try to extract brand from product name (usually first word or words before "In", "With", etc.)
+                                    # Pattern: "d'you In My Defence..." -> brand is "d'you"
+                                    import re
+                                    # Match first word(s) that could be brand (allowing apostrophes and lowercase)
+                                    brand_match = re.match(r"^([a-zA-Z'][a-zA-Z'\s&]+?)(?:\s+(?:In|With|For|By|The)\s+|$)", product_name_text, re.IGNORECASE)
+                                    if brand_match:
+                                        potential_brand = brand_match.group(1).strip()
+                                        # Only use if it's short (likely a brand name, not full product name)
+                                        if len(potential_brand) < 30 and len(potential_brand) > 1:
+                                            product_info.append(f"Brand: {potential_brand}")
+                            except:
+                                pass
                     except:
                         pass
                     
@@ -1565,14 +1620,9 @@ class URLScraper:
             # Extract product image
             product_image = await self.extract_product_image(driver, url)
             
-            # Extract product image
-            product_image = await self.extract_product_image(driver, url)
-            
             return {
                 "extracted_text": extracted_text,
                 "platform": platform,
-                "url": url,
-                "product_image": product_image
                 "url": url,
                 "product_image": product_image
             }
@@ -2100,12 +2150,8 @@ Product name:"""
             # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
             max_tokens = 4096 if "claude-3-opus-20240229" in model_name else 8192
             
-            # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
-            max_tokens = 4096 if "claude-3-opus-20240229" in model_name else 8192
-            
             response = claude_client.messages.create(
                 model=model_name,
-                max_tokens=max_tokens,
                 max_tokens=max_tokens,
                 temperature=0.1,
                 messages=[{"role": "user", "content": prompt}]
@@ -2181,12 +2227,8 @@ Return only the JSON array of INCI names:"""
             # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
             max_tokens = 4096 if "claude-3-opus-20240229" in model_name else 8192
             
-            # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
-            max_tokens = 4096 if "claude-3-opus-20240229" in model_name else 8192
-            
             response = claude_client.messages.create(
                 model=model_name,
-                max_tokens=max_tokens,
                 max_tokens=max_tokens,
                 temperature=0.2,
                 messages=[{"role": "user", "content": prompt}]
@@ -2412,19 +2454,14 @@ Return ONLY the JSON array of ALL INCI ingredient names from the complete list, 
             claude_client = self._get_claude_client()
             
             # Call Claude API - use config model (defaults to claude-sonnet-4-5-20250929)
-            # Call Claude API - use config model (defaults to claude-sonnet-4-5-20250929)
             from app.config import CLAUDE_MODEL
             model_name = CLAUDE_MODEL if CLAUDE_MODEL else (os.getenv("CLAUDE_MODEL") or os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929")
             
             # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
             max_tokens = 4096 if "claude-3-opus-20240229" in model_name else 8192
             
-            # Set max_tokens based on model (claude-3-opus-20240229 has max 4096)
-            max_tokens = 4096 if "claude-3-opus-20240229" in model_name else 8192
-            
             response = claude_client.messages.create(
                 model=model_name,
-                max_tokens=max_tokens,
                 max_tokens=max_tokens,
                 temperature=0.1,
                 messages=[
@@ -2596,8 +2633,28 @@ Return ONLY the JSON array of ALL INCI ingredient names from the complete list, 
             except json.JSONDecodeError as e:
                 raise Exception(f"Failed to parse Claude response as JSON: {str(e)}")
                 
+        except (BadRequestError, RateLimitError, APIStatusError, APIError) as e:
+            error_msg = str(e)
+            # Check if it's an API usage limit error
+            if "usage limits" in error_msg.lower() or "usage limit" in error_msg.lower() or "regain access" in error_msg.lower():
+                # Extract the date from the error message if available
+                import re
+                date_match = re.search(r'(\d{4}-\d{2}-\d{2})', error_msg)
+                date_str = f" on {date_match.group(1)}" if date_match else ""
+                raise Exception(f"Claude API usage limit reached. You will regain access{date_str}. Please try again later or upgrade your API plan.")
+            elif isinstance(e, RateLimitError):
+                raise Exception("Claude API rate limit exceeded. Please wait a moment and try again.")
+            else:
+                raise Exception(f"Claude API error: {error_msg}")
         except Exception as e:
-            raise Exception(f"Failed to extract ingredients with Claude: {str(e)}")
+            error_msg = str(e)
+            # Check for API usage limit in generic exception messages
+            if "usage limits" in error_msg.lower() or "usage limit" in error_msg.lower() or "regain access" in error_msg.lower():
+                import re
+                date_match = re.search(r'(\d{4}-\d{2}-\d{2})', error_msg)
+                date_str = f" on {date_match.group(1)}" if date_match else ""
+                raise Exception(f"Claude API usage limit reached. You will regain access{date_str}. Please try again later or upgrade your API plan.")
+            raise Exception(f"Failed to extract ingredients with Claude: {error_msg}")
     
     async def extract_ingredients_from_url(self, url: str) -> Dict[str, any]:
         """
@@ -2628,8 +2685,6 @@ Return ONLY the JSON array of ALL INCI ingredient names from the complete list, 
                     "url": url,
                     "is_estimated": False,
                     "source": "url_extraction",
-                    "product_name": None,
-                    "product_image": scrape_result.get("product_image")
                     "product_name": None,
                     "product_image": scrape_result.get("product_image")
                 }
@@ -2677,9 +2732,7 @@ Return ONLY the JSON array of ALL INCI ingredient names from the complete list, 
                 "source": "url_extraction",
                 "product_name": product_name,
                 "product_image": scrape_result.get("product_image")
-                "product_name": product_name,
-                "product_image": scrape_result.get("product_image")
-            }
+                }
             
         except Exception as e:
             # If scraping failed, try to detect product from URL only
@@ -2696,8 +2749,6 @@ Return ONLY the JSON array of ALL INCI ingredient names from the complete list, 
                             "url": url,
                             "is_estimated": True,
                             "source": "ai_search",
-                            "product_name": product_name,
-                            "product_image": None
                             "product_name": product_name,
                             "product_image": None
                         }

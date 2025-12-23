@@ -279,6 +279,11 @@ class FormulationReportResponse(BaseModel):
     expected_benefits_analysis: List[ReportTableRow] = Field(default_factory=list, description="Expected benefits analysis table (if provided)")
     raw_text: Optional[str] = Field(None, description="Raw report text for reference")
 
+class AnalyzeInciWithReportResponse(BaseModel):
+    """Combined response schema for merged analyze_inci and formulation_report endpoints"""
+    analysis: AnalyzeInciResponse = Field(..., description="INCI ingredient analysis results")
+    formulation_report: FormulationReportResponse = Field(..., description="Formulation report results")
+
 class SaveDecodeHistoryRequest(BaseModel):
     """Request schema for saving decode history"""
     name: str = Field(..., description="Name for this decode")

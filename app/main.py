@@ -68,12 +68,8 @@ except ImportError as e:
 from fastapi.middleware.cors import CORSMiddleware
 from app.ai_ingredient_intelligence.db.collections import distributor_col
 from fastapi.openapi.utils import get_openapi
-from fastapi.openapi.utils import get_openapi
 
 app = FastAPI(
-    title="SkinBB API Documentation",
-    description="API documentation for SkinBB - An AI assistant for skincare queries with document retrieval and web search fallback",
-    version="1.0.0",
     title="SkinBB API Documentation",
     description="API documentation for SkinBB - An AI assistant for skincare queries with document retrieval and web search fallback",
     version="1.0.0",
@@ -222,9 +218,6 @@ app.add_middleware(
         "http://localhost:3000",
         "http://localhost:8000",
         "http://localhost:8501",
-        "https://metaverse.skinbb.com",
-        "https://formulynx.in",
-        "https://www.formulynx.in"
         "https://metaverse.skinbb.com",
         "https://formulynx.in",
         "https://www.formulynx.in"

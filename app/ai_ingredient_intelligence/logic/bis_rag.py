@@ -267,9 +267,13 @@ async def get_bis_cautions_for_ingredients(ingredient_names: List[str]) -> Dict[
     try:
         retriever = get_bis_retriever()
         if retriever is None:
+            print("⚠️ WARNING: BIS retriever is None - BIS vectorstore may not be initialized or PDFs may be missing")
+            print("   Check if BIS PDF files exist in the data directory and vectorstore is properly initialized")
             return {}
     except Exception as e:
-        print(f"WARNING: BIS retriever not available: {e}")
+        print(f"⚠️ WARNING: BIS retriever not available: {e}")
+        import traceback
+        traceback.print_exc()
         return {}
     
     cautions_map = {}
@@ -287,8 +291,17 @@ async def get_bis_cautions_for_ingredients(ingredient_names: List[str]) -> Dict[
     
     for ingredient in ingredient_names:
         try:
+            # Normalize ingredient name (strip whitespace, handle empty)
+            ingredient = ingredient.strip() if ingredient else ""
+            if not ingredient:
+                continue
+            
+            # Extract main word(s) for fallback searches (e.g., "Salicylic" from "Salicylic Acid")
+            ingredient_words = ingredient.split()
+            main_word = ingredient_words[0] if ingredient_words else ingredient
+            
             # Use multiple search queries for better coverage - be more specific
-            # Try exact ingredient name first, then variations
+            # Try exact ingredient name first, then variations, then main word
             queries = [
                 f"{ingredient}",
                 f"{ingredient} caution",
@@ -306,6 +319,15 @@ async def get_bis_cautions_for_ingredients(ingredient_names: List[str]) -> Dict[
                 f"{ingredient} instruction",
                 f"{ingredient} requirement"
             ]
+            
+            # Add fallback queries with main word if ingredient has multiple words
+            if len(ingredient_words) > 1 and main_word.lower() not in ['water', 'aqua']:
+                queries.extend([
+                    f"{main_word}",
+                    f"{main_word} caution",
+                    f"{main_word} limit",
+                    f"{main_word} maximum"
+                ])
             
             all_docs = []
             seen_doc_ids = set()
@@ -325,6 +347,12 @@ async def get_bis_cautions_for_ingredients(ingredient_names: List[str]) -> Dict[
                     print(f"Warning: Error in query '{query}': {e}")
                     continue
             
+            # Debug: Log retrieval stats
+            if len(all_docs) == 0:
+                print(f"⚠️ No documents retrieved for '{ingredient}' - BIS retriever may not have relevant data")
+            else:
+                print(f"🔍 Retrieved {len(all_docs)} document chunks for '{ingredient}'")
+            
             # Extract relevant information from all documents
             cautions = []
             ingredient_lower = ingredient.lower()
@@ -336,76 +364,116 @@ async def get_bis_cautions_for_ingredients(ingredient_names: List[str]) -> Dict[
                 content = doc.page_content
                 content_lower = content.lower()
                 
+                # Check if document contains the ingredient (at least somewhere in the document)
+                doc_mentions_ingredient = ingredient_lower in content_lower
+                
                 # Check if document contains caution-related information
-                if any(keyword in content_lower for keyword in caution_keywords):
+                has_caution_keywords = any(keyword in content_lower for keyword in caution_keywords)
+                
+                if has_caution_keywords:
                     # PRIORITY: Extract sentences/paragraphs with NUMBERS (limits, percentages, concentrations)
-                    # Strategy 1: Extract complete sentences with numbers and ingredient mention
+                    # Strategy 1: Extract complete sentences with numbers and caution keywords
+                    # If document mentions ingredient, prioritize sentences with ingredient; otherwise include all caution sentences
                     sentences = content.split('.')
                     for sentence in sentences:
                         sentence_clean = sentence.strip()
-                        if sentence_clean and ingredient_lower in sentence_clean.lower():
-                            # Prioritize sentences with numbers (limits, percentages)
-                            has_number = bool(number_pattern.search(sentence_clean))
-                            has_caution_keyword = any(keyword in sentence_clean.lower() for keyword in caution_keywords)
+                        if not sentence_clean:
+                            continue
                             
-                            if has_caution_keyword:
-                                # If it has a number, prioritize it; otherwise include if it has caution keywords
+                        sentence_lower = sentence_clean.lower()
+                        has_number = bool(number_pattern.search(sentence_clean))
+                        has_caution_keyword = any(keyword in sentence_lower for keyword in caution_keywords)
+                        mentions_ingredient = ingredient_lower in sentence_lower
+                        
+                        # Include if:
+                        # 1. Has caution keyword AND mentions ingredient (high priority)
+                        # 2. Has caution keyword AND has number AND document mentions ingredient (medium priority)
+                        # 3. Has caution keyword AND has number (lower priority, but still relevant)
+                        if has_caution_keyword:
+                            if mentions_ingredient:
+                                # Highest priority: ingredient mentioned + caution keyword
                                 if has_number:
-                                    # Ensure sentence is complete and includes the number
-                                    if len(sentence_clean) > 20:  # Avoid very short fragments
-                                        cautions.insert(0, sentence_clean)  # Insert at beginning (higher priority)
+                                    if len(sentence_clean) > 20:
+                                        cautions.insert(0, sentence_clean)  # Highest priority
                                 else:
+                                    cautions.insert(0, sentence_clean)  # High priority
+                            elif has_number and doc_mentions_ingredient:
+                                # Medium priority: number + caution + ingredient in doc
+                                if len(sentence_clean) > 20:
+                                    cautions.append(sentence_clean)
+                            elif has_number:
+                                # Lower priority: number + caution (might be relevant)
+                                if len(sentence_clean) > 20:
                                     cautions.append(sentence_clean)
                     
                     # Strategy 2: Extract lines with numbers (for structured documents like tables)
                     lines = content.split('\n')
                     for line in lines:
                         line_clean = line.strip()
-                        if line_clean and ingredient_lower in line_clean.lower():
-                            has_number = bool(number_pattern.search(line_clean))
-                            has_caution_keyword = any(keyword in line_clean.lower() for keyword in caution_keywords)
+                        if not line_clean:
+                            continue
                             
-                            if has_caution_keyword:
+                        line_lower = line_clean.lower()
+                        has_number = bool(number_pattern.search(line_clean))
+                        has_caution_keyword = any(keyword in line_lower for keyword in caution_keywords)
+                        mentions_ingredient = ingredient_lower in line_lower
+                        
+                        if has_caution_keyword:
+                            if mentions_ingredient:
                                 if has_number:
-                                    if len(line_clean) > 15:  # Avoid very short fragments
-                                        cautions.insert(0, line_clean)  # Insert at beginning (higher priority)
+                                    if len(line_clean) > 15:
+                                        cautions.insert(0, line_clean)
                                 else:
+                                    cautions.insert(0, line_clean)
+                            elif has_number and doc_mentions_ingredient:
+                                if len(line_clean) > 15:
+                                    cautions.append(line_clean)
+                            elif has_number:
+                                if len(line_clean) > 15:
                                     cautions.append(line_clean)
                     
                     # Strategy 3: Extract paragraphs with numbers
                     paragraphs = content.split('\n\n')
                     for para in paragraphs:
                         para_clean = para.strip()
-                        if para_clean and ingredient_lower in para_clean.lower():
-                            has_number = bool(number_pattern.search(para_clean))
-                            has_caution_keyword = any(keyword in para_clean.lower() for keyword in caution_keywords)
+                        if not para_clean:
+                            continue
                             
-                            if has_caution_keyword:
+                        para_lower = para_clean.lower()
+                        has_number = bool(number_pattern.search(para_clean))
+                        has_caution_keyword = any(keyword in para_lower for keyword in caution_keywords)
+                        mentions_ingredient = ingredient_lower in para_lower
+                        
+                        if has_caution_keyword:
+                            if mentions_ingredient:
                                 if has_number:
-                                    # If paragraph has numbers, prioritize it
-                                    if len(para_clean) < 500:  # Keep reasonable length
-                                        cautions.insert(0, para_clean)  # Insert at beginning
+                                    if len(para_clean) < 500:
+                                        cautions.insert(0, para_clean)
                                     else:
                                         # Split long paragraphs but keep sentences with numbers
                                         para_sentences = para_clean.split('.')
                                         for sent in para_sentences:
                                             sent_clean = sent.strip()
-                                            if sent_clean and ingredient_lower in sent_clean.lower():
+                                            if sent_clean and len(sent_clean) > 20:
                                                 if bool(number_pattern.search(sent_clean)):
-                                                    if len(sent_clean) > 20:
-                                                        cautions.insert(0, sent_clean)
+                                                    cautions.insert(0, sent_clean)
                                 else:
-                                    # Paragraph without numbers but has caution keywords
                                     if len(para_clean) < 300:
-                                        cautions.append(para_clean)
-                                    else:
-                                        # Split long paragraphs
-                                        para_sentences = para_clean.split('.')
-                                        for sent in para_sentences:
-                                            sent_clean = sent.strip()
-                                            if sent_clean and ingredient_lower in sent_clean.lower():
-                                                if any(keyword in sent_clean.lower() for keyword in caution_keywords):
-                                                    cautions.append(sent_clean)
+                                        cautions.insert(0, para_clean)
+                            elif has_number and doc_mentions_ingredient:
+                                if len(para_clean) < 500:
+                                    cautions.append(para_clean)
+                                else:
+                                    # Split long paragraphs
+                                    para_sentences = para_clean.split('.')
+                                    for sent in para_sentences:
+                                        sent_clean = sent.strip()
+                                        if sent_clean and len(sent_clean) > 20:
+                                            if bool(number_pattern.search(sent_clean)):
+                                                cautions.append(sent_clean)
+                            elif has_number:
+                                if len(para_clean) < 500:
+                                    cautions.append(para_clean)
             
             if cautions:
                 # Remove duplicates while preserving order, prioritizing cautions with numbers
@@ -448,10 +516,12 @@ async def get_bis_cautions_for_ingredients(ingredient_names: List[str]) -> Dict[
                 
                 is_common_ingredient = any(common in ingredient_lower for common in common_ingredients_no_generic_cautions)
                 
+                filtered_count = 0
                 for caution in unique_cautions:
                     # If caution mentions "column" but doesn't have actual numbers, try to find context
                     if 'column' in caution.lower() and not re.search(r'\d+\.?\d*', caution):
                         # Skip vague column references without numbers
+                        filtered_count += 1
                         continue
                     
                     # For common ingredients, filter out generic safety cautions unless they have numerical limits
@@ -474,19 +544,38 @@ async def get_bis_cautions_for_ingredients(ingredient_names: List[str]) -> Dict[
                         
                         # Skip generic safety cautions that don't have numerical limits
                         if has_generic_phrase and not has_numerical_limit:
+                            filtered_count += 1
                             continue
                     
                     # Ensure caution is meaningful (at least 15 characters - reduced threshold for better coverage)
                     if len(caution.strip()) >= 15:
                         cleaned_cautions.append(caution.strip())
+                    else:
+                        filtered_count += 1
+                
+                # Debug: Log filtering stats
+                if filtered_count > 0:
+                    print(f"   ℹ️ Filtered out {filtered_count} caution(s) (vague references, generic safety, or too short)")
                 
                 if cleaned_cautions:
                     # Limit to top 10 most relevant cautions to avoid overwhelming
                     final_cautions = cleaned_cautions[:10]
                     cautions_map[ingredient] = final_cautions
                     print(f"✅ Retrieved {len(final_cautions)} caution(s) for {ingredient} (from {len(all_docs)} documents)")
+                    # Debug: Show first caution preview
+                    if final_cautions:
+                        preview = final_cautions[0][:100] + "..." if len(final_cautions[0]) > 100 else final_cautions[0]
+                        print(f"   Preview: {preview}")
                 else:
                     print(f"⚠️ No valid cautions found for {ingredient} (searched {len(all_docs)} documents)")
+                    # Debug: Check if documents had caution keywords but were filtered out
+                    if all_docs:
+                        total_caution_keywords_found = 0
+                        for doc in all_docs[:3]:  # Check first 3 docs
+                            if any(keyword in doc.page_content.lower() for keyword in caution_keywords):
+                                total_caution_keywords_found += 1
+                        if total_caution_keywords_found > 0:
+                            print(f"   ⚠️ Found caution keywords in {total_caution_keywords_found} document(s) but no valid cautions extracted - may be filtered by cleanup logic")
         except Exception as e:
             print(f"WARNING: Error retrieving BIS cautions for {ingredient}: {e}")
             continue

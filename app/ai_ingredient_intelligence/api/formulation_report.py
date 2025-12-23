@@ -253,7 +253,6 @@ def validate_report_content(report_text: str, expected_ingredient_count: int = N
             
             # Stop counting when we hit the next section
             if in_table and line.strip() and line.startswith(('0)', '3)', '4)', '5)', '6)', '7)', '8)', '9)', '10)')):
-            if in_table and line.strip() and line.startswith(('0)', '3)', '4)', '5)', '6)', '7)', '8)', '9)', '10)')):
                 break
         
         # If we have an expected count, check if we're close
@@ -286,7 +285,6 @@ def clean_ai_response(text: str) -> str:
             # Find the first section header
             lines = text.split('\n')
             for i, line in enumerate(lines):
-                if line.strip().startswith('0) Executive Summary') or line.strip().startswith('1) Submitted INCI List'):
                 if line.strip().startswith('0) Executive Summary') or line.strip().startswith('1) Submitted INCI List'):
                     text = '\n'.join(lines[i:])
                     break
@@ -350,7 +348,6 @@ def parse_report_to_json(report_text: str) -> FormulationReportResponse:
         print("⚠️ WARNING: Empty report text provided to parse_report_to_json")
         return FormulationReportResponse(
             summary=None,
-            summary=None,
             inci_list=[],
             analysis_table=[],
             compliance_panel=[],
@@ -404,51 +401,6 @@ def parse_report_to_json(report_text: str) -> FormulationReportResponse:
             continue
         
         # Detect section headers
-        if line.startswith('0) Executive Summary'):
-            current_section = 'summary'
-            in_table = True
-            i += 1
-            # Skip header line if present
-            if i < len(lines) and '|' in lines[i]:
-                table_headers = [h.strip() for h in lines[i].split('|')]
-                i += 1
-            # Parse summary table rows
-            while i < len(lines) and not lines[i].strip().startswith('1)'):
-                line = lines[i].strip()
-                if '|' in line:
-                    cells = [cell.strip() for cell in line.split('|') if cell.strip()]
-                    if len(cells) >= 2:
-                        field_name = cells[0].strip().lower()
-                        field_value = cells[1].strip()
-                        
-                        # Map field names to summary data (case-insensitive matching)
-                        if 'formulation type' in field_name or 'formulation' in field_name and 'type' in field_name:
-                            summary_data["formulation_type"] = field_value
-                        elif 'key active' in field_name or ('active' in field_name and 'ingredient' in field_name):
-                            # Store as string (comma-separated)
-                            summary_data["key_active_ingredients"] = field_value
-                        elif 'primary benefit' in field_name or ('benefit' in field_name and 'primary' in field_name):
-                            # Store as string (comma-separated)
-                            summary_data["primary_benefits"] = field_value
-                        elif 'recommended ph' in field_name or 'ph range' in field_name or ('ph' in field_name and 'range' in field_name):
-                            # Extract just the pH range value (e.g., "5.0-6.5")
-                            import re
-                            ph_match = re.search(r'(\d+\.?\d*)\s*-\s*(\d+\.?\d*)', field_value)
-                            if ph_match:
-                                summary_data["recommended_ph_range"] = f"{ph_match.group(1)}-{ph_match.group(2)}"
-                            else:
-                                summary_data["recommended_ph_range"] = field_value
-                        elif 'compliance status' in field_name or ('compliance' in field_name and 'status' in field_name):
-                            summary_data["compliance_status"] = field_value
-                        elif 'critical concern' in field_name or ('concern' in field_name and 'critical' in field_name):
-                            # Store as string (comma-separated) or handle "None"
-                            if field_value.lower() in ['none', 'no concerns', 'no critical concerns', 'n/a', 'na']:
-                                summary_data["critical_concerns"] = "None"
-                            else:
-                                summary_data["critical_concerns"] = field_value
-                i += 1
-            continue
-        elif line.startswith('1) Submitted INCI List'):
         if line.startswith('0) Executive Summary'):
             current_section = 'summary'
             in_table = True
@@ -595,7 +547,6 @@ def parse_report_to_json(report_text: str) -> FormulationReportResponse:
                         j += 1
                         continue
                     # If next line starts a new section, stop
-                    if next_line.startswith(('0)', '1)', '2)', '3)', '4)', '5)', '6)', '7)', '8)', '9)', '10)')):
                     if next_line.startswith(('0)', '1)', '2)', '3)', '4)', '5)', '6)', '7)', '8)', '9)', '10)')):
                         break
                     # If next line is a complete table row (has | and enough columns), stop
@@ -799,7 +750,6 @@ def parse_report_to_json(report_text: str) -> FormulationReportResponse:
     
     return FormulationReportResponse(
         summary=summary_obj,
-        summary=summary_obj,
         inci_list=inci_list,
         analysis_table=analysis_table,
         compliance_panel=compliance_panel,
@@ -976,7 +926,6 @@ REFORMATTED CAUTIONS:"""
             # Debug: Check if all sections are present
             sections_found = []
             for i in range(0, 10):
-            for i in range(0, 10):
                 if f"{i})" in report_text:
                     sections_found.append(i)
             print(f"📋 Sections found in report: {sections_found}")
@@ -1016,10 +965,6 @@ REFORMATTED CAUTIONS:"""
     raise HTTPException(status_code=500, detail="Claude API not available. Please check your CLAUDE_API_KEY environment variable.")
 
 @router.post("/formulation-report-json", response_model=FormulationReportResponse)
-async def generate_report_json(
-    payload: FormulationReportRequest,
-    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
-):
 async def generate_report_json(
     payload: FormulationReportRequest,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
@@ -1075,11 +1020,6 @@ async def generate_report_json(
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")
 
 @router.post("/formulation-report")
-async def generate_report(
-    payload: FormulationReportRequest,
-    request: Request,
-    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
-):
 async def generate_report(
     payload: FormulationReportRequest,
     request: Request,
@@ -1260,7 +1200,6 @@ async def generate_report(
 
 @router.get("/formulation-report/status")
 async def get_report_status(current_user: dict = Depends(verify_jwt_token)):  # JWT token validation
-async def get_report_status(current_user: dict = Depends(verify_jwt_token)):  # JWT token validation
     """Get the status of the last generated report"""
     return {
         "has_report": bool(last_report["text"]),
@@ -1317,7 +1256,6 @@ Return the JSON object now:"""
         message = claude_client.messages.create(
             model="claude-3-opus-20240229",
             max_tokens=4096,  # Maximum allowed for claude-3-opus-20240229
-            max_tokens=4096,  # Maximum allowed for claude-3-opus-20240229
             temperature=0.3,
             messages=[
                 {"role": "user", "content": claude_prompt}
@@ -1357,10 +1295,6 @@ Return the JSON object now:"""
         raise HTTPException(status_code=500, detail=f"Error generating Presenton prompt: {str(e)}")
 
 @router.post("/formulation-report/ppt")
-async def generate_ppt(
-    body: dict = Body(...),
-    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
-):
 async def generate_ppt(
     body: dict = Body(...),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
@@ -1519,7 +1453,6 @@ async def generate_ppt(
 
 @router.post("/formulation-report/test-ppt")
 async def test_generate_ppt(current_user: dict = Depends(verify_jwt_token)):  # JWT token validation
-async def test_generate_ppt(current_user: dict = Depends(verify_jwt_token)):  # JWT token validation
     """Test endpoint to generate PPT with sample data - for Swagger testing"""
     # Sample formulation report data based on your example
     sample_report_data = FormulationReportResponse(
@@ -1567,7 +1500,6 @@ async def test_generate_ppt(current_user: dict = Depends(verify_jwt_token)):  # 
 
 @router.post("/formulation-report/test-pdf")
 async def test_generate_pdf(current_user: dict = Depends(verify_jwt_token)):  # JWT token validation
-async def test_generate_pdf(current_user: dict = Depends(verify_jwt_token)):  # JWT token validation
     """Test endpoint to generate PDF with sample data - for Swagger testing"""
     # Sample formulation report data based on your example
     sample_report_data = FormulationReportResponse(
@@ -1614,10 +1546,6 @@ async def test_generate_pdf(current_user: dict = Depends(verify_jwt_token)):  # 
     return await generate_pdf(body)
 
 @router.post("/formulation-report/pdf")
-async def generate_pdf(
-    body: dict = Body(...),
-    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
-):
 async def generate_pdf(
     body: dict = Body(...),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation

@@ -1,6 +1,7 @@
 import os
 import base64
 import io
+import re
 from typing import List, Optional, Tuple
 import fitz  # PyMuPDF for PDF processing
 from PIL import Image
@@ -8,6 +9,7 @@ import google.cloud.vision as vision
 from google.cloud import storage
 import tempfile
 import anthropic
+from anthropic import APIError, APIStatusError, BadRequestError, RateLimitError
 import json
 from app.config import CLAUDE_MODEL
 
@@ -148,8 +150,26 @@ Return only the JSON array:"""
             except json.JSONDecodeError as e:
                 raise Exception(f"Failed to parse Claude response as JSON: {str(e)}")
                 
+        except (BadRequestError, RateLimitError, APIStatusError, APIError) as e:
+            error_msg = str(e)
+            # Check if it's an API usage limit error
+            if "usage limits" in error_msg.lower() or "usage limit" in error_msg.lower() or "regain access" in error_msg.lower():
+                # Extract the date from the error message if available
+                date_match = re.search(r'(\d{4}-\d{2}-\d{2})', error_msg)
+                date_str = f" on {date_match.group(1)}" if date_match else ""
+                raise Exception(f"Claude API usage limit reached. You will regain access{date_str}. Please try again later or upgrade your API plan.")
+            elif isinstance(e, RateLimitError):
+                raise Exception("Claude API rate limit exceeded. Please wait a moment and try again.")
+            else:
+                raise Exception(f"Claude API error: {error_msg}")
         except Exception as e:
-            raise Exception(f"Failed to extract ingredients with Claude: {str(e)}")
+            error_msg = str(e)
+            # Check for API usage limit in generic exception messages
+            if "usage limits" in error_msg.lower() or "usage limit" in error_msg.lower() or "regain access" in error_msg.lower():
+                date_match = re.search(r'(\d{4}-\d{2}-\d{2})', error_msg)
+                date_str = f" on {date_match.group(1)}" if date_match else ""
+                raise Exception(f"Claude API usage limit reached. You will regain access{date_str}. Please try again later or upgrade your API plan.")
+            raise Exception(f"Failed to extract ingredients with Claude: {error_msg}")
     
     async def process_input(self, input_type: str, **kwargs) -> Tuple[List[str], str]:
         """Main method to process different input types and extract ingredients"""

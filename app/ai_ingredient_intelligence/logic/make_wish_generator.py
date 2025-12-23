@@ -15,6 +15,7 @@ STAGES:
 import os
 import json
 import re
+import asyncio
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 
@@ -345,6 +346,10 @@ RULE: Each ingredient above was specifically requested. You MUST either:
                               YOUR TASK
 ═══════════════════════════════════════════════════════════════════════════════
 
+⚠️ CRITICAL: This is a NEW formula being created from scratch. There is NO 
+   "original formula" or "previous formula". NEVER mention "original formula", 
+   "previous formula", "was this", "now it is", or any comparison language.
+
 1. ⭐ INCLUDE ALL hero ingredients (MANDATORY - not optional)
 
 2. ✓ INCLUDE ALL user-requested ingredients OR add warning explaining exclusion
@@ -354,6 +359,7 @@ RULE: Each ingredient above was specifically requested. You MUST either:
 4. 🔄 If substituting ANY requested ingredient:
    - Add explicit warning with category "substitution"
    - Explain why and what alternative was chosen
+   - NEVER say "original formula had X" - just state the substitution
 
 5. 📊 Select supporting ingredients (total 8-15) that deliver requested benefits
 
@@ -365,6 +371,7 @@ RULE: Each ingredient above was specifically requested. You MUST either:
    - No phantom ingredients (explained but not included)
    - Formula name includes the primary hero ingredient
    - user_request_validation section is complete and accurate
+   - NO mentions of "original formula" or "previous formula"
 
 9. 📄 Return complete JSON following the specified format
 
@@ -393,7 +400,9 @@ def generate_optimization_prompt(wish_data: dict, selected_ingredients: list) ->
     ])
     
     return f"""
-## OPTIMIZE FORMULA PERCENTAGES
+## OPTIMIZE FORMULA PERCENTAGES FOR NEW FORMULA
+
+⚠️ IMPORTANT: This is a NEW formula being created from scratch. There is NO "original formula" or "previous formula". Simply optimize percentages for this new formula. NEVER mention "original formula", "previous formula", "was this", "now it is", or any comparison language.
 
 ### PRODUCT DETAILS
 
@@ -430,7 +439,7 @@ def generate_optimization_prompt(wish_data: dict, selected_ingredients: list) ->
    - pH adjusters sufficient for target range
    - Consider ingredient interactions
 
-Return the optimized formula as JSON with exact percentages totaling 100.00%.
+Return the optimized formula as JSON with exact percentages totaling 100.00%. State what the percentages ARE, not what they were changed from.
 
 """
 
@@ -547,11 +556,9 @@ async def call_ai_with_claude(
     system_prompt: str,
     user_prompt: str,
     prompt_type: str = "general",
-    prompt_type: str = "general",
     max_retries: int = 3
 ) -> Dict[str, Any]:
     """
-    Call Claude API for Make a Wish pipeline with prompt caching support.
     Call Claude API for Make a Wish pipeline with prompt caching support.
     Uses Claude as per project preference.
     
@@ -561,11 +568,8 @@ async def call_ai_with_claude(
         prompt_type: Type of prompt for cache tracking (e.g., "ingredient_selection")
         max_retries: Maximum number of retry attempts
     
-    Args:
-        system_prompt: The system prompt (will be cached)
-        user_prompt: The user prompt (dynamic content)
-        prompt_type: Type of prompt for cache tracking (e.g., "ingredient_selection")
-        max_retries: Maximum number of retry attempts
+    Returns:
+        Dictionary containing AI response
     """
     
     if not claude_client:
@@ -665,70 +669,218 @@ async def call_ai_with_claude(
 
 
 # ============================================================================
+# INGREDIENT VALIDATION CACHE
+# ============================================================================
+
+# Cache for ingredient validation results to avoid repeated DB lookups
+_ingredient_validation_cache: Dict[str, Optional[Dict]] = {}
+
+def _get_cache_key(ingredient_name: str, inci_names: List[str]) -> str:
+    """Generate cache key for ingredient validation."""
+    inci_str = "|".join(sorted(inci_names)) if inci_names else ""
+    return f"{ingredient_name.lower().strip()}|{inci_str}"
+
+async def _check_ingredient_cached(ingredient_name: str, inci_names: List[str]) -> Optional[Dict]:
+    """Check ingredient in cache first, then database."""
+    cache_key = _get_cache_key(ingredient_name, inci_names)
+    
+    if cache_key in _ingredient_validation_cache:
+        return _ingredient_validation_cache[cache_key]
+    
+    from app.ai_ingredient_intelligence.logic.formula_generator import check_ingredient_exists_in_db
+    result = await check_ingredient_exists_in_db(ingredient_name, inci_names)
+    _ingredient_validation_cache[cache_key] = result
+    return result
+
+# ============================================================================
+# EARLY URL SCRAPING (OPTIMIZATION)
+# ============================================================================
+
+async def scrape_reference_url_early(reference_url: Optional[str]) -> Optional[Dict]:
+    """
+    Scrape reference URL early if provided, to inform ingredient selection.
+    This optimization allows us to use scraped ingredients during selection phase.
+    
+    Returns:
+        Dictionary with scraped ingredients and metadata, or None if URL not provided/failed
+    """
+    if not reference_url:
+        return None
+    
+    print(f"🔍 Early URL scraping from: {reference_url}")
+    try:
+        scraper = URLScraper()
+        extraction_result = await scraper.extract_ingredients_from_url(reference_url)
+        
+        if extraction_result and extraction_result.get("ingredients"):
+            scraped_count = len(extraction_result.get("ingredients", []))
+            print(f"✅ Early scrape: Found {scraped_count} ingredients from reference URL")
+            return extraction_result
+        else:
+            print(f"⚠️ Early scrape: No ingredients found in URL")
+            return None
+    except Exception as e:
+        print(f"⚠️ Early URL scraping failed (non-blocking): {e}")
+        return None
+
+# ============================================================================
+# PRE-VALIDATE HERO/MUST-HAVE INGREDIENTS (OPTIMIZATION)
+# ============================================================================
+
+async def pre_validate_required_ingredients(
+    hero_ingredients: List[str],
+    must_have_ingredients: List[str],
+    scraped_ingredients: Optional[List[str]] = None
+) -> Tuple[List[str], List[str], Dict[str, bool]]:
+    """
+    Pre-validate hero and must-have ingredients before AI selection.
+    This helps catch issues early and provides better context to AI.
+    
+    Returns:
+        Tuple of (valid_hero_ingredients, valid_must_have_ingredients, validation_map)
+    """
+    from app.ai_ingredient_intelligence.logic.formula_generator import check_ingredient_exists_in_db
+    
+    validation_map = {}
+    valid_hero = []
+    valid_must_have = []
+    
+    # Normalize scraped ingredients for matching
+    scraped_normalized = set()
+    if scraped_ingredients:
+        for ing in scraped_ingredients:
+            scraped_normalized.add(ing.lower().strip())
+            # Also add key words for partial matching
+            words = ing.lower().strip().split()
+            if len(words) > 1:
+                scraped_normalized.add(' '.join(words[:2]))
+    
+    # Validate hero ingredients
+    for hero in hero_ingredients:
+        hero_lower = hero.lower().strip()
+        # Check cache/database
+        db_result = await _check_ingredient_cached(hero, [])
+        is_valid = db_result is not None
+        
+        # Also check if it's in scraped ingredients
+        if not is_valid and scraped_ingredients:
+            is_valid = hero_lower in scraped_normalized or any(
+                hero_lower in scraped or scraped in hero_lower 
+                for scraped in scraped_normalized
+            )
+        
+        validation_map[hero] = is_valid
+        if is_valid:
+            valid_hero.append(hero)
+        else:
+            print(f"⚠️ Hero ingredient '{hero}' not found in database or reference URL")
+    
+    # Validate must-have ingredients
+    for must_have in must_have_ingredients:
+        must_have_lower = must_have.lower().strip()
+        # Check cache/database
+        db_result = await _check_ingredient_cached(must_have, [])
+        is_valid = db_result is not None
+        
+        # Also check if it's in scraped ingredients
+        if not is_valid and scraped_ingredients:
+            is_valid = must_have_lower in scraped_normalized or any(
+                must_have_lower in scraped or scraped in must_have_lower 
+                for scraped in scraped_normalized
+            )
+        
+        validation_map[must_have] = is_valid
+        if is_valid:
+            valid_must_have.append(must_have)
+        else:
+            print(f"⚠️ Must-have ingredient '{must_have}' not found in database or reference URL")
+    
+    return valid_hero, valid_must_have, validation_map
+
+# ============================================================================
 # INGREDIENT VALIDATION WITH URL SCRAPING
 # ============================================================================
 
 async def validate_and_enrich_ingredients_with_url_fallback(
     selected_ingredients: List[Dict],
-    reference_url: Optional[str] = None
+    reference_url: Optional[str] = None,
+    pre_scraped_data: Optional[Dict] = None
 ) -> Tuple[List[Dict], List[str]]:
     """
     Validate ingredients and use URL scraping if ingredients are not found.
+    Optimized to use pre-scraped data if available.
     
     Args:
         selected_ingredients: List of ingredients from AI selection
         reference_url: Optional URL to scrape for ingredient information
+        pre_scraped_data: Optional pre-scraped data from early URL scraping
         
     Returns:
         Tuple of (validated_ingredients, missing_ingredients)
     """
-    from app.ai_ingredient_intelligence.logic.formula_generator import check_ingredient_exists_in_db
-    
     validated_ingredients = []
     missing_ingredients = []
     url_scraped_ingredients = []
     
-    # First, check which ingredients are missing from database
+    # Use pre-scraped data if available, otherwise prepare to scrape
+    scraped_ingredients = None
+    if pre_scraped_data and pre_scraped_data.get("ingredients"):
+        scraped_ingredients = pre_scraped_data.get("ingredients", [])
+        print(f"✅ Using pre-scraped ingredients ({len(scraped_ingredients)} found)")
+    
+    # First, check which ingredients are missing from database (using cache)
     for ing in selected_ingredients:
         ingredient_name = ing.get("ingredient_name", "")
         inci_names = ing.get("inci_aliases", [])
         if ing.get("inci_name"):
             inci_names.insert(0, ing.get("inci_name"))
         
-        # Check if ingredient exists in database
-        db_ingredient = await check_ingredient_exists_in_db(ingredient_name, inci_names)
+        # Check if ingredient exists in database (with caching)
+        db_ingredient = await _check_ingredient_cached(ingredient_name, inci_names)
         
         if db_ingredient:
             validated_ingredients.append(ing)
         else:
             missing_ingredients.append(ing)
     
-    # If we have missing ingredients and a reference URL, try to scrape
-    if missing_ingredients and reference_url:
-        print(f"🔍 {len(missing_ingredients)} ingredients not found in database. Attempting URL scrape from: {reference_url}")
-        try:
-            scraper = URLScraper()
-            extraction_result = await scraper.extract_ingredients_from_url(reference_url)
+    # If we have missing ingredients, use pre-scraped data or scrape now
+    if missing_ingredients:
+        if scraped_ingredients:
+            # Use pre-scraped data
+            print(f"🔍 Validating {len(missing_ingredients)} missing ingredients against pre-scraped data")
+        elif reference_url:
+            # Scrape now (fallback if early scraping didn't happen)
+            print(f"🔍 {len(missing_ingredients)} ingredients not found in database. Attempting URL scrape from: {reference_url}")
+            try:
+                scraper = URLScraper()
+                extraction_result = await scraper.extract_ingredients_from_url(reference_url)
+                
+                if extraction_result and extraction_result.get("ingredients"):
+                    scraped_ingredients = extraction_result.get("ingredients", [])
+                    print(f"✅ Scraped {len(scraped_ingredients)} ingredients from URL")
+                else:
+                    scraped_ingredients = None
+            except Exception as e:
+                print(f"⚠️ Error scraping URL for ingredients: {e}")
+                scraped_ingredients = None
+        
+        # Process scraped ingredients if available
+        if scraped_ingredients:
+            # Normalize scraped ingredients for better matching
+            scraped_normalized = {}
+            for scraped_ing in scraped_ingredients:
+                scraped_lower = scraped_ing.lower().strip()
+                # Store both full name and key words for matching
+                scraped_normalized[scraped_lower] = scraped_ing
+                # Also store key words (first 2-3 words) for partial matching
+                words = scraped_lower.split()
+                if len(words) > 1:
+                    key_phrase = ' '.join(words[:2])
+                    if key_phrase not in scraped_normalized:
+                        scraped_normalized[key_phrase] = scraped_ing
             
-            if extraction_result and extraction_result.get("ingredients"):
-                scraped_ingredients = extraction_result.get("ingredients", [])
-                print(f"✅ Scraped {len(scraped_ingredients)} ingredients from URL")
-                
-                # Normalize scraped ingredients for better matching
-                scraped_normalized = {}
-                for scraped_ing in scraped_ingredients:
-                    scraped_lower = scraped_ing.lower().strip()
-                    # Store both full name and key words for matching
-                    scraped_normalized[scraped_lower] = scraped_ing
-                    # Also store key words (first 2-3 words) for partial matching
-                    words = scraped_lower.split()
-                    if len(words) > 1:
-                        key_phrase = ' '.join(words[:2])
-                        if key_phrase not in scraped_normalized:
-                            scraped_normalized[key_phrase] = scraped_ing
-                
-                # Match scraped ingredients with missing ones
-                for missing_ing in missing_ingredients:
+            # Match scraped ingredients with missing ones
+            for missing_ing in missing_ingredients:
                     missing_name = missing_ing.get("ingredient_name", "").lower().strip()
                     missing_inci = missing_ing.get("inci_name", "").lower().strip()
                     
@@ -760,27 +912,21 @@ async def validate_and_enrich_ingredients_with_url_fallback(
                                         matched_scraped_name = scraped_original
                                         break
                     
-                    if found_in_scraped:
-                        # Update ingredient with scraped information
-                        missing_ing["found_via_url"] = True
-                        missing_ing["source_url"] = reference_url
-                        missing_ing["scraped_ingredient_name"] = matched_scraped_name
-                        # If INCI name is missing, try to use the scraped name
-                        if not missing_ing.get("inci_name") and matched_scraped_name:
-                            missing_ing["inci_name"] = matched_scraped_name
-                        validated_ingredients.append(missing_ing)
-                        url_scraped_ingredients.append(missing_ing.get("ingredient_name"))
-                    else:
-                        print(f"⚠️ '{missing_ing.get('ingredient_name')}' not found in scraped ingredients from URL")
-                
-                if url_scraped_ingredients:
-                    print(f"✅ Validated {len(url_scraped_ingredients)} ingredients via URL scraping: {', '.join(url_scraped_ingredients)}")
-            else:
-                print(f"⚠️ Could not extract ingredients from URL: {reference_url}")
-        except Exception as e:
-            print(f"⚠️ Error scraping URL for ingredients: {e}")
-            import traceback
-            traceback.print_exc()
+                if found_in_scraped:
+                    # Update ingredient with scraped information
+                    missing_ing["found_via_url"] = True
+                    missing_ing["source_url"] = reference_url
+                    missing_ing["scraped_ingredient_name"] = matched_scraped_name
+                    # If INCI name is missing, try to use the scraped name
+                    if not missing_ing.get("inci_name") and matched_scraped_name:
+                        missing_ing["inci_name"] = matched_scraped_name
+                    validated_ingredients.append(missing_ing)
+                    url_scraped_ingredients.append(missing_ing.get("ingredient_name"))
+                else:
+                    print(f"⚠️ '{missing_ing.get('ingredient_name')}' not found in scraped ingredients from URL")
+            
+            if url_scraped_ingredients:
+                print(f"✅ Validated {len(url_scraped_ingredients)} ingredients via URL scraping: {', '.join(url_scraped_ingredients)}")
     
     # Return validated ingredients and list of still-missing ingredient names
     still_missing = [ing.get("ingredient_name") for ing in missing_ingredients if ing not in validated_ingredients]
@@ -804,7 +950,7 @@ async def generate_formula_from_wish(wish_data: dict) -> dict:
     
     print("🚀 Starting Make a Wish pipeline...")
     
-    # Validate and apply rules engine
+    # Validate and apply rules engine (ONCE - removed duplicate)
     rules_engine = get_rules_engine()
     can_proceed, validation_results, fixed_wish_data = rules_engine.validate_wish_data(wish_data)
     
@@ -823,24 +969,27 @@ async def generate_formula_from_wish(wish_data: dict) -> dict:
     # Use fixed wish data (with auto-selections applied)
     wish_data = fixed_wish_data
     
-    # Validate and apply rules engine
-    rules_engine = get_rules_engine()
-    can_proceed, validation_results, fixed_wish_data = rules_engine.validate_wish_data(wish_data)
+    # OPTIMIZATION: Early URL scraping if reference URL provided
+    reference_url = wish_data.get('referenceUrl') or wish_data.get('url') or wish_data.get('reference_url')
+    pre_scraped_data = await scrape_reference_url_early(reference_url)
     
-    if not can_proceed:
-        blocking_errors = [r for r in validation_results if r.severity == ValidationSeverity.BLOCK]
-        error_messages = [r.message for r in blocking_errors]
-        raise ValueError(f"Validation failed: {'; '.join(error_messages)}")
+    # OPTIMIZATION: Pre-validate hero and must-have ingredients
+    hero_ingredients = wish_data.get('heroIngredients', [])
+    must_have_ingredients = wish_data.get('mustHaveIngredients', [])
+    scraped_ing_list = pre_scraped_data.get('ingredients', []) if pre_scraped_data else None
     
-    # Log warnings if any
-    warnings = [r for r in validation_results if r.severity == ValidationSeverity.WARN]
-    if warnings:
-        print(f"⚠️ Validation warnings: {len(warnings)}")
-        for warning in warnings:
-            print(f"   - {warning.message}")
-    
-    # Use fixed wish data (with auto-selections applied)
-    wish_data = fixed_wish_data
+    if hero_ingredients or must_have_ingredients:
+        valid_hero, valid_must_have, validation_map = await pre_validate_required_ingredients(
+            hero_ingredients,
+            must_have_ingredients,
+            scraped_ing_list
+        )
+        # Update wish_data with validated ingredients (warn about invalid ones)
+        if len(valid_hero) < len(hero_ingredients):
+            print(f"⚠️ {len(hero_ingredients) - len(valid_hero)} hero ingredients not validated")
+        if len(valid_must_have) < len(must_have_ingredients):
+            print(f"⚠️ {len(must_have_ingredients) - len(valid_must_have)} must-have ingredients not validated")
+        # Keep original for now, but validation_map can be used in prompt
     
     # Stage 1: Ingredient Selection
     print("📋 Stage 1: Ingredient Selection...")
@@ -849,17 +998,15 @@ async def generate_formula_from_wish(wish_data: dict) -> dict:
         system_prompt=INGREDIENT_SELECTION_SYSTEM_PROMPT,
         user_prompt=selection_prompt,
         prompt_type="ingredient_selection"
-        user_prompt=selection_prompt,
-        prompt_type="ingredient_selection"
     )
     print(f"✅ Selected {len(selected_ingredients.get('ingredients', []))} ingredients")
     
-    # Validate ingredients and use URL scraping if needed
-    reference_url = wish_data.get('referenceUrl') or wish_data.get('url') or wish_data.get('reference_url')
+    # Validate ingredients and use URL scraping if needed (with pre-scraped data)
     if selected_ingredients.get('ingredients'):
         validated_ingredients, missing_ingredients = await validate_and_enrich_ingredients_with_url_fallback(
             selected_ingredients.get('ingredients', []),
-            reference_url
+            reference_url,
+            pre_scraped_data  # Pass pre-scraped data to avoid re-scraping
         )
         
         if missing_ingredients:
@@ -888,33 +1035,33 @@ async def generate_formula_from_wish(wish_data: dict) -> dict:
         system_prompt=FORMULA_OPTIMIZATION_SYSTEM_PROMPT,
         user_prompt=optimization_prompt,
         prompt_type="formula_optimization"
-        user_prompt=optimization_prompt,
-        prompt_type="formula_optimization"
     )
     print(f"✅ Optimized formula: {optimized_formula.get('optimized_formula', {}).get('total_percentage', 0)}%")
     
-    # Stage 3: Manufacturing Process
-    print("🏭 Stage 3: Manufacturing Process...")
+    # OPTIMIZATION: Stages 3 and 4 can run in parallel (they both depend only on optimized_formula)
+    print("🏭 Stage 3 & 4: Manufacturing Process & Compliance Check (parallel)...")
     manufacturing_prompt = generate_manufacturing_prompt(optimized_formula)
-    manufacturing_process = await call_ai_with_claude(
+    compliance_prompt = generate_compliance_prompt(optimized_formula)
+    
+    # Run both stages in parallel
+    manufacturing_task = call_ai_with_claude(
         system_prompt=MANUFACTURING_PROCESS_SYSTEM_PROMPT,
         user_prompt=manufacturing_prompt,
         prompt_type="manufacturing_process"
-        user_prompt=manufacturing_prompt,
-        prompt_type="manufacturing_process"
     )
-    print(f"✅ Generated {len(manufacturing_process.get('manufacturing_steps', []))} manufacturing steps")
-    
-    # Stage 4: Compliance Check
-    print("✅ Stage 5: Compliance Check...")
-    compliance_prompt = generate_compliance_prompt(optimized_formula)
-    compliance = await call_ai_with_claude(
+    compliance_task = call_ai_with_claude(
         system_prompt=COMPLIANCE_CHECK_SYSTEM_PROMPT,
         user_prompt=compliance_prompt,
         prompt_type="compliance_check"
-        user_prompt=compliance_prompt,
-        prompt_type="compliance_check"
     )
+    
+    # Wait for both to complete
+    manufacturing_process, compliance = await asyncio.gather(
+        manufacturing_task,
+        compliance_task
+    )
+    
+    print(f"✅ Generated {len(manufacturing_process.get('manufacturing_steps', []))} manufacturing steps")
     print(f"✅ Compliance: {compliance.get('overall_status', 'UNKNOWN')}")
     
     # Combine all results

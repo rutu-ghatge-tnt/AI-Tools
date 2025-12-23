@@ -176,38 +176,81 @@ def _extract_brand_from_text(text: str) -> Optional[str]:
         'the', 'and', 'buy', 'online', 'since', 'from', 'with', 'for', 'by', 
         'product', 'price', 'rating', 'reviews', 'description', 'ingredients',
         'benefits', 'features', 'specifications', 'details', 'about', 'shop',
-        'store', 'official', 'website', 'home', 'page', 'view', 'add', 'cart'
+        'store', 'official', 'website', 'home', 'page', 'view', 'add', 'cart',
+        'defence', 'defense', 'moisturiser', 'moisturizer', 'barrier', 'building'
     }
     
-    # Look for common brand patterns - improved to catch more cases
-    patterns = [
-        r'Brand[:\s]+([A-Z][a-zA-Z\s&]+?)(?:\n|$|Price:|Product Name:)',
+    # Look for explicit "Brand:" label first (most reliable)
+    brand_label_patterns = [
+        r'Brand[:\s]+([^\n]+?)(?:\n|$|Price:|Product Name:|Ratings:)',
         r'Brand[:\s]+([^\n]+)',
-        r'by\s+([A-Z][a-zA-Z\s&]+?)(?:\s|$|\n|Price:)',
-        # Try to extract from product name (usually first word)
-        r'Product Name:\s*([A-Z][a-zA-Z]+)',
     ]
-    for pattern in patterns:
+    for pattern in brand_label_patterns:
         match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
         if match:
             brand = match.group(1).strip()
             # Clean up - remove common suffixes and extra words
-            brand = re.sub(r'\s+.*$', '', brand)  # Take only first word if multiple
+            brand = re.sub(r'\s*-\s*.*$', '', brand)  # Remove suffixes after dash
+            brand = re.sub(r'\s*\|.*$', '', brand)  # Remove suffixes after pipe
+            # Take only first meaningful part (before common separators)
+            brand = re.sub(r'\s+(?:In|With|For|By|The|And)\s+.*$', '', brand, flags=re.IGNORECASE)
+            brand = brand.strip()
             # Filter out excluded words
-            if brand and brand.lower() not in excluded_words and len(brand) > 2 and len(brand) < 50:
+            if brand and brand.lower() not in excluded_words and len(brand) > 1 and len(brand) < 50:
                 return brand
+    
+    # Try "by {brand}" pattern
+    by_pattern = r'by\s+([A-Za-z\'][a-zA-Z\'\s&]+?)(?:\s|$|\n|Price:|Product Name:)'
+    match = re.search(by_pattern, text, re.IGNORECASE | re.MULTILINE)
+    if match:
+        brand = match.group(1).strip()
+        brand = re.sub(r'\s+.*$', '', brand)  # Take only first word if multiple
+        if brand and brand.lower() not in excluded_words and len(brand) > 1 and len(brand) < 50:
+            return brand
+    
+    # Try to extract from product name - improved to handle lowercase and apostrophes
+    # Pattern: "d'you In My Defence..." -> brand is "d'you"
+    product_name_patterns = [
+        r'Product Name:\s*([a-zA-Z\'][a-zA-Z\'\s&]+?)(?:\s+(?:In|With|For|By|The)\s+|$)',
+        r'Product Name:\s*([a-zA-Z\'][a-zA-Z\'\s&]+?)(?:\s|$)',
+    ]
+    for pattern in product_name_patterns:
+        match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
+        if match:
+            potential_brand = match.group(1).strip()
+            # Split and take first part (brand is usually first word or words)
+            parts = potential_brand.split()
+            if parts:
+                # Try first word(s) - up to 3 words max for brand name
+                for i in range(min(3, len(parts))):
+                    brand_candidate = ' '.join(parts[:i+1])
+                    # Clean up
+                    brand_candidate = re.sub(r'[^\w\'\s&]', '', brand_candidate).strip()
+                    if (brand_candidate and brand_candidate.lower() not in excluded_words and 
+                        len(brand_candidate) > 1 and len(brand_candidate) < 30):
+                        return brand_candidate
     
     # Fallback: try to extract from page title (first word is often brand)
     title_match = re.search(r'Page Title:\s*([^\n|]+)', text, re.IGNORECASE)
     if title_match:
         title = title_match.group(1).strip()
-        # Extract first meaningful word (skip articles, common words)
+        # Remove common e-commerce suffixes
+        title = re.sub(r'\s*-\s*(Nykaa|Amazon|Flipkart|Purplle).*$', '', title, flags=re.IGNORECASE)
+        title = re.sub(r'\s*\|\s*.*$', '', title)
+        # Extract first meaningful word(s) - handle lowercase and apostrophes
         words = title.split()
-        for word in words:
-            word = re.sub(r'[^\w]', '', word)
-            if (word and len(word) > 2 and word[0].isupper() and 
-                word.lower() not in excluded_words):
-                return word
+        brand_candidates = []
+        for i in range(min(3, len(words))):
+            candidate = ' '.join(words[:i+1])
+            # Clean up punctuation but keep apostrophes
+            candidate = re.sub(r'[^\w\'\s&]', '', candidate).strip()
+            if (candidate and len(candidate) > 1 and len(candidate) < 30 and 
+                candidate.lower() not in excluded_words):
+                brand_candidates.append(candidate)
+        
+        # Return the shortest valid candidate (most likely to be brand name)
+        if brand_candidates:
+            return min(brand_candidates, key=len)
     
     return None
 
