@@ -874,8 +874,14 @@ async def extract_ingredients_from_url(
                 detail=f"Browser automation error: {error_msg}. Please ensure Chrome browser is installed. If Chrome is installed, ChromeDriver will be downloaded automatically on first use."
             )
         elif "claude" in error_msg.lower() or "anthropic" in error_msg.lower():
+            # Check for credit balance too low error
+            if "credit balance is too low" in error_msg.lower() or "credit balance too low" in error_msg.lower():
+                raise HTTPException(
+                    status_code=402,
+                    detail="Claude API credit balance is too low. Please go to Plans & Billing in your Anthropic account to upgrade or purchase credits."
+                )
             # Check for API usage limit errors specifically
-            if "usage limits" in error_msg.lower() or "usage limit" in error_msg.lower() or "regain access" in error_msg.lower():
+            elif "usage limits" in error_msg.lower() or "usage limit" in error_msg.lower() or "regain access" in error_msg.lower():
                 date_match = re.search(r'(\d{4}-\d{2}-\d{2})', error_msg)
                 date_str = f" on {date_match.group(1)}" if date_match else ""
                 raise HTTPException(
@@ -1604,14 +1610,38 @@ async def analyze_url(
                 )
             except:
                 pass
-        print(f"Error in analyze_url: {e}")
+        error_msg = str(e)
+        error_type = type(e).__name__
+        print(f"Error in analyze_url: {error_type}: {error_msg}")
         # Try to close browser on error
         if scraper:
             try:
                 await scraper.close()
             except:
                 pass
-        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")
+        
+        # Provide more helpful error messages
+        if "credit balance is too low" in error_msg.lower() or "credit balance too low" in error_msg.lower():
+            raise HTTPException(
+                status_code=402,
+                detail="Claude API credit balance is too low. Please go to Plans & Billing in your Anthropic account to upgrade or purchase credits."
+            )
+        elif "claude" in error_msg.lower() or "anthropic" in error_msg.lower():
+            # Check for API usage limit errors specifically
+            if "usage limits" in error_msg.lower() or "usage limit" in error_msg.lower() or "regain access" in error_msg.lower():
+                date_match = re.search(r'(\d{4}-\d{2}-\d{2})', error_msg)
+                date_str = f" on {date_match.group(1)}" if date_match else ""
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Claude API usage limit reached. You will regain access{date_str}. Please try again later or upgrade your API plan."
+                )
+            else:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"AI service error: {error_msg}. Please check CLAUDE_API_KEY environment variable."
+                )
+        else:
+            raise HTTPException(status_code=500, detail=f"{error_type}: {error_msg}")
 
     # Convert to objects
     items: List[AnalyzeInciItem] = [AnalyzeInciItem(**m) for m in matched_raw]

@@ -2635,8 +2635,11 @@ Return ONLY the JSON array of ALL INCI ingredient names from the complete list, 
                 
         except (BadRequestError, RateLimitError, APIStatusError, APIError) as e:
             error_msg = str(e)
+            # Check for credit balance too low error
+            if "credit balance is too low" in error_msg.lower() or "credit balance too low" in error_msg.lower():
+                raise Exception("Claude API credit balance is too low. Please go to Plans & Billing in your Anthropic account to upgrade or purchase credits.")
             # Check if it's an API usage limit error
-            if "usage limits" in error_msg.lower() or "usage limit" in error_msg.lower() or "regain access" in error_msg.lower():
+            elif "usage limits" in error_msg.lower() or "usage limit" in error_msg.lower() or "regain access" in error_msg.lower():
                 # Extract the date from the error message if available
                 import re
                 date_match = re.search(r'(\d{4}-\d{2}-\d{2})', error_msg)
@@ -2648,8 +2651,11 @@ Return ONLY the JSON array of ALL INCI ingredient names from the complete list, 
                 raise Exception(f"Claude API error: {error_msg}")
         except Exception as e:
             error_msg = str(e)
+            # Check for credit balance too low error in generic exception messages
+            if "credit balance is too low" in error_msg.lower() or "credit balance too low" in error_msg.lower():
+                raise Exception("Claude API credit balance is too low. Please go to Plans & Billing in your Anthropic account to upgrade or purchase credits.")
             # Check for API usage limit in generic exception messages
-            if "usage limits" in error_msg.lower() or "usage limit" in error_msg.lower() or "regain access" in error_msg.lower():
+            elif "usage limits" in error_msg.lower() or "usage limit" in error_msg.lower() or "regain access" in error_msg.lower():
                 import re
                 date_match = re.search(r'(\d{4}-\d{2}-\d{2})', error_msg)
                 date_str = f" on {date_match.group(1)}" if date_match else ""
