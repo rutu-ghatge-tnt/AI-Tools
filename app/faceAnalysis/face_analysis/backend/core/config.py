@@ -15,15 +15,15 @@ class Settings(BaseSettings):
     
     # API Keys - Use the same key as main app
     ANTHROPIC_API_KEY: str = os.getenv("CLAUDE_API_KEY", "")  # Use CLAUDE_API_KEY from main app
-    GOOGLE_APPLICATION_CREDENTIALS: str = "vision_key.json"  # Optional fallback
+    GOOGLE_APPLICATION_CREDENTIALS: str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "vision_key.json")
     
     # MongoDB Configuration
-    MONGODB_URL: str = "mongodb://localhost:27017/"
+    MONGODB_URL: str = os.getenv("MONGO_URI", "")
     
     # Server Configuration
-    HOST: str = "0.0.0.0"
-    PORT: int = 8000
-    DEBUG: bool = True
+    HOST: str = os.getenv("HOST", "0.0.0.0")
+    PORT: int = int(os.getenv("PORT", "8000"))
+    DEBUG: bool = os.getenv("DEBUG", "True").lower() == "true"
     
     # Data Configuration - Use absolute paths
     DATA_DIR: str = str(PROJECT_ROOT / "backend" / "data")
@@ -85,9 +85,9 @@ class Settings(BaseSettings):
     ]
     
     # Model Configuration
-    CLAUDE_MODEL: str = "claude-sonnet-4-5-20250929"
-    CLAUDE_MAX_TOKENS: int = 8192
-    CLAUDE_TEMPERATURE: float = 0.3
+    CLAUDE_MODEL: str = os.getenv("CLAUDE_MODEL") or os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929"
+    CLAUDE_MAX_TOKENS: int = int(os.getenv("CLAUDE_MAX_TOKENS", "8192"))
+    CLAUDE_TEMPERATURE: float = float(os.getenv("CLAUDE_TEMPERATURE", "0.3"))
     
     # Image Processing
     MAX_IMAGE_SIZE: int = 1024
@@ -105,6 +105,10 @@ class Settings(BaseSettings):
 
 # Global settings instance
 settings = Settings()
+
+# Validate required environment variables
+if not settings.MONGODB_URL:
+    raise ValueError("MONGODB_URL environment variable is required. Please set it in your .env file.")
 
 # Debug: Print API key status
 if settings.ANTHROPIC_API_KEY:

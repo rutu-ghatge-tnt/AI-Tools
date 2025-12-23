@@ -429,7 +429,9 @@ async def _get_formulation_report_summary(ingredients: List[str], analyze_result
                     not_branded_ingredients.extend(item.get("matched_inci", []))
         
         # Call formulation report JSON API
-        base_url = os.getenv("API_BASE_URL", "http://localhost:8000")
+        base_url = os.getenv("API_BASE_URL")
+        if not base_url:
+            raise ValueError("API_BASE_URL environment variable is required. Please set it in your .env file.")
         report_url = f"{base_url}/api/formulation-report-json"
         
         async with httpx.AsyncClient(timeout=120.0) as client:

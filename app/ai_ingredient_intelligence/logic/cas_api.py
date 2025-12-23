@@ -10,7 +10,11 @@ import asyncio
 
 # CAS API Configuration
 CAS_API_BASE_URL = "https://commonchemistry.cas.org/api"
-CAS_API_KEY = os.getenv("CAS_API_KEY", "uuh8gV5F4i5C1PbE6hRLl68FpU9xUDS33xKQaUHf")
+CAS_API_KEY = os.getenv("CAS_API_KEY")
+
+if not CAS_API_KEY:
+    raise ValueError("CAS_API_KEY environment variable is required. Please set it in your .env file.")
+
 CAS_API_HEADERS = {
     "X-API-KEY": CAS_API_KEY,  # Note: Header name is X-API-KEY (all caps with hyphens)
     "Accept": "application/json"

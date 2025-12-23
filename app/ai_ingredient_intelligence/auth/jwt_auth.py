@@ -30,11 +30,16 @@ except ImportError:
         "PyJWT is required for JWT authentication. Install it with: pip install PyJWT"
     )
 
-# JWT Configuration from environment
-ACCESS_TOKEN_SECRET = os.getenv("ACCESS_TOKEN_SECRET", "SKINBBMAINSUPERSECRET")
-ACCESS_TOKEN_EXPIRY = os.getenv("ACCESS_TOKEN_EXPIRY", "1d")
-REFRESH_TOKEN_SECRET = os.getenv("REFRESH_TOKEN_SECRET", "SKINBBREFERSHMAINSUPERSECRET")
-REFRESH_TOKEN_EXPIRY = os.getenv("REFRESH_TOKEN_EXPIRY", "2d")
+# JWT Configuration from environment - all required
+ACCESS_TOKEN_SECRET = os.getenv("ACCESS_TOKEN_SECRET")
+ACCESS_TOKEN_EXPIRY = os.getenv("ACCESS_TOKEN_EXPIRY", "1d")  # Default expiry is acceptable
+REFRESH_TOKEN_SECRET = os.getenv("REFRESH_TOKEN_SECRET")
+REFRESH_TOKEN_EXPIRY = os.getenv("REFRESH_TOKEN_EXPIRY", "2d")  # Default expiry is acceptable
+
+if not ACCESS_TOKEN_SECRET:
+    raise ValueError("ACCESS_TOKEN_SECRET environment variable is required. Please set it in your .env file.")
+if not REFRESH_TOKEN_SECRET:
+    raise ValueError("REFRESH_TOKEN_SECRET environment variable is required. Please set it in your .env file.")
 
 # HTTP Bearer token security scheme
 security = HTTPBearer(auto_error=False)

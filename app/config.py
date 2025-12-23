@@ -29,5 +29,10 @@ if not CLAUDE_API_KEY:
 else:
     print(f"Claude API key loaded successfully (model: {CLAUDE_MODEL})")
 
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://skinbb_owner:SkinBB%4054321@93.127.194.42:27017/skin_bb?authSource=admin")
-DB_NAME = os.getenv("DB_NAME", "skin_bb")
+MONGO_URI = os.getenv("MONGO_URI")
+DB_NAME = os.getenv("DB_NAME")
+
+if not MONGO_URI:
+    raise ValueError("MONGO_URI environment variable is required. Please set it in your .env file.")
+if not DB_NAME:
+    raise ValueError("DB_NAME environment variable is required. Please set it in your .env file.")

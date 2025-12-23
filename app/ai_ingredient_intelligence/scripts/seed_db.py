@@ -29,12 +29,20 @@ from typing import List, Optional, Tuple, Dict, Any
 from pymongo import MongoClient, ASCENDING
 from bson.objectid import ObjectId
 from tqdm import tqdm
+from dotenv import load_dotenv
 
 # -------------------
 # Config
 # -------------------
-MONGO_URI = "mongodb://localhost:27017"  # Update with your MongoDB URI if needed
-DB_NAME = "skin_bb"  # Actual database name
+load_dotenv()
+
+MONGO_URI = os.getenv("MONGO_URI")
+DB_NAME = os.getenv("DB_NAME")
+
+if not MONGO_URI:
+    raise ValueError("MONGO_URI environment variable is required. Please set it in your .env file.")
+if not DB_NAME:
+    raise ValueError("DB_NAME environment variable is required. Please set it in your .env file.")
 DATA_FILE = "cleaned_specialchem_ingredients.json"  # Output from clean_specialchem_data.py
 CHECKPOINT_FILE = "seeding_checkpoint.json"  # For resume capability
 

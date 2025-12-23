@@ -89,8 +89,11 @@ def custom_openapi():
     
     # Get environment variables for server configuration
     import os
-    server_url = os.getenv("SERVER_URL", "https://capi.skintruth.in")
-    node_env = os.getenv("NODE_ENV", "development")
+    server_url = os.getenv("SERVER_URL")
+    node_env = os.getenv("NODE_ENV", "development")  # Default to development is acceptable
+    
+    if not server_url:
+        raise ValueError("SERVER_URL environment variable is required. Please set it in your .env file.")
     
     openapi_schema = get_openapi(
         title=app.title,

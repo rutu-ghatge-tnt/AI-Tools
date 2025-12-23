@@ -22,8 +22,13 @@ import json
 # Load .env variables
 load_dotenv()
 
-MONGO_URI: str = os.getenv("MONGO_URI", "mongodb://skinbb_owner:SkinBB%4054321@93.127.194.42:27017/skin_bb?authSource=admin")
-DB_NAME: str = os.getenv("DB_NAME", "skin_bb")
+MONGO_URI: str = os.getenv("MONGO_URI") or ""
+DB_NAME: str = os.getenv("DB_NAME") or ""
+
+if not MONGO_URI:
+    raise RuntimeError("ERROR: MONGO_URI is missing. Please set it in your .env file.")
+if not DB_NAME:
+    raise RuntimeError("ERROR: DB_NAME is missing. Please set it in your .env file.")
 OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY") or ""
 
 if not OPENAI_API_KEY:
