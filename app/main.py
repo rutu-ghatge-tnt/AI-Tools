@@ -217,7 +217,7 @@ production_origins = [
     "https://capi.skinbb.com",
     "https://metaverse.skinbb.com",
     "https://formulynx.in",
-    "https://www.formulynx.in"
+    "https://www.formulynx.in",
     "http://www.formulynx.ai", 
 ]
 
