@@ -210,21 +210,54 @@ def custom_openapi():
 # Override the default OpenAPI function
 app.openapi = custom_openapi
 
-# ✅ CORS - Updated for production
+# ✅ CORS - Environment-aware configuration
+# Production origins (for capi.skinbb.com - production server)
+production_origins = [
+    "https://tt.skintruth.in", 
+    "https://capi.skinbb.com",
+    "https://metaverse.skinbb.com",
+    "https://formulynx.in",
+    "https://www.formulynx.in"
+]
+
+# Development origins (for capi.skintruth.in - development server)
+development_origins = [
+    "https://capi.skintruth.in",  # Development API server
+    "https://tt.skintruth.in",     # Development frontend
+    "http://localhost:5174", 
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://localhost:8000",
+    "http://localhost:8501"
+]
+
+# Determine environment based on SERVER_URL
+# Development: capi.skintruth.in
+# Production: capi.skinbb.com
+server_url = os.getenv("SERVER_URL", "").lower()
+is_production = "capi.skinbb.com" in server_url or "capi.skinbb.in" in server_url
+env = os.getenv("ENVIRONMENT", os.getenv("NODE_ENV", "")).lower()
+
+# If ENVIRONMENT is explicitly set, use that; otherwise detect from SERVER_URL
+if env in ["production", "prod"]:
+    is_development = False
+elif env in ["development", "dev", "local"]:
+    is_development = True
+else:
+    # Auto-detect from SERVER_URL
+    is_development = not is_production
+
+# Combine origins based on environment
+if is_development:
+    allowed_origins = development_origins.copy()
+    print(f"🌍 CORS: Development mode (capi.skintruth.in) - allowing development origins + localhost")
+else:
+    allowed_origins = production_origins.copy()
+    print(f"🌍 CORS: Production mode (capi.skinbb.com) - only allowing production domains")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://tt.skintruth.in", 
-        "https://capi.skintruth.in",
-        "http://localhost:5174", 
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://localhost:8000",
-        "http://localhost:8501",
-        "https://metaverse.skinbb.com",
-        "https://formulynx.in",
-        "https://www.formulynx.in"
-    ],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
     allow_headers=["*"],
