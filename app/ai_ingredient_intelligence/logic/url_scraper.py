@@ -792,7 +792,21 @@ class URLScraper:
                 extracted_text = await self._scrape_generic(driver)
             
             if not extracted_text or len(extracted_text.strip()) < 10:
-                raise Exception("No meaningful text extracted from the page")
+                # Provide more context about why scraping might have failed
+                error_details = []
+                try:
+                    page_title = driver.title if driver else "Unknown"
+                    current_url = driver.current_url if driver else url
+                    error_details.append(f"Page title: {page_title}")
+                    error_details.append(f"Current URL: {current_url}")
+                except:
+                    pass
+                
+                error_msg = "No meaningful text extracted from the page"
+                if error_details:
+                    error_msg += f". Details: {', '.join(error_details)}"
+                error_msg += ". This may indicate: 1) The page requires JavaScript that didn't load, 2) The page is blocking automated access, 3) The page structure is different than expected, or 4) The page content is primarily images/media."
+                raise Exception(error_msg)
             
             print(f"Extracted {len(extracted_text)} characters of text")
             
@@ -1335,16 +1349,19 @@ Return only the JSON array:"""
             }
             
         except Exception as e:
+            error_msg = str(e)
             # If scraping failed, try to detect product from URL only
-            print(f"Scraping failed: {e}, attempting product name detection from URL...")
+            print(f"Scraping failed: {error_msg}, attempting product name detection from URL...")
             try:
                 product_name = await self.detect_product_name("", url)
                 if product_name:
+                    print(f"Detected product name from URL: {product_name}")
                     estimated_ingredients = await self.search_ingredients_by_product_name(product_name)
                     if estimated_ingredients and len(estimated_ingredients) > 0:
+                        print(f"Successfully found {len(estimated_ingredients)} ingredients via AI search fallback")
                         return {
                             "ingredients": estimated_ingredients,
-                            "extracted_text": f"Unable to scrape URL: {str(e)}",
+                            "extracted_text": f"Unable to scrape URL content. Original error: {error_msg}",
                             "platform": self._detect_platform(url),
                             "url": url,
                             "is_estimated": True,
@@ -1352,8 +1369,18 @@ Return only the JSON array:"""
                             "product_name": product_name,
                             "product_image": None
                         }
-            except:
-                pass
+            except Exception as fallback_error:
+                print(f"Fallback also failed: {fallback_error}")
             
-            raise Exception(f"Failed to extract ingredients from URL: {str(e)}")
+            # Provide a more helpful error message
+            if "No meaningful text extracted" in error_msg:
+                raise Exception(
+                    f"Failed to extract ingredients from URL: The page could not be scraped successfully. "
+                    f"Possible reasons: 1) The page requires JavaScript that didn't load properly, "
+                    f"2) The page is blocking automated access (bot detection), 3) The page structure is different than expected, "
+                    f"4) The page content is primarily images/media without text, or 5) Network/timeout issues. "
+                    f"Original error: {error_msg}"
+                )
+            else:
+                raise Exception(f"Failed to extract ingredients from URL: {error_msg}")
 

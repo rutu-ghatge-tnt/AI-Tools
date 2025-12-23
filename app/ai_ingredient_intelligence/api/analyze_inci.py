@@ -746,7 +746,16 @@ async def extract_ingredients_from_url(
                 pass
         
         # Provide more helpful error messages
-        if "chrome" in error_msg.lower() or "webdriver" in error_msg.lower() or "driver" in error_msg.lower():
+        if "no meaningful text extracted" in error_msg.lower() or "failed to scrape url" in error_msg.lower():
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unable to extract content from the URL. The page could not be scraped successfully. "
+                       f"Possible reasons: 1) The page requires JavaScript that didn't load properly, "
+                       f"2) The page is blocking automated access (bot detection), 3) The page structure is different than expected, "
+                       f"4) The page content is primarily images/media without text, or 5) Network/timeout issues. "
+                       f"Please try a different URL or provide ingredients directly as INCI text."
+            )
+        elif "chrome" in error_msg.lower() or "webdriver" in error_msg.lower() or "driver" in error_msg.lower():
             raise HTTPException(
                 status_code=500, 
                 detail=f"Browser automation error: {error_msg}. Please ensure Chrome browser is installed. If Chrome is installed, ChromeDriver will be downloaded automatically on first use."
