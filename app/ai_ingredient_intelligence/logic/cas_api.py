@@ -270,8 +270,8 @@ async def get_synonyms_batch(ingredient_names: List[str]) -> Dict[str, List[str]
     """
     results = {}
     
-    # Process in batches to avoid rate limiting
-    batch_size = 5
+    # OPTIMIZED: Process in larger batches with reduced delay to avoid rate limiting
+    batch_size = 10  # Increased from 5 to 10
     for i in range(0, len(ingredient_names), batch_size):
         batch = ingredient_names[i:i + batch_size]
         
@@ -286,9 +286,9 @@ async def get_synonyms_batch(ingredient_names: List[str]) -> Dict[str, List[str]
             else:
                 results[ingredient] = synonyms
         
-        # Small delay between batches to avoid rate limiting
+        # Reduced delay between batches (from 0.5s to 0.1s) - only if not last batch
         if i + batch_size < len(ingredient_names):
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.1)  # Reduced from 0.5s
     
     return results
 

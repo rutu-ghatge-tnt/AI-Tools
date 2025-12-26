@@ -54,6 +54,81 @@ async def build_category_tree(collection, category_ids, name_field):
     return results
 
 
+async def build_category_trees_batch(collection, all_category_ids, name_field):
+    """
+    OPTIMIZED: Batch version that builds category trees for multiple category ID lists.
+    Collects all unique category IDs first, then builds trees in one pass.
+    
+    Args:
+        collection: MongoDB collection
+        all_category_ids: List of lists of category IDs (e.g., [[id1, id2], [id3, id4]])
+        name_field: Field name to extract from documents
+    
+    Returns:
+        List of category tree results (same structure as build_category_tree)
+    """
+    if not all_category_ids:
+        return []
+    
+    # Collect all unique category IDs
+    all_unique_ids = set()
+    for category_id_list in all_category_ids:
+        for cid in category_id_list:
+            if not isinstance(cid, ObjectId):
+                try:
+                    cid = ObjectId(cid)
+                except:
+                    continue
+            all_unique_ids.add(cid)
+    
+    if not all_unique_ids:
+        return []
+    
+    # Batch fetch all category documents
+    category_docs = await collection.find({"_id": {"$in": list(all_unique_ids)}}).to_list(length=None)
+    category_map = {doc["_id"]: doc for doc in category_docs}
+    
+    # Build all trees using the pre-fetched map
+    all_results = []
+    for category_id_list in all_category_ids:
+        tree_results = []
+        for cid in category_id_list:
+            if not isinstance(cid, ObjectId):
+                try:
+                    cid = ObjectId(cid)
+                except:
+                    continue
+            
+            path = []
+            visited = set()  # Prevent infinite loops
+            current_id = cid
+            
+            while current_id and current_id not in visited:
+                visited.add(current_id)
+                current = category_map.get(current_id)
+                if not current:
+                    break
+                
+                path.insert(0, current.get(name_field))
+                parent_id = current.get("parent_id")
+                if parent_id:
+                    if not isinstance(parent_id, ObjectId):
+                        try:
+                            parent_id = ObjectId(parent_id)
+                        except:
+                            break
+                    current_id = parent_id
+                else:
+                    current_id = None
+            
+            if path:
+                tree_results.append(path)
+        
+        all_results.append(tree_results)
+    
+    return all_results
+
+
 async def match_inci_names(
     inci_names: List[str], 
     synonyms_map: Optional[Dict[str, List[str]]] = None

@@ -444,37 +444,148 @@ class URLScraper:
                 driver.execute_script("window.scrollBy(0, 500);")
                 time.sleep(1)
                 
-                # SECOND: Extract from Ingredients tab
-                try:
-                    # Look for Ingredients tab
-                    ingredients_tab = driver.find_element(By.XPATH, "//h3[normalize-space()='Ingredients']")
-                    driver.execute_script("arguments[0].scrollIntoView(true);", ingredients_tab)
-                    time.sleep(0.5)
-                    driver.execute_script("arguments[0].click();", ingredients_tab)
-                    time.sleep(1.5)
-                    
-                    # Wait for content to appear
-                    wait.until(EC.presence_of_element_located((By.ID, "content-details")))
-                    
-                    # Get the content block
-                    block = driver.find_element(By.ID, "content-details")
-                    html = block.get_attribute("innerHTML")
-                    soup = BeautifulSoup(html, "html.parser")
-                    
-                    # Extract text from paragraphs and lists
-                    lines = []
-                    for p in soup.find_all("p"):
-                        lines.append(p.get_text(strip=True))
-                    for li in soup.find_all("li"):
-                        lines.append("• " + li.get_text(strip=True))
-                    if not lines:
-                        lines = [soup.get_text(separator="\n", strip=True)]
-                    
-                    ingredients_text = "\n".join(lines).strip()
-                    if ingredients_text:
-                        text_parts.append(f"Ingredients:\n{ingredients_text}")
-                except Exception as e:
-                    print(f"Could not extract Ingredients tab: {e}")
+                # SECOND: Extract from Ingredients tab - try multiple approaches
+                ingredients_extracted = False
+                
+                # Approach 1: Try to find and click Ingredients tab using multiple selectors
+                ingredients_tab_selectors = [
+                    "//h3[normalize-space()='Ingredients']",
+                    "//button[contains(text(), 'Ingredients')]",
+                    "//div[contains(text(), 'Ingredients')]",
+                    "//span[contains(text(), 'Ingredients')]",
+                    "//*[@data-testid='ingredients-tab']",
+                    "//*[contains(@class, 'ingredients') and contains(@class, 'tab')]",
+                    "//*[contains(@class, 'Ingredients')]",
+                ]
+                
+                for tab_selector in ingredients_tab_selectors:
+                    try:
+                        ingredients_tab = driver.find_element(By.XPATH, tab_selector)
+                        driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", ingredients_tab)
+                        time.sleep(0.5)
+                        driver.execute_script("arguments[0].click();", ingredients_tab)
+                        time.sleep(2)  # Increased wait time
+                        
+                        # Try multiple content selectors
+                        content_selectors = [
+                            (By.ID, "content-details"),
+                            (By.CSS_SELECTOR, "[id*='content']"),
+                            (By.CSS_SELECTOR, "[class*='content']"),
+                            (By.CSS_SELECTOR, "[class*='ingredients']"),
+                            (By.CSS_SELECTOR, "[id*='ingredients']"),
+                            (By.XPATH, "//*[contains(@class, 'ingredients') or contains(@id, 'ingredients')]"),
+                        ]
+                        
+                        for content_by, content_selector in content_selectors:
+                            try:
+                                wait.until(EC.presence_of_element_located((content_by, content_selector)))
+                                block = driver.find_element(content_by, content_selector)
+                                html = block.get_attribute("innerHTML")
+                                soup = BeautifulSoup(html, "html.parser")
+                                
+                                # Extract text from paragraphs and lists
+                                lines = []
+                                for p in soup.find_all("p"):
+                                    text = p.get_text(strip=True)
+                                    if text and len(text) > 3:
+                                        lines.append(text)
+                                for li in soup.find_all("li"):
+                                    text = li.get_text(strip=True)
+                                    if text and len(text) > 3:
+                                        lines.append("• " + text)
+                                for div in soup.find_all("div"):
+                                    text = div.get_text(strip=True)
+                                    if text and len(text) > 10 and "ingredient" in text.lower():
+                                        lines.append(text)
+                                
+                                if not lines:
+                                    lines = [soup.get_text(separator="\n", strip=True)]
+                                
+                                ingredients_text = "\n".join(lines).strip()
+                                if ingredients_text and len(ingredients_text) > 20:
+                                    text_parts.append(f"Ingredients:\n{ingredients_text}")
+                                    ingredients_extracted = True
+                                    print(f"Successfully extracted ingredients using selector: {content_selector}")
+                                    break
+                            except:
+                                continue
+                        
+                        if ingredients_extracted:
+                            break
+                    except:
+                        continue
+                
+                # Approach 2: If tab clicking didn't work, try to find ingredients directly in the page
+                if not ingredients_extracted:
+                    try:
+                        # Look for ingredients section directly without clicking
+                        ingredient_section_selectors = [
+                            "//*[contains(text(), 'Complete Ingredients List')]",
+                            "//*[contains(text(), 'Key Ingredients')]",
+                            "//*[contains(text(), 'Ingredients:')]",
+                            "//*[contains(@class, 'ingredients')]",
+                            "//*[contains(@id, 'ingredients')]",
+                        ]
+                        
+                        for section_selector in ingredient_section_selectors:
+                            try:
+                                # Find the section
+                                section = driver.find_element(By.XPATH, section_selector)
+                                driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", section)
+                                time.sleep(1)
+                                
+                                # Get parent container
+                                parent = section.find_element(By.XPATH, "./ancestor::*[contains(@class, 'content') or contains(@id, 'content') or contains(@class, 'tab')][1]")
+                                html = parent.get_attribute("innerHTML")
+                                soup = BeautifulSoup(html, "html.parser")
+                                
+                                # Extract all text
+                                ingredients_text = soup.get_text(separator="\n", strip=True)
+                                
+                                # Look for ingredient list patterns (comma-separated, or line-separated)
+                                if ingredients_text and len(ingredients_text) > 50:
+                                    # Check if it looks like an ingredient list
+                                    if any(keyword in ingredients_text.lower() for keyword in ['ingredient', 'inci', 'water', 'glycerin', 'acid']):
+                                        text_parts.append(f"Ingredients:\n{ingredients_text}")
+                                        ingredients_extracted = True
+                                        print(f"Successfully extracted ingredients from section: {section_selector}")
+                                        break
+                            except:
+                                continue
+                    except Exception as e:
+                        print(f"Could not extract ingredients from sections: {e}")
+                
+                # Approach 3: Search for ingredient patterns in the entire page
+                if not ingredients_extracted:
+                    try:
+                        # Get page source and search for ingredient patterns
+                        page_source = driver.page_source
+                        soup = BeautifulSoup(page_source, "html.parser")
+                        
+                        # Look for text containing common ingredient keywords
+                        ingredient_keywords = ['Complete Ingredients List', 'Key Ingredients', 'Ingredients:', 'INCI']
+                        for keyword in ingredient_keywords:
+                            elements = soup.find_all(string=lambda text: text and keyword in text)
+                            for elem in elements:
+                                # Get parent element
+                                parent = elem.parent
+                                if parent:
+                                    # Get text from parent and siblings
+                                    text_content = parent.get_text(separator="\n", strip=True)
+                                    if text_content and len(text_content) > 50:
+                                        # Check if it contains ingredient-like patterns
+                                        if any(ing in text_content.lower() for ing in ['water', 'glycerin', 'acid', 'alcohol', 'extract']):
+                                            text_parts.append(f"Ingredients:\n{text_content}")
+                                            ingredients_extracted = True
+                                            print(f"Successfully extracted ingredients using keyword search: {keyword}")
+                                            break
+                            if ingredients_extracted:
+                                break
+                    except Exception as e:
+                        print(f"Could not extract ingredients using pattern search: {e}")
+                
+                if not ingredients_extracted:
+                    print("Warning: Could not extract ingredients from Ingredients tab")
                 
                 # THIRD: Extract from Description tab
                 try:
@@ -503,7 +614,46 @@ class URLScraper:
                 except Exception as e:
                     print(f"Could not extract Description tab: {e}")
                 
-                # FOURTH: Always get additional visible text from page for comprehensive extraction
+                # FOURTH: If ingredients weren't extracted yet, try to find them in page source
+                if not ingredients_extracted:
+                    try:
+                        # Get page source and parse with BeautifulSoup
+                        page_source = driver.page_source
+                        soup = BeautifulSoup(page_source, "html.parser")
+                        
+                        # Look for ingredients in various ways
+                        # 1. Look for divs/sections with ingredient-related classes or IDs
+                        ingredient_containers = soup.find_all(['div', 'section', 'article'], 
+                            class_=lambda x: x and any(keyword in str(x).lower() for keyword in ['ingredient', 'inci', 'composition']),
+                            id=lambda x: x and any(keyword in str(x).lower() for keyword in ['ingredient', 'inci', 'composition'])
+                        )
+                        
+                        for container in ingredient_containers:
+                            text = container.get_text(separator="\n", strip=True)
+                            if text and len(text) > 50:
+                                # Check if it looks like an ingredient list
+                                if any(keyword in text.lower() for keyword in ['water', 'glycerin', 'acid', 'alcohol', 'extract', 'ingredient']):
+                                    text_parts.append(f"Ingredients (from page source):\n{text}")
+                                    ingredients_extracted = True
+                                    print("Successfully extracted ingredients from page source")
+                                    break
+                        
+                        # 2. Look for text nodes containing "Complete Ingredients List" or similar
+                        if not ingredients_extracted:
+                            for text_node in soup.find_all(string=lambda text: text and 'ingredient' in text.lower() and len(text) > 20):
+                                parent = text_node.parent
+                                if parent:
+                                    # Get the full text from parent and siblings
+                                    full_text = parent.get_text(separator="\n", strip=True)
+                                    if full_text and len(full_text) > 50:
+                                        text_parts.append(f"Ingredients (from text node):\n{full_text}")
+                                        ingredients_extracted = True
+                                        print("Successfully extracted ingredients from text node")
+                                        break
+                    except Exception as e:
+                        print(f"Could not extract ingredients from page source: {e}")
+                
+                # FIFTH: Always get additional visible text from page for comprehensive extraction
                 try:
                     # Get visible text from the page (more content for better extraction)
                     body_text = driver.find_element(By.TAG_NAME, "body").text
@@ -1212,6 +1362,42 @@ Return only the JSON array of INCI names:"""
             List of extracted INCI ingredient names
         """
         try:
+            # Check if text contains ingredient-related keywords to prioritize
+            has_ingredient_keywords = any(keyword in raw_text.lower() for keyword in [
+                'ingredient', 'inci', 'composition', 'complete ingredients list',
+                'key ingredients', 'ingredients:', 'formula'
+            ])
+            
+            # If we have ingredient keywords, prioritize that section
+            if has_ingredient_keywords:
+                # Try to extract the ingredients section first
+                lines = raw_text.split('\n')
+                ingredient_section = []
+                in_ingredient_section = False
+                
+                for line in lines:
+                    line_lower = line.lower()
+                    if any(keyword in line_lower for keyword in ['ingredient', 'inci', 'composition', 'complete ingredients']):
+                        in_ingredient_section = True
+                        ingredient_section.append(line)
+                    elif in_ingredient_section:
+                        # Continue collecting until we hit a section break
+                        if line.strip() and not any(break_word in line_lower for break_word in ['description', 'how to use', 'benefits', 'product information']):
+                            ingredient_section.append(line)
+                        elif line.strip() and len(ingredient_section) > 5:
+                            # We have enough ingredients, stop
+                            break
+                
+                if ingredient_section:
+                    # Use the ingredient section for extraction
+                    ingredient_text = '\n'.join(ingredient_section)
+                    # Also include some context from the full text
+                    text_to_analyze = ingredient_text + "\n\n--- Additional Context ---\n" + raw_text[:2000]
+                else:
+                    text_to_analyze = raw_text[:8000]
+            else:
+                text_to_analyze = raw_text[:8000]
+            
             prompt = f"""
 You are an expert cosmetic ingredient analyst. Your task is to extract INCI (International Nomenclature of Cosmetic Ingredients) names from the following text scraped from an e-commerce product page.
 
@@ -1224,12 +1410,15 @@ Requirements:
 4. Return as a simple JSON array of strings
 5. If no valid ingredients found, return empty array []
 6. Focus on finding ingredient lists, composition sections, or INCI lists
+7. Look for sections labeled "Complete Ingredients List", "Key Ingredients", "Ingredients:", etc.
+8. Ingredients are often comma-separated or listed line by line
+9. Extract ALL ingredients from the list, not just key ingredients
 
 Example output format:
 ["Water", "Glycerin", "Sodium Hyaluronate", "Hyaluronic Acid"]
 
 Text to analyze:
-{raw_text[:8000]}  # Limit to 8000 chars to avoid token limits
+{text_to_analyze}
 
 Return only the JSON array:"""
 
@@ -1299,11 +1488,24 @@ Return only the JSON array:"""
             scrape_result = await self.scrape_url(url)
             extracted_text = scrape_result["extracted_text"]
             
+            # Check if extracted text contains ingredient-related content
+            has_ingredient_content = any(keyword in extracted_text.lower() for keyword in [
+                'ingredient', 'inci', 'composition', 'complete ingredients list',
+                'key ingredients', 'ingredients:', 'formula', 'formulation'
+            ])
+            
             # Try to extract ingredients using Claude
-            ingredients = await self.extract_ingredients_from_text(extracted_text)
+            ingredients = []
+            extraction_error = None
+            try:
+                ingredients = await self.extract_ingredients_from_text(extracted_text)
+            except Exception as e:
+                extraction_error = str(e)
+                print(f"Error extracting ingredients from text: {e}")
             
             # If extraction succeeded, return direct results
             if ingredients and len(ingredients) > 0:
+                print(f"Successfully extracted {len(ingredients)} ingredients directly from URL")
                 return {
                     "ingredients": ingredients,
                     "extracted_text": extracted_text,
@@ -1315,8 +1517,33 @@ Return only the JSON array:"""
                     "product_image": scrape_result.get("product_image")
                 }
             
-            # If extraction failed, try fallback: detect product name and search
-            print("Direct extraction failed, attempting fallback: detecting product name...")
+            # If we have ingredient content but extraction failed, try once more with more context
+            if has_ingredient_content and not ingredients:
+                print("Found ingredient content but extraction returned empty, retrying with full text...")
+                try:
+                    # Try with more text context
+                    ingredients = await self.extract_ingredients_from_text(extracted_text[:12000])
+                    if ingredients and len(ingredients) > 0:
+                        print(f"Successfully extracted {len(ingredients)} ingredients on retry")
+                        return {
+                            "ingredients": ingredients,
+                            "extracted_text": extracted_text,
+                            "platform": scrape_result["platform"],
+                            "url": url,
+                            "is_estimated": False,
+                            "source": "url_extraction",
+                            "product_name": None,
+                            "product_image": scrape_result.get("product_image")
+                        }
+                except Exception as e:
+                    print(f"Retry also failed: {e}")
+            
+            # If extraction failed and we don't have ingredient content, try fallback: detect product name and search
+            if not has_ingredient_content:
+                print("No ingredient content found in scraped text, attempting fallback: detecting product name...")
+            else:
+                print("Direct extraction failed despite ingredient content, attempting fallback: detecting product name...")
+            
             product_name = await self.detect_product_name(extracted_text, url)
             
             if product_name:

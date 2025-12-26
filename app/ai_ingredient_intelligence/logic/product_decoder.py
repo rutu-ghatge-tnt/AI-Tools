@@ -663,23 +663,24 @@ def _determine_product_tags(ingredient_details: List[Dict[str, Any]], analyze_re
     if not has_fragrance:
         tags.append("Fragrance Free")
     
+    # Pregnancy Safe and Fungal Acne Safe tags removed - not shown in Make a Wish feature
     # Check for pregnancy-safe (no retinoids, high salicylic acid, etc.)
-    unsafe_keywords = ["retinol", "retinoid", "retinyl", "salicylic acid"]
-    has_unsafe = any(
-        any(keyword in ing["inci"].lower() for keyword in unsafe_keywords) and ing.get("concentration", 0) > 2.0
-        for ing in ingredient_details
-    )
-    if not has_unsafe:
-        tags.append("Pregnancy Safe")
+    # unsafe_keywords = ["retinol", "retinoid", "retinyl", "salicylic acid"]
+    # has_unsafe = any(
+    #     any(keyword in ing["inci"].lower() for keyword in unsafe_keywords) and ing.get("concentration", 0) > 2.0
+    #     for ing in ingredient_details
+    # )
+    # if not has_unsafe:
+    #     tags.append("Pregnancy Safe")
     
     # Check for fungal acne-safe (no oils that feed malassezia)
-    fungal_acne_unsafe = ["oleic acid", "oleate", "coconut oil", "avocado oil", "olive oil"]
-    has_unsafe_oils = any(
-        any(keyword in ing["inci"].lower() for keyword in fungal_acne_unsafe)
-        for ing in ingredient_details
-    )
-    if not has_unsafe_oils:
-        tags.append("Fungal Acne Safe")
+    # fungal_acne_unsafe = ["oleic acid", "oleate", "coconut oil", "avocado oil", "olive oil"]
+    # has_unsafe_oils = any(
+    #     any(keyword in ing["inci"].lower() for keyword in fungal_acne_unsafe)
+    #     for ing in ingredient_details
+    # )
+    # if not has_unsafe_oils:
+    #     tags.append("Fungal Acne Safe")
     
     return tags
 
