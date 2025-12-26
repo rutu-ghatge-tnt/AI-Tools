@@ -343,6 +343,16 @@ class MarketResearchResponse(BaseModel):
     ai_analysis: Optional[str] = Field(None, description="AI analysis message when no actives found (e.g., 'This formulation contains no defined active ingredient...')")
     ai_product_type: Optional[str] = Field(None, description="Product type identified by AI (e.g., 'cleanser', 'lotion', 'cream')")
     ai_reasoning: Optional[str] = Field(None, description="AI reasoning for ingredient selection and matching strategy")
+    # New fields for enhanced market research
+    ai_interpretation: Optional[str] = Field(None, description="AI interpretation of the input URL/INCI explaining category determination")
+    primary_category: Optional[str] = Field(None, description="Primary category identified by AI (haircare, skincare, lipcare, bodycare, etc.)")
+    subcategory: Optional[str] = Field(None, description="Subcategory/product type identified by AI (serum, cleanser, shampoo, etc.)")
+    category_confidence: Optional[str] = Field(None, description="Confidence level of category determination (high, medium, low)")
+    market_research_overview: Optional[str] = Field(None, description="Comprehensive AI-generated overview of market research findings")
+    # Pagination fields
+    page: int = Field(1, description="Current page number")
+    page_size: int = Field(10, description="Number of products per page")
+    total_pages: int = Field(0, description="Total number of pages")
 
 
 class MarketResearchHistoryItemSummary(BaseModel):

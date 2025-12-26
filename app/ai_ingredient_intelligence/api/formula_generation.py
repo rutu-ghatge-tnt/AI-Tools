@@ -47,6 +47,38 @@ from app.ai_ingredient_intelligence.db.collections import wish_history_col
 router = APIRouter(prefix="/formula", tags=["Formula Generation"])
 
 
+def filter_original_formulation_references(items: list, text_fields: list = ["text", "title"]) -> list:
+    """
+    Filter out items that reference 'original formulation' or similar terms.
+    
+    Args:
+        items: List of dicts (insights or warnings)
+        text_fields: List of field names to check for references
+        
+    Returns:
+        Filtered list without original formulation references
+    """
+    original_formulation_keywords = [
+        "original formulation", "original formula", "previous formulation", 
+        "previous formula", "provided formulation", "initial formulation"
+    ]
+    
+    filtered = []
+    for item in items:
+        # Check all specified text fields
+        item_text = " ".join([
+            str(item.get(field, "")).lower() 
+            for field in text_fields 
+            if field in item
+        ])
+        
+        # Skip if mentions original formulation
+        if not any(keyword in item_text for keyword in original_formulation_keywords):
+            filtered.append(item)
+    
+    return filtered
+
+
 def transform_make_wish_to_frontend_format(make_wish_result: dict, original_wish_data: dict) -> dict:
     """
     Transform 5-stage Make a Wish response to frontend-expected format.
@@ -215,7 +247,7 @@ def transform_make_wish_to_frontend_format(make_wish_result: dict, original_wish
                     "ingredients": ingredients
                 })
         
-        # Get insights
+        # Get insights - filter out any that reference "original formulation"
         insights = []
         for insight in ingredient_selection.get("insights", []):
             insights.append({
@@ -229,8 +261,10 @@ def transform_make_wish_to_frontend_format(make_wish_result: dict, original_wish
                 "title": insight.get("title", ""),
                 "text": insight.get("text", "")
             })
+        # Filter out original formulation references
+        insights = filter_original_formulation_references(insights, ["text", "title"])
         
-        # Get warnings
+        # Get warnings - filter out any that reference "original formulation"
         warnings = []
         for warning in ingredient_selection.get("warnings", []):
             warnings.append({
@@ -242,6 +276,8 @@ def transform_make_wish_to_frontend_format(make_wish_result: dict, original_wish
                 "type": warning.get("severity", "info"),
                 "text": warning.get("text", "")
             })
+        # Filter out original formulation references
+        warnings = filter_original_formulation_references(warnings, ["text"])
         
         # Get compliance
         compliance_data = {
@@ -565,42 +601,36 @@ async def save_wish_history(
         
         print(f"✅ Validating data for user: {user_id_value}")
         
-        # Create history document
-        history_doc = {
-            "user_id": user_id_value,
-            "name": payload["name"],
-            "wish_data": payload["wish_data"],
-            "formula_result": payload["formula_result"],
-            "notes": payload.get("notes", ""),
-            "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
-        }
+        # ⚠️ ENDPOINT DISABLED - Return success without saving to prevent duplicates
+        # Log that this endpoint was called but is disabled
+        print(f"⚠️ [DISABLED] /save-wish-history called for user {user_id_value}, name: {payload['name']}")
+        print(f"   This endpoint is disabled to prevent duplicate saves.")
+        print(f"   Wish history should be auto-saved by the /generate endpoint.")
         
-        print(f"📦 Inserting document into MongoDB collection: wish_history")
-        print(f"   Document name: {history_doc['name']}")
-        print(f"   Has wish_data: {bool(history_doc.get('wish_data'))}")
-        print(f"   Has formula_result: {bool(history_doc.get('formula_result'))}")
+        # Return success response without actually saving
+        # Generate a dummy ID for frontend compatibility
+        import uuid
+        dummy_id = str(uuid.uuid4())
         
-        # Insert into MongoDB
-        result = await wish_history_col.insert_one(history_doc)
-        
-        print(f"✅ Wish history saved successfully with ID: {result.inserted_id}")
+        print(f"✅ Wish history save endpoint disabled - returning dummy ID: {dummy_id}")
         
         return {
             "success": True,
-            "id": str(result.inserted_id),
-            "message": "Wish history saved successfully"
+            "id": dummy_id,
+            "message": "Wish history save endpoint disabled - history is automatically saved by generate endpoint"
         }
         
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ Error saving wish history: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to save wish history: {str(e)}"
-        )
+        print(f"Error in disabled save-wish-history endpoint: {e}")
+        # Still return success to prevent frontend crashes
+        import uuid
+        return {
+            "success": True,
+            "id": str(uuid.uuid4()),
+            "message": "Wish history save endpoint disabled - history is automatically saved by generate endpoint"
+        }
 
 
 @router.get("/wish-history")

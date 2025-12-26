@@ -164,12 +164,39 @@ async def fetch_distributors_for_branded_ingredients(items: List[AnalyzeInciItem
         # Single database query for all distributors
         all_distributors = await distributor_col.find(query).sort("createdAt", -1).to_list(length=None)
         
-        # Process distributors: convert ObjectId to string and fetch ingredient names
+        # OPTIMIZED: Batch fetch all ingredient names in one query instead of individual find_one calls
+        # Collect all unique ingredient IDs from all distributors
+        all_ingredient_ids_to_fetch = set()
+        for distributor in all_distributors:
+            if "ingredientIds" in distributor and distributor.get("ingredientIds"):
+                for ing_id in distributor["ingredientIds"]:
+                    try:
+                        if isinstance(ing_id, str):
+                            try:
+                                ing_id_obj = ObjectId(ing_id)
+                                all_ingredient_ids_to_fetch.add(ing_id_obj)
+                            except:
+                                continue
+                        else:
+                            all_ingredient_ids_to_fetch.add(ing_id)
+                    except:
+                        pass
+        
+        # Batch fetch all ingredient documents in one query
+        ingredient_id_to_name_map = {}
+        if all_ingredient_ids_to_fetch:
+            ingredient_docs = await branded_ingredients_col.find(
+                {"_id": {"$in": list(all_ingredient_ids_to_fetch)}}
+            ).to_list(length=None)
+            for ing_doc in ingredient_docs:
+                ingredient_id_to_name_map[ing_doc["_id"]] = ing_doc.get("ingredient_name", "")
+        
+        # Process distributors: convert ObjectId to string and fetch ingredient names from map
         processed_distributors = []
         for distributor in all_distributors:
             distributor["_id"] = str(distributor["_id"])
             
-            # Fetch ingredientName from ingredientIds
+            # Fetch ingredientName from ingredientIds using the pre-fetched map
             if "ingredientIds" in distributor and distributor.get("ingredientIds"):
                 ingredient_names = []
                 for ing_id in distributor["ingredientIds"]:
@@ -182,9 +209,10 @@ async def fetch_distributors_for_branded_ingredients(items: List[AnalyzeInciItem
                         else:
                             ing_id_obj = ing_id
                         
-                        ing_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
-                        if ing_doc:
-                            ingredient_names.append(ing_doc.get("ingredient_name", ""))
+                        # Use pre-fetched map instead of individual query
+                        ingredient_name = ingredient_id_to_name_map.get(ing_id_obj)
+                        if ingredient_name:
+                            ingredient_names.append(ingredient_name)
                     except Exception as e:
                         pass
                 
@@ -746,7 +774,16 @@ async def extract_ingredients_from_url(
                 pass
         
         # Provide more helpful error messages
-        if "chrome" in error_msg.lower() or "webdriver" in error_msg.lower() or "driver" in error_msg.lower():
+        if "no meaningful text extracted" in error_msg.lower() or "failed to scrape url" in error_msg.lower():
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unable to extract content from the URL. The page could not be scraped successfully. "
+                       f"Possible reasons: 1) The page requires JavaScript that didn't load properly, "
+                       f"2) The page is blocking automated access (bot detection), 3) The page structure is different than expected, "
+                       f"4) The page content is primarily images/media without text, or 5) Network/timeout issues. "
+                       f"Please try a different URL or provide ingredients directly as INCI text."
+            )
+        elif "chrome" in error_msg.lower() or "webdriver" in error_msg.lower() or "driver" in error_msg.lower():
             raise HTTPException(
                 status_code=500, 
                 detail=f"Browser automation error: {error_msg}. Please ensure Chrome browser is installed. If Chrome is installed, ChromeDriver will be downloaded automatically on first use."
@@ -787,21 +824,31 @@ async def analyze_ingredients_core(ingredients: List[str]) -> AnalyzeInciRespons
         if not ingredients:
             raise ValueError("No ingredients provided")
         
-        # 🔹 Get synonyms from CAS API for better matching
-        print("Retrieving synonyms from CAS API...")
-        synonyms_map = await get_synonyms_batch(ingredients)
+        # OPTIMIZED: Run CAS synonyms and BIS cautions in parallel (they're independent)
+        import asyncio
+        print("Retrieving synonyms from CAS API and BIS cautions in parallel...")
+        synonyms_task = get_synonyms_batch(ingredients)
+        bis_cautions_task = get_bis_cautions_for_ingredients(ingredients)
+        
+        # Wait for both to complete
+        synonyms_map, bis_cautions = await asyncio.gather(synonyms_task, bis_cautions_task, return_exceptions=True)
+        
+        # Handle exceptions
+        if isinstance(synonyms_map, Exception):
+            print(f"Warning: Error getting synonyms: {synonyms_map}")
+            synonyms_map = {}
+        if isinstance(bis_cautions, Exception):
+            print(f"Warning: Error getting BIS cautions: {bis_cautions}")
+            bis_cautions = {}
+        
         print(f"Found synonyms for {len([k for k, v in synonyms_map.items() if v])} ingredients")
-        
-        # Match ingredients using new flow
-        matched_raw, general_ingredients, ingredient_tags, unable_to_decode = await match_inci_names(ingredients, synonyms_map)
-        
-        # 🔹 Get BIS cautions for all ingredients (runs in parallel with matching)
-        print("Retrieving BIS cautions...")
-        bis_cautions = await get_bis_cautions_for_ingredients(ingredients)
         if bis_cautions:
             print(f"[OK] Retrieved BIS cautions for {len(bis_cautions)} ingredients: {list(bis_cautions.keys())}")
         else:
             print("[WARNING] No BIS cautions retrieved - this may indicate an issue with the BIS retriever")
+        
+        # Match ingredients using new flow
+        matched_raw, general_ingredients, ingredient_tags, unable_to_decode = await match_inci_names(ingredients, synonyms_map)
         
     except Exception as e:
         print(f"Error in analyze_ingredients_core: {e}")
@@ -810,10 +857,34 @@ async def analyze_ingredients_core(ingredients: List[str]) -> AnalyzeInciRespons
     # Convert to objects
     items: List[AnalyzeInciItem] = [AnalyzeInciItem(**m) for m in matched_raw]
 
-    # 🔹 Fetch categories for INCI-based bifurcation (only for general INCI, not branded)
-    print("Fetching ingredient categories for INCI-based bifurcation...")
-    inci_categories, items_processed = await fetch_and_compute_categories(items)
+    # OPTIMIZED: Run categories and distributors fetching in parallel (they're independent)
+    print("Fetching ingredient categories and distributor information in parallel...")
+    categories_task = fetch_and_compute_categories(items)
+    distributors_task = fetch_distributors_for_branded_ingredients(items)
+    
+    # Wait for both to complete
+    categories_result, distributor_info = await asyncio.gather(
+        categories_task, 
+        distributors_task, 
+        return_exceptions=True
+    )
+    
+    # Handle exceptions
+    if isinstance(categories_result, Exception):
+        print(f"Warning: Error fetching categories: {categories_result}")
+        inci_categories, items_processed = {}, items
+    else:
+        inci_categories, items_processed = categories_result
+    
+    if isinstance(distributor_info, Exception):
+        print(f"Warning: Error fetching distributors: {distributor_info}")
+        distributor_info = {}
+    
     print(f"Found categories for {len(inci_categories)} INCI names")
+    if distributor_info:
+        print(f"Found distributors for {len(distributor_info)} branded ingredients")
+    else:
+        print("No distributor information found")
 
     # 🔹 Group ALL detected ingredients (branded + general) by matched_inci
     detected_dict = defaultdict(list)
@@ -842,14 +913,6 @@ async def analyze_ingredients_core(ingredients: List[str]) -> AnalyzeInciRespons
             is_water_related = any(water_term in ingredient_lower for water_term in water_related_keywords)
             if not is_water_related:
                 filtered_bis_cautions[ingredient] = cautions
-
-    # 🔹 Fetch distributor information for all branded ingredients in a single batch call
-    print("Fetching distributor information for branded ingredients...")
-    distributor_info = await fetch_distributors_for_branded_ingredients(items_processed)
-    if distributor_info:
-        print(f"Found distributors for {len(distributor_info)} branded ingredients")
-    else:
-        print("No distributor information found")
 
     # Build response (deprecated fields are not included - they will be excluded by exclude_none=True in schema)
     response = AnalyzeInciResponse(
@@ -1195,17 +1258,31 @@ async def analyze_url(
         
         print(f"Extracted {len(ingredients)} ingredients from {platform}")
         
-        # 🔹 Get synonyms from CAS API for better matching
-        print("Retrieving synonyms from CAS API...")
-        synonyms_map = await get_synonyms_batch(ingredients)
+        # OPTIMIZED: Run CAS synonyms and BIS cautions in parallel (they're independent)
+        import asyncio
+        print("Retrieving synonyms from CAS API and BIS cautions in parallel...")
+        synonyms_task = get_synonyms_batch(ingredients)
+        bis_cautions_task = get_bis_cautions_for_ingredients(ingredients)
+        
+        # Wait for both to complete
+        synonyms_map, bis_cautions = await asyncio.gather(synonyms_task, bis_cautions_task, return_exceptions=True)
+        
+        # Handle exceptions
+        if isinstance(synonyms_map, Exception):
+            print(f"Warning: Error getting synonyms: {synonyms_map}")
+            synonyms_map = {}
+        if isinstance(bis_cautions, Exception):
+            print(f"Warning: Error getting BIS cautions: {bis_cautions}")
+            bis_cautions = {}
+        
         print(f"Found synonyms for {len([k for k, v in synonyms_map.items() if v])} ingredients")
+        if bis_cautions:
+            print(f"[OK] Retrieved BIS cautions for {len(bis_cautions)} ingredients: {list(bis_cautions.keys())}")
+        else:
+            print("[WARNING] No BIS cautions retrieved - this may indicate an issue with the BIS retriever")
         
         # Match ingredients using new flow
         matched_raw, general_ingredients, ingredient_tags, unable_to_decode = await match_inci_names(ingredients, synonyms_map)
-        
-        # Get BIS cautions for all ingredients
-        print("Retrieving BIS cautions...")
-        bis_cautions = await get_bis_cautions_for_ingredients(ingredients)
         
         # Clean up scraper
         await scraper.close()
@@ -1248,10 +1325,34 @@ async def analyze_url(
     # Convert to objects
     items: List[AnalyzeInciItem] = [AnalyzeInciItem(**m) for m in matched_raw]
 
-    # 🔹 Fetch categories for INCI-based bifurcation (only for general INCI, not branded)
-    print("Fetching ingredient categories for INCI-based bifurcation...")
-    inci_categories, items_processed = await fetch_and_compute_categories(items)
+    # OPTIMIZED: Run categories and distributors fetching in parallel (they're independent)
+    print("Fetching ingredient categories and distributor information in parallel...")
+    categories_task = fetch_and_compute_categories(items)
+    distributors_task = fetch_distributors_for_branded_ingredients(items)
+    
+    # Wait for both to complete
+    categories_result, distributor_info = await asyncio.gather(
+        categories_task, 
+        distributors_task, 
+        return_exceptions=True
+    )
+    
+    # Handle exceptions
+    if isinstance(categories_result, Exception):
+        print(f"Warning: Error fetching categories: {categories_result}")
+        inci_categories, items_processed = {}, items
+    else:
+        inci_categories, items_processed = categories_result
+    
+    if isinstance(distributor_info, Exception):
+        print(f"Warning: Error fetching distributors: {distributor_info}")
+        distributor_info = {}
+    
     print(f"Found categories for {len(inci_categories)} INCI names")
+    if distributor_info:
+        print(f"Found distributors for {len(distributor_info)} branded ingredients")
+    else:
+        print("No distributor information found")
 
     # 🔹 Group ALL detected ingredients (branded + general) by matched_inci
     detected_dict = defaultdict(list)
@@ -1280,14 +1381,6 @@ async def analyze_url(
             is_water_related = any(water_term in ingredient_lower for water_term in water_related_keywords)
             if not is_water_related:
                 filtered_bis_cautions[ingredient] = cautions
-
-    # 🔹 Fetch distributor information for all branded ingredients in a single batch call
-    print("Fetching distributor information for branded ingredients...")
-    distributor_info = await fetch_distributors_for_branded_ingredients(items_processed)
-    if distributor_info:
-        print(f"Found distributors for {len(distributor_info)} branded ingredients")
-    else:
-        print("No distributor information found")
 
     # Build response (deprecated fields are not included - they will be excluded by exclude_none=True in schema)
     response = AnalyzeInciResponse(
@@ -2763,10 +2856,14 @@ async def save_decode_history(
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
-    Save decode history with name and tag (user-specific)
+    [DISABLED] Save decode history with name and tag (user-specific)
+    
+    ⚠️ THIS ENDPOINT IS CURRENTLY DISABLED TO PREVENT DUPLICATE SAVES ⚠️
+    History is now automatically saved by the /analyze-inci and /analyze-url endpoints.
+    This endpoint returns success but does not save to prevent duplicates.
     
     HISTORY FUNCTIONALITY:
-    - All decode operations are automatically saved to user's history
+    - All decode operations are automatically saved to user's history via auto-save
     - History is user-specific and isolated by user_id
     - Supports status tracking: "in_progress" (pending), "completed" (analyzed), or "failed"
     - Name and tags can be edited later using PATCH /decode-history/{history_id}
@@ -2789,78 +2886,36 @@ async def save_decode_history(
     - User ID is automatically extracted from the JWT token
     """
     try:
-        # Validate payload
-        if "name" not in payload:
-            raise HTTPException(status_code=400, detail="Missing required field: name")
-        if "input_type" not in payload:
-            raise HTTPException(status_code=400, detail="Missing required field: input_type")
-        if "input_data" not in payload:
-            raise HTTPException(status_code=400, detail="Missing required field: input_data")
-        
-        name = payload["name"]
-        tag = payload.get("tag")
-        input_type = payload["input_type"]
-        input_data = payload["input_data"]
-        status = payload.get("status", "completed")  # Default to "completed" for backward compatibility
-        analysis_result = payload.get("analysis_result")  # Optional if status is "in_progress"
-        report_data = payload.get("report_data")  # Optional report data
-        notes = payload.get("notes", "")  # Optional notes
-        expected_benefits = payload.get("expected_benefits")  # Optional expected benefits
-        
-        # Validate status
-        if status not in ["in_progress", "completed", "failed"]:
-            raise HTTPException(status_code=400, detail="Invalid status. Must be 'in_progress', 'completed', or 'failed'")
-        
-        # If status is completed, analysis_result is required
-        if status == "completed" and analysis_result is None:
-            raise HTTPException(status_code=400, detail="analysis_result is required when status is 'completed'")
-        
-        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        # Extract user_id for logging
         user_id_value = current_user.get("user_id") or current_user.get("_id") or payload.get("user_id")
-        if not user_id_value:
-            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
+        name = payload.get("name", "Unknown")
         
-        # Create history document
-        history_doc = {
-            "user_id": user_id_value,
-            "name": name,
-            "tag": tag,
-            "input_type": input_type,
-            "input_data": input_data,
-            "status": status,
-            "report_data": report_data,  # Store report if available
-            "notes": notes,  # Store notes
-            "created_at": (datetime.now(timezone(timedelta(hours=5, minutes=30)))).isoformat()
-        }
+        # Log that this endpoint was called but is disabled
+        print(f"⚠️ [DISABLED] /save-decode-history called for user {user_id_value}, name: {name}")
+        print(f"   This endpoint is disabled to prevent duplicate saves. History is auto-saved by /analyze-inci and /analyze-url endpoints.")
         
-        # Only include analysis_result if provided
-        if analysis_result is not None:
-            history_doc["analysis_result"] = analysis_result
-        
-        # Include expected_benefits if provided
-        if expected_benefits is not None:
-            history_doc["expected_benefits"] = expected_benefits
-        
-        # Insert into MongoDB
-        result = await decode_history_col.insert_one(history_doc)
-        history_doc["_id"] = str(result.inserted_id)
+        # Return success response without actually saving
+        # Generate a dummy ID for frontend compatibility
+        import uuid
+        dummy_id = str(uuid.uuid4())
         
         return {
             "success": True,
-            "id": str(result.inserted_id),
-            "message": "History saved successfully"
+            "id": dummy_id,
+            "message": "History save endpoint disabled - history is automatically saved by analysis endpoints"
         }
         
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error saving decode history: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to save decode history: {str(e)}"
-        )
+        print(f"Error in disabled save-decode-history endpoint: {e}")
+        # Still return success to prevent frontend crashes
+        import uuid
+        return {
+            "success": True,
+            "id": str(uuid.uuid4()),
+            "message": "History save endpoint disabled - history is automatically saved by analysis endpoints"
+        }
 
 
 @router.get("/decode-history")
@@ -3029,9 +3084,9 @@ async def get_decode_history_detail(
         
         # Ensure all fields are included
         if "report_data" not in item:
-            item["report_data"] = None
+            item["report_data"] = ""
         if "analysis_result" not in item:
-            item["analysis_result"] = None
+            item["analysis_result"] = {}
         
         # Map status for frontend
         status_mapping = {
@@ -3046,9 +3101,10 @@ async def get_decode_history_detail(
         else:
             item["status"] = "pending"  # Default to pending if status is missing (likely in progress)
         
-        # Ensure analysis_result is None if status is pending or failed
+        # Ensure analysis_result and report_data are empty (not null) if status is pending or failed
         if item.get("status") in ["pending", "failed"]:
-            item["analysis_result"] = None
+            item["analysis_result"] = {}
+            item["report_data"] = ""
         
         return DecodeHistoryDetailResponse(
             item=DecodeHistoryItem(**item)
@@ -3208,11 +3264,14 @@ async def save_compare_history(
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
-    Save compare history with name and tag (user-specific)
+    [DISABLED] Save compare history with name and tag (user-specific)
     Supports both 2-product and multi-product comparisons
     
+    ⚠️ THIS ENDPOINT IS CURRENTLY DISABLED TO PREVENT DUPLICATE SAVES ⚠️
+    This endpoint returns success but does not save to prevent duplicates.
+    
     HISTORY FUNCTIONALITY:
-    - All product comparison operations are automatically saved to user's history
+    - All product comparison operations should be automatically saved by compare endpoints
     - History is user-specific and isolated by user_id
     - Supports status tracking: "in_progress" (pending), "completed" (analyzed), or "failed"
     - Name and tags can be used for organization and categorization
@@ -3250,111 +3309,37 @@ async def save_compare_history(
     - User ID is automatically extracted from the JWT token
     """
     try:
-        # Validate payload
-        if "name" not in payload:
-            raise HTTPException(status_code=400, detail="Missing required field: name")
-        
-        name = payload["name"]
-        tag = payload.get("tag")
-        status = payload.get("status", "completed")  # Default to "completed" for backward compatibility
-        comparison_result = payload.get("comparison_result")  # Optional if status is "in_progress"
-        notes = payload.get("notes", "")  # Optional notes
-        
-        # Validate status
-        if status not in ["in_progress", "completed", "failed"]:
-            raise HTTPException(status_code=400, detail="Invalid status. Must be 'in_progress', 'completed', or 'failed'")
-        
-        # If status is completed, comparison_result is required
-        if status == "completed" and comparison_result is None:
-            raise HTTPException(status_code=400, detail="comparison_result is required when status is 'completed'")
-        
-        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        # ⚠️ ENDPOINT DISABLED - Return success without saving to prevent duplicates
+        # Extract user_id and name for logging (do minimal validation to prevent crashes)
         user_id_value = current_user.get("user_id") or current_user.get("_id") or payload.get("user_id")
-        if not user_id_value:
-            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
+        name = payload.get("name", "Unknown")
         
-        # Check if it's multi-product format (products array) or 2-product format (input1/input2)
-        if "products" in payload:
-            # Multi-product format
-            products = payload["products"]
-            if not isinstance(products, list) or len(products) < 2:
-                raise HTTPException(status_code=400, detail="products must be an array with at least 2 items")
-            
-            # Validate each product
-            for i, product in enumerate(products):
-                if not isinstance(product, dict):
-                    raise HTTPException(status_code=400, detail=f"Product {i+1} must be an object")
-                if "input" not in product or "input_type" not in product:
-                    raise HTTPException(status_code=400, detail=f"Product {i+1} is missing 'input' or 'input_type' field")
-                if product["input_type"] not in ["url", "inci"]:
-                    raise HTTPException(status_code=400, detail=f"Product {i+1} input_type must be 'url' or 'inci'")
-            
-            # Create history document with products array
-            history_doc = {
-                "user_id": user_id_value,
-                "name": name,
-                "tag": tag,
-                "products": products,
-                "status": status,
-                "notes": notes,
-                "created_at": (datetime.now(timezone(timedelta(hours=5, minutes=30)))).isoformat()
-            }
-        elif "input1" in payload and "input2" in payload:
-            # 2-product format (backward compatible) - convert to products array
-            if "input1_type" not in payload or "input2_type" not in payload:
-                raise HTTPException(status_code=400, detail="Missing required fields: input1_type and input2_type")
-            
-            input1 = payload["input1"]
-            input2 = payload["input2"]
-            input1_type = payload["input1_type"]
-            input2_type = payload["input2_type"]
-            
-            # Normalize to products array format (unified format)
-            products = [
-                {"input": input1, "input_type": input1_type},
-                {"input": input2, "input_type": input2_type}
-            ]
-            
-            # Create history document with products array (unified format)
-            history_doc = {
-                "user_id": user_id_value,
-                "name": name,
-                "tag": tag,
-                "products": products,  # Store in unified format
-                "status": status,
-                "notes": notes,
-                "created_at": (datetime.now(timezone(timedelta(hours=5, minutes=30)))).isoformat()
-            }
-        else:
-            raise HTTPException(
-                status_code=400, 
-                detail="Must provide either 'products' array (for multi-product) or 'input1'/'input2' (for 2-product comparison)"
-            )
+        # Log that this endpoint was called but is disabled
+        print(f"⚠️ [DISABLED] /save-compare-history called for user {user_id_value}, name: {name}")
+        print(f"   This endpoint is disabled to prevent duplicate saves.")
         
-        # Only include comparison_result if provided
-        if comparison_result is not None:
-            history_doc["comparison_result"] = comparison_result
-        
-        # Insert into MongoDB
-        result = await compare_history_col.insert_one(history_doc)
-        history_doc["_id"] = str(result.inserted_id)
+        # Return success response without actually saving
+        # Generate a dummy ID for frontend compatibility
+        import uuid
+        dummy_id = str(uuid.uuid4())
         
         return {
             "success": True,
-            "id": str(result.inserted_id),
-            "message": "Compare history saved successfully"
+            "id": dummy_id,
+            "message": "Compare history save endpoint disabled - use compare endpoints which auto-save"
         }
         
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error saving compare history: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to save compare history: {str(e)}"
-        )
+        print(f"Error in disabled save-compare-history endpoint: {e}")
+        # Still return success to prevent frontend crashes
+        import uuid
+        return {
+            "success": True,
+            "id": str(uuid.uuid4()),
+            "message": "Compare history save endpoint disabled - use compare endpoints which auto-save"
+        }
 
 
 # OPTIONS handler removed - CORS middleware handles this automatically
@@ -3909,6 +3894,255 @@ Return your analysis as JSON with the structure specified in the system prompt."
         }
 
 
+async def analyze_product_categories_with_ai(
+    ingredients: List[str],
+    normalized_ingredients: List[str],
+    extracted_text: str = "",
+    product_name: str = ""
+) -> Dict[str, any]:
+    """
+    Use Claude AI to analyze input URL/INCI and determine product categories and subcategories.
+    
+    Returns dict with:
+    - primary_category: Main category (haircare, skincare, lipcare, bodycare, etc.)
+    - subcategory: Specific product type (serum, cleanser, shampoo, etc.)
+    - interpretation: AI's interpretation of the input
+    - confidence: Confidence level (high, medium, low)
+    """
+    if not claude_client:
+        return {
+            "primary_category": None,
+            "subcategory": None,
+            "interpretation": None,
+            "confidence": "low"
+        }
+    
+    print(f"    [AI Category Analysis] Analyzing {len(ingredients)} ingredients for category identification...")
+    
+    system_prompt = """You are an expert cosmetic product analyst specializing in product categorization.
+
+Your task is to analyze product ingredients and determine:
+1. PRIMARY CATEGORY: The main product category (haircare, skincare, lipcare, bodycare, etc.)
+2. SUBCATEGORY: The specific product type (serum, cleanser, shampoo, conditioner, face mask, etc.)
+
+CATEGORY DEFINITIONS:
+- **haircare**: Products for hair and scalp (shampoo, conditioner, hair mask, hair serum, hair oil, scalp treatment)
+- **skincare**: Products for facial skin (cleanser, serum, moisturizer, toner, face mask, eye cream, sunscreen, exfoliant)
+- **lipcare**: Products specifically for lips (lip balm, lip scrub, lip mask, lip serum)
+- **bodycare**: Products for body skin (body lotion, body wash, body scrub, body oil)
+- **other**: Products that don't fit clearly into above categories
+
+SUBCATEGORY EXAMPLES:
+- Skincare: cleanser, serum, moisturizer, toner, face mask, eye cream, sunscreen, exfoliant, face oil
+- Haircare: shampoo, conditioner, hair mask, hair serum, hair oil, scalp treatment, hair spray
+- Lipcare: lip balm, lip scrub, lip mask, lip serum
+- Bodycare: body lotion, body wash, body scrub, body oil
+
+ANALYSIS APPROACH:
+1. Analyze ingredient profile to identify product type
+2. Consider ingredient combinations (e.g., surfactants suggest cleanser/shampoo)
+3. Look for category-specific ingredients (e.g., hair conditioning agents, facial actives)
+4. Use product name/description if provided for additional context
+
+OUTPUT FORMAT:
+Return a JSON object with this structure:
+{
+  "primary_category": "haircare" | "skincare" | "lipcare" | "bodycare" | "other",
+  "subcategory": "serum" | "cleanser" | "shampoo" | "conditioner" | etc.,
+  "interpretation": "Detailed interpretation explaining the category determination",
+  "confidence": "high" | "medium" | "low"
+}
+
+Be specific and accurate. If uncertain, use "other" as primary_category and set confidence to "low"."""
+
+    user_prompt = f"""Analyze this product formulation and determine its category and subcategory.
+
+INGREDIENTS:
+{chr(10).join(f"- {ing}" for ing in ingredients[:50])}
+
+{f'PRODUCT NAME: {product_name}' if product_name else ''}
+
+{f'EXTRACTED TEXT (if available): {extracted_text[:500]}' if extracted_text else ''}
+
+TASK:
+1. Analyze the ingredient profile
+2. Determine the primary category (haircare, skincare, lipcare, bodycare, or other)
+3. Identify the specific subcategory/product type
+4. Provide a clear interpretation explaining your reasoning
+5. Assess confidence level
+
+Return your analysis as JSON with the structure specified in the system prompt."""
+
+    try:
+        max_tokens = 4096 if "claude-3-opus-20240229" in claude_model else 8192
+        
+        response = claude_client.messages.create(
+            model=claude_model,
+            max_tokens=max_tokens,
+            temperature=0.1,  # Lower temperature for more consistent categorization
+            system=system_prompt,
+            messages=[
+                {"role": "user", "content": user_prompt}
+            ]
+        )
+        
+        if not response.content or len(response.content) == 0:
+            return {
+                "primary_category": None,
+                "subcategory": None,
+                "interpretation": None,
+                "confidence": "low"
+            }
+        
+        content = response.content[0].text.strip()
+        
+        # Extract JSON
+        json_match = re.search(r'\{[^{}]*"primary_category"[^{}]*\}', content, re.DOTALL)
+        if json_match:
+            content = json_match.group(0)
+        elif "```json" in content:
+            content = content.split("```json")[1].split("```")[0].strip()
+        elif "```" in content:
+            content = content.split("```")[1].split("```")[0].strip()
+        
+        result = json.loads(content)
+        primary_category = result.get("primary_category", "").lower() if result.get("primary_category") else None
+        subcategory = result.get("subcategory", "").lower() if result.get("subcategory") else None
+        interpretation = result.get("interpretation", "")
+        confidence = result.get("confidence", "low")
+        
+        print(f"    AI Category Analysis:")
+        print(f"      Primary Category: {primary_category}")
+        print(f"      Subcategory: {subcategory}")
+        print(f"      Confidence: {confidence}")
+        
+        return {
+            "primary_category": primary_category,
+            "subcategory": subcategory,
+            "interpretation": interpretation,
+            "confidence": confidence
+        }
+        
+    except json.JSONDecodeError as e:
+        print(f"    ⚠️  Error parsing AI category response as JSON: {e}")
+        print(f"    Response was: {content[:200]}")
+        return {
+            "primary_category": None,
+            "subcategory": None,
+            "interpretation": None,
+            "confidence": "low"
+        }
+    except Exception as e:
+        print(f"    ⚠️  Error calling Claude AI for category analysis: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "primary_category": None,
+            "subcategory": None,
+            "interpretation": None,
+            "confidence": "low"
+        }
+
+
+async def generate_market_research_overview_with_ai(
+    input_ingredients: List[str],
+    matched_products: List[Dict],
+    category_info: Dict[str, any],
+    total_matched: int
+) -> str:
+    """
+    Use Claude AI to generate a concluding overview of the market research.
+    
+    Returns a comprehensive overview string summarizing the research findings.
+    """
+    if not claude_client or len(matched_products) == 0:
+        return None
+    
+    print(f"    [AI Overview] Generating market research overview for {len(matched_products)} products...")
+    
+    # Build product summary for AI
+    product_summaries = []
+    for i, product in enumerate(matched_products[:20]):  # Limit to top 20 for overview
+        product_summaries.append({
+            "name": product.get("productName", "Unknown"),
+            "brand": product.get("brand", ""),
+            "matched_actives": product.get("active_ingredients", [])[:5],
+            "match_percentage": product.get("match_percentage", 0),
+            "category": product.get("category", ""),
+            "subcategory": product.get("subcategory", "")
+        })
+    
+    system_prompt = """You are an expert market research analyst specializing in cosmetic and personal care products.
+
+Your task is to generate a comprehensive, insightful overview of market research findings.
+
+OVERVIEW STRUCTURE:
+1. **Summary**: Brief overview of what was researched
+2. **Key Findings**: Main insights about the market landscape
+3. **Product Trends**: Notable patterns in matched products (ingredients, categories, brands)
+4. **Market Insights**: What the research reveals about the competitive landscape
+5. **Recommendations**: Actionable insights based on the findings
+
+TONE:
+- Professional and analytical
+- Clear and concise
+- Data-driven with specific observations
+- Actionable insights
+
+OUTPUT FORMAT:
+Return a well-structured text overview (not JSON). Use clear sections and bullet points where appropriate."""
+
+    user_prompt = f"""Generate a comprehensive market research overview based on the following data:
+
+INPUT PRODUCT INGREDIENTS:
+{chr(10).join(f"- {ing}" for ing in input_ingredients[:20])}
+
+CATEGORY ANALYSIS:
+- Primary Category: {category_info.get('primary_category', 'Unknown')}
+- Subcategory: {category_info.get('subcategory', 'Unknown')}
+- Interpretation: {category_info.get('interpretation', 'N/A')}
+
+MATCHED PRODUCTS ({total_matched} total, showing top {len(product_summaries)}):
+{json.dumps(product_summaries, indent=2)}
+
+TASK:
+Generate a comprehensive market research overview that includes:
+1. Summary of the research
+2. Key findings about the market
+3. Product trends and patterns
+4. Market insights
+5. Recommendations
+
+Make it insightful, professional, and actionable."""
+
+    try:
+        max_tokens = 4096 if "claude-3-opus-20240229" in claude_model else 8192
+        
+        response = claude_client.messages.create(
+            model=claude_model,
+            max_tokens=max_tokens,
+            temperature=0.3,
+            system=system_prompt,
+            messages=[
+                {"role": "user", "content": user_prompt}
+            ]
+        )
+        
+        if not response.content or len(response.content) == 0:
+            return None
+        
+        overview = response.content[0].text.strip()
+        print(f"    ✓ Generated market research overview ({len(overview)} characters)")
+        
+        return overview
+        
+    except Exception as e:
+        print(f"    ⚠️  Error generating market research overview: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
 async def enhance_product_ranking_with_ai(
     products: List[Dict],
     input_actives: List[str],
@@ -4040,7 +4274,10 @@ async def save_market_research_history(
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
-    Save market research history (user-specific)
+    [DISABLED] Save market research history (user-specific)
+    
+    ⚠️ THIS ENDPOINT IS CURRENTLY DISABLED TO PREVENT DUPLICATE SAVES ⚠️
+    This endpoint returns success but does not save to prevent duplicates.
     
     Request body:
     {
@@ -4060,63 +4297,37 @@ async def save_market_research_history(
     - User ID is automatically extracted from the JWT token
     """
     try:
-        if "name" not in payload:
-            raise HTTPException(status_code=400, detail="name is required")
-        if "input_type" not in payload:
-            raise HTTPException(status_code=400, detail="input_type is required")
-        if "input_data" not in payload:
-            raise HTTPException(status_code=400, detail="input_data is required")
-        
-        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        # ⚠️ ENDPOINT DISABLED - Return success without saving to prevent duplicates
+        # Extract user_id and name for logging (do minimal validation to prevent crashes)
         user_id_value = current_user.get("user_id") or current_user.get("_id") or payload.get("user_id")
-        if not user_id_value:
-            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
+        name = payload.get("name", "Unknown")
         
-        name = payload.get("name", "").strip()
-        tag = payload.get("tag", "").strip() or None
-        input_type = payload.get("input_type", "").lower()
-        input_data = payload.get("input_data", "").strip()
-        research_result = payload.get("research_result")
-        ai_analysis = payload.get("ai_analysis")
-        ai_product_type = payload.get("ai_product_type")
-        ai_reasoning = payload.get("ai_reasoning")
-        notes = payload.get("notes", "").strip() or None
+        # Log that this endpoint was called but is disabled
+        print(f"⚠️ [DISABLED] /save-market-research-history called for user {user_id_value}, name: {name}")
+        print(f"   This endpoint is disabled to prevent duplicate saves.")
         
-        if input_type not in ["inci", "url"]:
-            raise HTTPException(status_code=400, detail="input_type must be 'inci' or 'url'")
-        
-        history_doc = {
-            "user_id": user_id_value,
-            "name": name,
-            "tag": tag,
-            "input_type": input_type,
-            "input_data": input_data,
-            "research_result": research_result,
-            "ai_analysis": ai_analysis,
-            "ai_product_type": ai_product_type,
-            "ai_reasoning": ai_reasoning,
-            "notes": notes,
-            "created_at": (datetime.now(timezone(timedelta(hours=5, minutes=30)))).isoformat()
-        }
-        
-        result = await market_research_history_col.insert_one(history_doc)
+        # Return success response without actually saving
+        # Generate a dummy ID for frontend compatibility
+        import uuid
+        dummy_id = str(uuid.uuid4())
         
         return {
             "success": True,
-            "id": str(result.inserted_id),
-            "message": "Market research history saved successfully"
+            "id": dummy_id,
+            "message": "Market research history save endpoint disabled"
         }
         
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error saving market research history: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to save market research history: {str(e)}"
-        )
+        print(f"Error in disabled save-market-research-history endpoint: {e}")
+        # Still return success to prevent frontend crashes
+        import uuid
+        return {
+            "success": True,
+            "id": str(uuid.uuid4()),
+            "message": "Market research history save endpoint disabled"
+        }
 
 
 @router.get("/market-research-history", response_model=GetMarketResearchHistoryResponse)
@@ -4425,25 +4636,48 @@ async def market_research(
     """
     Market Research: Match products from URL or INCI list with externalProducts collection.
     
-    IMPORTANT: Only matches ACTIVE ingredients. Shows all products that have at least one active ingredient match.
+    ENHANCED FEATURES:
+    1. AI Category Analysis: Automatically analyzes input to determine product category (haircare, skincare, lipcare, etc.) and subcategory
+    2. Category Filtering: Filters products by category to ensure relevance (e.g., face serum won't show hair products)
+    3. Pagination: Shows all matched products with pagination instead of just top matches
+    4. AI Interpretation: Provides AI interpretation of the input explaining category determination
+    5. Market Research Overview: Generates comprehensive AI-powered overview of research findings
+    
+    IMPORTANT: Only matches ACTIVE ingredients. Shows all products that have at least one active ingredient match AND match the identified category.
     
     Request body:
     {
         "url": "https://example.com/product/..." (required if input_type is "url"),
         "inci": "Water, Glycerin, ..." (required if input_type is "inci"),
-        "input_type": "url" or "inci"
+        "input_type": "url" or "inci",
+        "page": 1 (optional, default: 1),
+        "page_size": 10 (optional, default: 10, max: 100)
     }
     
     Returns:
     {
-        "products": [list of matched products with images and full details, sorted by active match percentage],
+        "products": [paginated list of matched products with images and full details, sorted by active match percentage],
         "extracted_ingredients": [list of ingredients extracted from input],
-        "total_matched": number of matched products (with at least one active ingredient match),
+        "total_matched": total number of matched products (across all pages),
         "processing_time": time taken,
-        "input_type": "url" or "inci"
+        "input_type": "url" or "inci",
+        "ai_interpretation": "AI interpretation of input explaining category determination",
+        "primary_category": "haircare" | "skincare" | "lipcare" | "bodycare" | "other",
+        "subcategory": "serum" | "cleanser" | "shampoo" | etc.,
+        "category_confidence": "high" | "medium" | "low",
+        "market_research_overview": "Comprehensive AI-generated overview of market research findings",
+        "page": current page number,
+        "page_size": number of products per page,
+        "total_pages": total number of pages,
+        "ai_analysis": "AI analysis message (if no actives found)",
+        "ai_product_type": "Product type identified by AI",
+        "ai_reasoning": "AI reasoning for ingredient selection"
     }
     
-    Note: Products are included if they match at least one active ingredient from the input.
+    Note: Products are included if they:
+    1. Match at least one active ingredient from the input
+    2. Match the identified category (if category confidence is high or medium)
+    
     Excipients and unknown ingredients are ignored for matching purposes.
     """
     start = time.time()
@@ -4534,10 +4768,71 @@ async def market_research(
         
         print(f"Normalized ingredients for matching ({len(normalized_input_ingredients)}): {normalized_input_ingredients[:10]}{'...' if len(normalized_input_ingredients) > 10 else ''}")
         
+        # Get pagination parameters
+        page = max(1, int(payload.get("page", 1)))
+        page_size = max(1, min(100, int(payload.get("page_size", 10))))  # Limit to max 100 per page
+        
         # Initialize AI analysis variables (will be populated if AI is used)
         ai_analysis_message = None
         ai_product_type = None
         ai_reasoning = None
+        
+        # NEW: AI Category Analysis - Analyze input to determine categories
+        print(f"\n{'='*60}")
+        print("STEP 0: AI Category Analysis...")
+        print(f"{'='*60}")
+        category_info = {
+            "primary_category": None,
+            "subcategory": None,
+            "interpretation": None,
+            "confidence": "low"
+        }
+        
+        if claude_client and ingredients:
+            try:
+                # Extract product name from URL if available
+                product_name = ""
+                if input_type == "url":
+                    url = payload.get("url", "")
+                    # Try to extract product name from URL or extracted text
+                    if extracted_text:
+                        # Look for product name patterns in extracted text
+                        lines = extracted_text.split('\n')[:20]
+                        for line in lines:
+                            if any(keyword in line.lower() for keyword in ['product', 'name', 'title']):
+                                product_name = line.strip()[:100]
+                                break
+                
+                print(f"  🤖 Calling AI for category analysis...")
+                category_info = await analyze_product_categories_with_ai(
+                    ingredients,
+                    normalized_input_ingredients,
+                    extracted_text[:1000] if extracted_text else "",  # Limit text length
+                    product_name
+                )
+                print(f"  ✓ Category analysis completed")
+                
+                # Populate ai_product_type from subcategory if category analysis was successful
+                # This ensures ai_product_type is always populated when we have category info
+                if category_info.get("subcategory") and not ai_product_type:
+                    ai_product_type = category_info.get("subcategory")
+                    print(f"  ✓ Populated ai_product_type from category analysis: {ai_product_type}")
+            except Exception as e:
+                print(f"  ⚠️  Error in AI category analysis: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        primary_category = category_info.get("primary_category")
+        subcategory = category_info.get("subcategory")
+        ai_interpretation = category_info.get("interpretation")
+        category_confidence = category_info.get("confidence", "low")
+        
+        # Populate ai_product_type from subcategory if category analysis was successful
+        # This ensures ai_product_type is always populated when we have category info
+        # (Fallback in case it wasn't set inside the try block)
+        if subcategory and not ai_product_type:
+            ai_product_type = subcategory
+            print(f"  ✓ Populated ai_product_type from category analysis (fallback): {subcategory}")
         
         # Categorize input ingredients into actives and excipients
         print(f"\n{'='*60}")
@@ -4958,10 +5253,37 @@ async def market_research(
             # No percentage threshold - show all products with active ingredient matches
             should_include = active_match_count > 0
             
+            # NEW: Category filtering - filter products by category if category was identified
+            if should_include and primary_category and category_confidence in ["high", "medium"]:
+                product_category = product.get("category", "").lower() if product.get("category") else ""
+                product_subcategory = product.get("subcategory", "").lower() if product.get("subcategory") else ""
+                
+                # Check if product category matches identified category
+                category_match = False
+                
+                # Direct category match
+                if product_category and primary_category in product_category:
+                    category_match = True
+                elif product_subcategory and primary_category in product_subcategory:
+                    category_match = True
+                
+                # Subcategory matching (more specific)
+                if not category_match and subcategory:
+                    if product_subcategory and subcategory in product_subcategory:
+                        category_match = True
+                    elif product_category and subcategory in product_category:
+                        category_match = True
+                
+                # If category doesn't match, exclude the product
+                if not category_match:
+                    should_include = False
+                    if len(matched_products) < 5:  # Debug for first 5
+                        print(f"  ✗ Category mismatch: Product category '{product_category}' doesn't match '{primary_category}'")
+            
             if len(matched_products) < 5:  # Debug for first 5
                 print(f"  Product match (active only): {active_match_percentage:.1f}% | Actives: {len(matched_actives)}/{len(input_actives)} | Include: {should_include}")
             
-            # Include products that have at least one active ingredient match
+            # Include products that have at least one active ingredient match AND pass category filter
             if should_include:
                 matches_found += 1
                 
@@ -5123,11 +5445,36 @@ async def market_research(
             reverse=True
         )
         
-        # Limit to top 10 products
+        # NEW: Pagination - show all matched products with pagination instead of limiting to top 10
         total_matched_count = len(matched_products)
-        matched_products = matched_products[:10]
+        total_pages = (total_matched_count + page_size - 1) // page_size  # Ceiling division
+        
+        # Apply pagination
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        paginated_products = matched_products[start_idx:end_idx]
         
         processing_time = time.time() - start
+        
+        # NEW: Generate market research overview using AI
+        market_research_overview = None
+        if claude_client and len(matched_products) > 0:
+            try:
+                print(f"\n{'='*60}")
+                print("Generating Market Research Overview...")
+                print(f"{'='*60}")
+                market_research_overview = await generate_market_research_overview_with_ai(
+                    ingredients,
+                    matched_products[:50],  # Use top 50 for overview generation
+                    category_info,
+                    total_matched_count
+                )
+                if market_research_overview:
+                    print(f"  ✓ Market research overview generated")
+            except Exception as e:
+                print(f"  ⚠️  Error generating market research overview: {e}")
+                import traceback
+                traceback.print_exc()
         
         print(f"\n{'='*60}")
         print(f"Market Research Summary (Active Ingredients Only):")
@@ -5137,9 +5484,9 @@ async def market_research(
         print(f"  Sample active ingredients: {input_actives[:5] if input_actives else 'None'}")
         print(f"  Products in database: {len(all_products)}")
         print(f"  Total products matched: {total_matched_count}")
-        print(f"  Showing top 10 products: {len(matched_products)}")
-        if len(matched_products) > 0:
-            top_match = matched_products[0]
+        print(f"  Showing page {page} of {total_pages} ({len(paginated_products)} products)")
+        if len(paginated_products) > 0:
+            top_match = paginated_products[0]
             print(f"  Top match: {top_match.get('productName', 'Unknown')[:50]}")
             print(f"    - Active match count: {top_match.get('active_match_count', 0)}/{len(input_actives)}")
             print(f"    - Active match percentage: {top_match.get('match_percentage', 0)}%")
@@ -5157,20 +5504,35 @@ async def market_research(
         print(f"{'='*60}\n")
         
         # Debug: Log what we're returning
-        print(f"\n📤 Returning response with AI analysis:")
+        print(f"\n📤 Returning response with enhanced AI analysis:")
         print(f"  ai_analysis: {ai_analysis_message}")
         print(f"  ai_product_type: {ai_product_type}")
         print(f"  ai_reasoning: {ai_reasoning}")
+        print(f"  ai_interpretation: {ai_interpretation}")
+        print(f"  primary_category: {primary_category}")
+        print(f"  subcategory: {subcategory}")
+        print(f"  category_confidence: {category_confidence}")
+        print(f"  pagination: page {page} of {total_pages} (showing {len(paginated_products)} of {total_matched_count})")
         
         return MarketResearchResponse(
-            products=matched_products,
+            products=paginated_products,  # Return paginated products
             extracted_ingredients=ingredients,
-            total_matched=total_matched_count,  # Show total matched, not just top 10
+            total_matched=total_matched_count,  # Total matched products (all pages)
             processing_time=round(processing_time, 2),
             input_type=input_type,
             ai_analysis=ai_analysis_message,  # AI analysis message
             ai_product_type=ai_product_type,  # Product type identified by AI
-            ai_reasoning=ai_reasoning  # AI reasoning for ingredient selection
+            ai_reasoning=ai_reasoning,  # AI reasoning for ingredient selection
+            # New fields
+            ai_interpretation=ai_interpretation,  # AI interpretation of input
+            primary_category=primary_category,  # Primary category (haircare, skincare, etc.)
+            subcategory=subcategory,  # Subcategory (serum, cleanser, etc.)
+            category_confidence=category_confidence,  # Confidence level
+            market_research_overview=market_research_overview,  # Comprehensive overview
+            # Pagination fields
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages
         )
         
     except HTTPException:

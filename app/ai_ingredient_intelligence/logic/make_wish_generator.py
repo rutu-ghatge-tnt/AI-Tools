@@ -691,35 +691,51 @@ async def generate_formula_from_wish(wish_data: dict) -> dict:
     )
     print(f"✅ Optimized formula: {optimized_formula.get('optimized_formula', {}).get('total_percentage', 0)}%")
     
-    # Stage 3: Manufacturing Process
-    print("🏭 Stage 3: Manufacturing Process...")
-    manufacturing_prompt = generate_manufacturing_prompt(optimized_formula)
-    manufacturing_process = await call_ai_with_claude(
-        system_prompt=MANUFACTURING_PROCESS_SYSTEM_PROMPT,
-        user_prompt=manufacturing_prompt,
-        prompt_type="manufacturing_process"
-    )
-    print(f"✅ Generated {len(manufacturing_process.get('manufacturing_steps', []))} manufacturing steps")
+    # Stages 3, 4, 5: Run in parallel for better performance
+    # These stages are independent and can run concurrently
+    print("🚀 Stages 3-5: Running Manufacturing, Cost Analysis, and Compliance in parallel...")
     
-    # Stage 4: Cost Analysis
-    print("💰 Stage 4: Cost Analysis...")
-    cost_prompt = generate_cost_prompt(optimized_formula, wish_data)
-    cost_analysis = await call_ai_with_claude(
-        system_prompt=COST_ANALYSIS_SYSTEM_PROMPT,
-        user_prompt=cost_prompt,
-        prompt_type="cost_analysis"
-    )
-    print(f"✅ Cost analysis complete: ₹{cost_analysis.get('raw_material_cost', {}).get('total_per_100g', 0)}/100g")
+    import asyncio
     
-    # Stage 5: Compliance Check
-    print("✅ Stage 5: Compliance Check...")
-    compliance_prompt = generate_compliance_prompt(optimized_formula)
-    compliance = await call_ai_with_claude(
-        system_prompt=COMPLIANCE_CHECK_SYSTEM_PROMPT,
-        user_prompt=compliance_prompt,
-        prompt_type="compliance_check"
+    async def run_stage_3():
+        print("🏭 Stage 3: Manufacturing Process...")
+        manufacturing_prompt = generate_manufacturing_prompt(optimized_formula)
+        result = await call_ai_with_claude(
+            system_prompt=MANUFACTURING_PROCESS_SYSTEM_PROMPT,
+            user_prompt=manufacturing_prompt,
+            prompt_type="manufacturing_process"
+        )
+        print(f"✅ Generated {len(result.get('manufacturing_steps', []))} manufacturing steps")
+        return result
+    
+    async def run_stage_4():
+        print("💰 Stage 4: Cost Analysis...")
+        cost_prompt = generate_cost_prompt(optimized_formula, wish_data)
+        result = await call_ai_with_claude(
+            system_prompt=COST_ANALYSIS_SYSTEM_PROMPT,
+            user_prompt=cost_prompt,
+            prompt_type="cost_analysis"
+        )
+        print(f"✅ Cost analysis complete: ₹{result.get('raw_material_cost', {}).get('total_per_100g', 0)}/100g")
+        return result
+    
+    async def run_stage_5():
+        print("✅ Stage 5: Compliance Check...")
+        compliance_prompt = generate_compliance_prompt(optimized_formula)
+        result = await call_ai_with_claude(
+            system_prompt=COMPLIANCE_CHECK_SYSTEM_PROMPT,
+            user_prompt=compliance_prompt,
+            prompt_type="compliance_check"
+        )
+        print(f"✅ Compliance: {result.get('overall_status', 'UNKNOWN')}")
+        return result
+    
+    # Run stages 3, 4, and 5 in parallel
+    manufacturing_process, cost_analysis, compliance = await asyncio.gather(
+        run_stage_3(),
+        run_stage_4(),
+        run_stage_5()
     )
-    print(f"✅ Compliance: {compliance.get('overall_status', 'UNKNOWN')}")
     
     # Combine all results
     result = {
