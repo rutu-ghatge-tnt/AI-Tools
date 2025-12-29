@@ -36,6 +36,7 @@ class AnalyzeInciResponse(BaseModel):
     bis_cautions: Optional[Dict[str, List[str]]] = Field(None, description="BIS cautions for ingredients")
     categories: Optional[Dict[str, str]] = Field(None, description="Individual INCI categories mapping for bifurcation: { 'inci_name': 'Active' | 'Excipient' }")
     distributor_info: Optional[Dict[str, List[Dict]]] = Field(None, description="Distributor information for branded ingredients: { 'ingredient_name': [distributor1, distributor2, ...] }")
+    history_id: Optional[str] = Field(None, description="History item ID (MongoDB ObjectId) - returned when history is auto-saved")
     
     class Config:
         # Exclude None values from JSON serialization to remove deprecated fields
@@ -389,6 +390,7 @@ class MarketResearchOverviewResponse(BaseModel):
     """Response schema for market research overview endpoint"""
     market_research_overview: str = Field(..., description="Comprehensive AI-generated overview of market research findings")
     processing_time: float = Field(0.0, description="Time taken for processing (in seconds)")
+    history_id: Optional[str] = Field(None, description="History item ID if the overview was saved to history")
 
 
 class MarketResearchHistoryItemSummary(BaseModel):

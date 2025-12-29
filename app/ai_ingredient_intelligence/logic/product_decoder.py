@@ -72,7 +72,7 @@ async def decode_product(user_id: str, product_id: str) -> Dict[str, Any]:
     
     # Call analyze-inci core function directly (no HTTP request needed)
     try:
-        from app.ai_ingredient_intelligence.api.analyze_inci import analyze_ingredients_core
+        from app.ai_ingredient_intelligence.logic.analysis_core import analyze_ingredients_core
         
         # Call the core analysis function directly
         analyze_response = await analyze_ingredients_core(ingredients)
