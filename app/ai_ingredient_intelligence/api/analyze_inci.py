@@ -4843,15 +4843,16 @@ async def market_research(
         "url": "https://example.com/product/..." (required if input_type is "url"),
         "inci": "Water, Glycerin, ..." (required if input_type is "inci"),
         "input_type": "url" or "inci",
-        "page": 1 (optional, default: 1),
-        "page_size": 10 (optional, default: 10, max: 100)
+        "name": "Product Name" (optional, for auto-saving),
+        "tag": "optional-tag" (optional),
+        "notes": "User notes" (optional)
     }
     
     Returns:
     {
-        "products": [paginated list of matched products with images and full details, sorted by active match percentage],
+        "products": [ALL matched products with images and full details, sorted by active match percentage],
         "extracted_ingredients": [list of ingredients extracted from input],
-        "total_matched": total number of matched products (across all pages),
+        "total_matched": total number of matched products,
         "processing_time": time taken,
         "input_type": "url" or "inci",
         "ai_interpretation": "AI interpretation of input explaining category determination",
@@ -4859,12 +4860,11 @@ async def market_research(
         "subcategory": "serum" | "cleanser" | "shampoo" | etc.,
         "category_confidence": "high" | "medium" | "low",
         "market_research_overview": "Comprehensive AI-generated overview of market research findings",
-        "page": current page number,
-        "page_size": number of products per page,
-        "total_pages": total number of pages,
         "ai_analysis": "AI analysis message (if no actives found)",
         "ai_reasoning": "AI reasoning for ingredient selection"
     }
+    
+    Note: This POST endpoint returns ALL products. For pagination, use GET /market-research-history/{history_id}/details?page=1&page_size=10
     
     Note: Products are included if they:
     1. Match at least one active ingredient from the input
@@ -4964,10 +4964,6 @@ async def market_research(
         print(f"Normalized {len(ingredients)} input ingredients to {len(normalized_input_ingredients)} unique normalized ingredients")
         
         print(f"Normalized ingredients for matching ({len(normalized_input_ingredients)}): {normalized_input_ingredients[:10]}{'...' if len(normalized_input_ingredients) > 10 else ''}")
-        
-        # Get pagination parameters
-        page = max(1, int(payload.get("page", 1)))
-        page_size = max(1, min(100, int(payload.get("page_size", 10))))  # Limit to max 100 per page
         
         # 🔹 Auto-save: Save initial state with "in_progress" status if user_id provided and no existing history_id
         if user_id_value and not history_id and input_data_value:
@@ -5729,14 +5725,8 @@ async def market_research(
             reverse=True
         )
         
-        # NEW: Pagination - show all matched products with pagination instead of limiting to top 10
+        # Return ALL matched products (no pagination in POST API - pagination is handled by GET detail endpoint)
         total_matched_count = len(matched_products)
-        total_pages = (total_matched_count + page_size - 1) // page_size  # Ceiling division
-        
-        # Apply pagination
-        start_idx = (page - 1) * page_size
-        end_idx = start_idx + page_size
-        paginated_products = matched_products[start_idx:end_idx]
         
         processing_time = time.time() - start
         
@@ -5772,9 +5762,8 @@ async def market_research(
         print(f"  Sample active ingredients: {input_actives[:5] if input_actives else 'None'}")
         print(f"  Products in database: {len(all_products)}")
         print(f"  Total products matched: {total_matched_count}")
-        print(f"  Showing page {page} of {total_pages} ({len(paginated_products)} products)")
-        if len(paginated_products) > 0:
-            top_match = paginated_products[0]
+        if len(matched_products) > 0:
+            top_match = matched_products[0]
             print(f"  Top match: {top_match.get('productName', 'Unknown')[:50]}")
             print(f"    - Active match count: {top_match.get('active_match_count', 0)}/{len(input_actives)}")
             print(f"    - Active match percentage: {top_match.get('match_percentage', 0)}%")
@@ -5800,12 +5789,12 @@ async def market_research(
         print(f"  subcategory: {subcategory}")
         print(f"  category_confidence: {category_confidence}")
         print(f"  market_research_overview: {'Generated' if market_research_overview else 'Not generated'}")
-        print(f"  pagination: page {page} of {total_pages} (showing {len(paginated_products)} of {total_matched_count})")
+        print(f"  returning all {total_matched_count} products (pagination handled by GET detail endpoint)")
         
         response = MarketResearchResponse(
-            products=paginated_products,  # Return paginated products
+            products=matched_products,  # Return ALL products (no pagination in POST API)
             extracted_ingredients=ingredients,
-            total_matched=total_matched_count,  # Total matched products (all pages)
+            total_matched=total_matched_count,
             processing_time=round(processing_time, 2),
             input_type=input_type,
             ai_analysis=ai_analysis_message,  # AI analysis message
@@ -5816,10 +5805,10 @@ async def market_research(
             subcategory=subcategory,  # Subcategory (serum, cleanser, etc.)
             category_confidence=category_confidence,  # Confidence level
             market_research_overview=market_research_overview,  # Comprehensive overview
-            # Pagination fields
-            page=page,
-            page_size=page_size,
-            total_pages=total_pages
+            # Pagination fields (deprecated - kept for backward compatibility, but not used)
+            page=1,
+            page_size=total_matched_count,
+            total_pages=1
         )
         
         # 🔹 Auto-save: Update history with completed status and research_result
@@ -5827,6 +5816,8 @@ async def market_research(
             try:
                 # Convert response to dict for storage
                 research_result_dict = response.dict()
+                # ⚠️ IMPORTANT: Save ALL products, not just paginated ones for proper pagination later
+                research_result_dict["products"] = matched_products  # Save all products, not paginated_products
                 
                 update_doc = {
                     "research_result": research_result_dict,
@@ -5842,7 +5833,7 @@ async def market_research(
                     {"_id": ObjectId(history_id), "user_id": user_id_value},
                     {"$set": update_doc}
                 )
-                print(f"[AUTO-SAVE] Updated history {history_id} with research results")
+                print(f"[AUTO-SAVE] Updated history {history_id} with research results (saved {len(matched_products)} total products)")
             except Exception as e:
                 print(f"[AUTO-SAVE] Warning: Failed to update history: {e}")
                 import traceback
@@ -5892,13 +5883,14 @@ async def market_research_products(
         "url": "https://example.com/product/..." (required if input_type is "url"),
         "inci": "Water, Glycerin, ..." (required if input_type is "inci"),
         "input_type": "url" or "inci",
-        "page": 1 (optional, default: 1),
-        "page_size": 10 (optional, default: 10, max: 100)
+        "name": "Product Name" (optional, for auto-saving),
+        "tag": "optional-tag" (optional),
+        "notes": "User notes" (optional)
     }
     
     Returns:
     {
-        "products": [paginated list of matched products],
+        "products": [ALL matched products],
         "extracted_ingredients": [list of ingredients],
         "total_matched": total number of matched products,
         "processing_time": time taken (typically 10-15s, no overview generation),
@@ -5908,14 +5900,13 @@ async def market_research_products(
         "subcategory": "serum" | "cleanser" | etc.,
         "category_confidence": "high" | "medium" | "low",
         "ai_analysis": "AI analysis (only when no actives found)",
-        "ai_reasoning": "AI reasoning (only when no actives found)",
-        "page": current page number,
-        "page_size": number of products per page,
-        "total_pages": total number of pages
+        "ai_reasoning": "AI reasoning (only when no actives found)"
     }
     
     Note: This endpoint does NOT include market_research_overview. 
     Call /market-research/overview separately if you need the comprehensive overview.
+    
+    Note: This POST endpoint returns ALL products. For pagination, use GET /market-research-history/{history_id}/details?page=1&page_size=10
     
     AUTO-SAVE: Results are automatically saved to market research history if user is authenticated.
     Provide optional "name" and "tag" in payload to customize the saved history item.
@@ -6034,10 +6025,6 @@ async def market_research_products(
         
         print(f"Normalized {len(ingredients)} input ingredients to {len(normalized_input_ingredients)} unique normalized ingredients")
         
-        # Get pagination parameters
-        page = max(1, int(payload.get("page", 1)))
-        page_size = max(1, min(100, int(payload.get("page_size", 10))))
-        
         # 🔹 Auto-save: Save initial state if user_id provided and no existing history_id
         if user_id_value and not history_id and input_data_value:
             try:
@@ -6103,11 +6090,10 @@ async def market_research_products(
         ai_analysis_message = None
         ai_reasoning = None
         
-        # AI Category Analysis - RUNS ONLY ONCE PER REQUEST (NOT PER PAGE)
-        # This analysis is independent of pagination and will return the same results
-        # for all pages. Pagination only affects which products are returned, not the category interpretation.
+        # AI Category Analysis - RUNS ONCE PER REQUEST
+        # This analysis determines the product category and subcategory based on the input ingredients.
         print(f"\n{'='*60}")
-        print("STEP 0: AI Category Analysis (RUNS ONCE - NOT AFFECTED BY PAGINATION)...")
+        print("STEP 0: AI Category Analysis...")
         print(f"{'='*60}")
         category_info = {
             "primary_category": None,
@@ -6424,41 +6410,36 @@ async def market_research_products(
             reverse=True
         )
         
-        # Pagination - ONLY AFFECTS PRODUCTS RETURNED, NOT CATEGORY INTERPRETATION
-        # Category info (ai_interpretation, primary_category, subcategory) remains the same across all pages
+        # Return ALL matched products (no pagination in POST API - pagination is handled by GET detail endpoint)
         total_matched_count = len(matched_products)
-        total_pages = (total_matched_count + page_size - 1) // page_size
-        
-        start_idx = (page - 1) * page_size
-        end_idx = start_idx + page_size
-        paginated_products = matched_products[start_idx:end_idx]
         
         processing_time = time.time() - start
         
         print(f"\n{'='*60}")
         print(f"Market Research Products Summary:")
         print(f"  Total products matched: {total_matched_count}")
-        print(f"  Showing page {page} of {total_pages} ({len(paginated_products)} products)")
-        print(f"  Category: {primary_category}/{subcategory} (same for all pages)")
+        print(f"  Returning all {total_matched_count} products (pagination handled by GET detail endpoint)")
+        print(f"  Category: {primary_category}/{subcategory}")
         print(f"  Processing time: {processing_time:.2f}s")
         print(f"{'='*60}\n")
         
-        # Return response - category info is the same regardless of page number
+        # Return response with ALL products (no pagination in POST API)
         response = MarketResearchProductsResponse(
-            products=paginated_products,  # Only this changes with pagination
-            extracted_ingredients=ingredients,  # Same for all pages
-            total_matched=total_matched_count,  # Same for all pages
+            products=matched_products,  # Return ALL products (no pagination in POST API)
+            extracted_ingredients=ingredients,
+            total_matched=total_matched_count,
             processing_time=round(processing_time, 2),
-            input_type=input_type,  # Same for all pages
-            ai_analysis=ai_analysis_message,  # Same for all pages
-            ai_reasoning=ai_reasoning,  # Same for all pages
-            ai_interpretation=ai_interpretation,  # Same for all pages - determined once
-            primary_category=primary_category,  # Same for all pages - determined once
-            subcategory=subcategory,  # Same for all pages - determined once
-            category_confidence=category_confidence,  # Same for all pages - determined once
-            page=page,
-            page_size=page_size,
-            total_pages=total_pages
+            input_type=input_type,
+            ai_analysis=ai_analysis_message,
+            ai_reasoning=ai_reasoning,
+            ai_interpretation=ai_interpretation,
+            primary_category=primary_category,
+            subcategory=subcategory,
+            category_confidence=category_confidence,
+            # Pagination fields (deprecated - kept for backward compatibility, but not used)
+            page=1,
+            page_size=total_matched_count,
+            total_pages=1
         )
         
         # 🔹 Auto-save: Update history with completed status and research_result
@@ -6466,6 +6447,8 @@ async def market_research_products(
             try:
                 # Convert response to dict for storage
                 research_result_dict = response.dict()
+                # ⚠️ IMPORTANT: Save ALL products, not just paginated ones for proper pagination later
+                research_result_dict["products"] = matched_products  # Save all products, not paginated_products
                 
                 update_doc = {
                     "research_result": research_result_dict,
@@ -6481,7 +6464,7 @@ async def market_research_products(
                     {"_id": ObjectId(history_id), "user_id": user_id_value},
                     {"$set": update_doc}
                 )
-                print(f"[AUTO-SAVE] Updated history {history_id} with research results")
+                print(f"[AUTO-SAVE] Updated history {history_id} with research results (saved {len(matched_products)} total products)")
             except Exception as e:
                 print(f"[AUTO-SAVE] Warning: Failed to update history: {e}")
                 import traceback
