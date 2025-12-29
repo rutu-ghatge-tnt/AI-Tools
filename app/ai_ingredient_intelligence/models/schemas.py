@@ -341,18 +341,54 @@ class MarketResearchResponse(BaseModel):
     processing_time: float = Field(0.0, description="Time taken for processing (in seconds)")
     input_type: str = Field(..., description="Type of input processed")
     ai_analysis: Optional[str] = Field(None, description="AI analysis message when no actives found (e.g., 'This formulation contains no defined active ingredient...')")
-    ai_product_type: Optional[str] = Field(None, description="Product type identified by AI (e.g., 'cleanser', 'lotion', 'cream')")
     ai_reasoning: Optional[str] = Field(None, description="AI reasoning for ingredient selection and matching strategy")
     # New fields for enhanced market research
     ai_interpretation: Optional[str] = Field(None, description="AI interpretation of the input URL/INCI explaining category determination")
     primary_category: Optional[str] = Field(None, description="Primary category identified by AI (haircare, skincare, lipcare, bodycare, etc.)")
     subcategory: Optional[str] = Field(None, description="Subcategory/product type identified by AI (serum, cleanser, shampoo, etc.)")
     category_confidence: Optional[str] = Field(None, description="Confidence level of category determination (high, medium, low)")
-    market_research_overview: Optional[str] = Field(None, description="Comprehensive AI-generated overview of market research findings")
+    market_research_overview: str = Field(..., description="Comprehensive AI-generated overview of market research findings (always provided)")
     # Pagination fields
     page: int = Field(1, description="Current page number")
     page_size: int = Field(10, description="Number of products per page")
     total_pages: int = Field(0, description="Total number of pages")
+
+
+class MarketResearchProductsResponse(BaseModel):
+    """Response schema for market research products endpoint (fast, no overview)"""
+    products: List[MarketResearchProduct] = Field(default_factory=list, description="List of matched products")
+    extracted_ingredients: List[str] = Field(default_factory=list, description="List of extracted ingredients from input")
+    total_matched: int = Field(0, description="Total number of matched products")
+    processing_time: float = Field(0.0, description="Time taken for processing (in seconds)")
+    input_type: str = Field(..., description="Type of input processed")
+    ai_analysis: Optional[str] = Field(None, description="AI analysis message when no actives found")
+    ai_reasoning: Optional[str] = Field(None, description="AI reasoning for ingredient selection and matching strategy")
+    # Category info (always included)
+    ai_interpretation: Optional[str] = Field(None, description="AI interpretation of the input URL/INCI explaining category determination")
+    primary_category: Optional[str] = Field(None, description="Primary category identified by AI (haircare, skincare, lipcare, bodycare, etc.)")
+    subcategory: Optional[str] = Field(None, description="Subcategory/product type identified by AI (serum, cleanser, shampoo, etc.)")
+    category_confidence: Optional[str] = Field(None, description="Confidence level of category determination (high, medium, low)")
+    # Pagination fields
+    page: int = Field(1, description="Current page number")
+    page_size: int = Field(10, description="Number of products per page")
+    total_pages: int = Field(0, description="Total number of pages")
+
+
+class MarketResearchOverviewRequest(BaseModel):
+    """Request schema for market research overview endpoint"""
+    input_type: str = Field(..., description="Type of input: 'url' or 'inci'")
+    url: Optional[str] = Field(None, description="Product URL (required if input_type is 'url')")
+    inci: Optional[str] = Field(None, description="INCI ingredient list (required if input_type is 'inci')")
+    # Optional: provide category info if already known (to avoid re-analysis)
+    primary_category: Optional[str] = Field(None, description="Primary category (if already known)")
+    subcategory: Optional[str] = Field(None, description="Subcategory (if already known)")
+    category_confidence: Optional[str] = Field(None, description="Category confidence (if already known)")
+
+
+class MarketResearchOverviewResponse(BaseModel):
+    """Response schema for market research overview endpoint"""
+    market_research_overview: str = Field(..., description="Comprehensive AI-generated overview of market research findings")
+    processing_time: float = Field(0.0, description="Time taken for processing (in seconds)")
 
 
 class MarketResearchHistoryItemSummary(BaseModel):
@@ -363,7 +399,6 @@ class MarketResearchHistoryItemSummary(BaseModel):
     tag: Optional[str] = Field(None, description="Tag for categorization")
     input_type: str = Field(..., description="Input type: 'inci' or 'url'")
     input_data: Optional[str] = Field(None, description="Input data preview (truncated for list view)")
-    ai_product_type: Optional[str] = Field(None, description="Product type identified by AI")
     notes: Optional[str] = Field(None, description="User notes for this research")
     created_at: Optional[str] = Field(None, description="Creation timestamp")
     # Summary fields from research_result (if available)
@@ -380,9 +415,12 @@ class MarketResearchHistoryItem(BaseModel):
     input_type: str = Field(..., description="Input type: 'inci' or 'url'")
     input_data: str = Field(..., description="Input data (INCI list or URL)")
     research_result: Optional[Dict] = Field(None, description="Full market research result")
-    ai_analysis: Optional[str] = Field(None, description="AI analysis message")
-    ai_product_type: Optional[str] = Field(None, description="Product type identified by AI")
-    ai_reasoning: Optional[str] = Field(None, description="AI reasoning")
+    ai_analysis: Optional[str] = Field(None, description="AI analysis message (when no actives found)")
+    ai_reasoning: Optional[str] = Field(None, description="AI reasoning (when no actives found)")
+    ai_interpretation: Optional[str] = Field(None, description="AI interpretation of input explaining category determination")
+    primary_category: Optional[str] = Field(None, description="Primary category identified by AI (haircare, skincare, lipcare, bodycare, etc.)")
+    subcategory: Optional[str] = Field(None, description="Subcategory/product type identified by AI (serum, cleanser, shampoo, etc.)")
+    category_confidence: Optional[str] = Field(None, description="Confidence level of category determination (high, medium, low)")
     notes: Optional[str] = Field(None, description="User notes for this research")
     created_at: Optional[str] = Field(None, description="Creation timestamp")
 
@@ -394,9 +432,12 @@ class SaveMarketResearchHistoryRequest(BaseModel):
     input_type: str = Field(..., description="Input type: 'inci' or 'url'")
     input_data: str = Field(..., description="Input data (INCI list or URL)")
     research_result: Optional[Dict] = Field(None, description="Full market research result")
-    ai_analysis: Optional[str] = Field(None, description="AI analysis message")
-    ai_product_type: Optional[str] = Field(None, description="Product type identified by AI")
-    ai_reasoning: Optional[str] = Field(None, description="AI reasoning")
+    ai_analysis: Optional[str] = Field(None, description="AI analysis message (when no actives found)")
+    ai_reasoning: Optional[str] = Field(None, description="AI reasoning (when no actives found)")
+    ai_interpretation: Optional[str] = Field(None, description="AI interpretation of input explaining category determination")
+    primary_category: Optional[str] = Field(None, description="Primary category identified by AI (haircare, skincare, lipcare, bodycare, etc.)")
+    subcategory: Optional[str] = Field(None, description="Subcategory/product type identified by AI (serum, cleanser, shampoo, etc.)")
+    category_confidence: Optional[str] = Field(None, description="Confidence level of category determination (high, medium, low)")
     notes: Optional[str] = Field(None, description="User notes")
 
 

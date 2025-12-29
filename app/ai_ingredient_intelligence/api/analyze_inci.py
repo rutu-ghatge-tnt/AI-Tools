@@ -1,5 +1,5 @@
 # app/api/analyze_inci.py
-from fastapi import APIRouter, HTTPException, Form, Request, Depends
+from fastapi import APIRouter, HTTPException, Form, Request, Depends, Query
 from fastapi.responses import Response
 import time
 import os
@@ -65,6 +65,9 @@ from app.ai_ingredient_intelligence.models.schemas import (
     CompareHistoryDetailResponse,  # ⬅️ new schema for getting compare history detail
     MarketResearchRequest,  # ⬅️ new schema for market research
     MarketResearchResponse,  # ⬅️ new schema for market research response
+    MarketResearchProductsResponse,  # ⬅️ new schema for market research products (split API)
+    MarketResearchOverviewRequest,  # ⬅️ new schema for market research overview request
+    MarketResearchOverviewResponse,  # ⬅️ new schema for market research overview response
     MarketResearchProduct,  # ⬅️ new schema for market research product
     MarketResearchHistoryItem,  # ⬅️ full schema for market research history (detail endpoint)
     MarketResearchHistoryItemSummary,  # ⬅️ summary schema for market research history (list endpoint)
@@ -852,6 +855,13 @@ async def analyze_ingredients_core(ingredients: List[str]) -> AnalyzeInciRespons
         
     except Exception as e:
         print(f"Error in analyze_ingredients_core: {e}")
+        # Show operation stack
+        import traceback
+        print(f"\n{'='*60}")
+        print(f"OPERATION STACK in analyze_ingredients_core:")
+        print(f"{'='*60}")
+        traceback.print_exc()
+        print(f"{'='*60}\n")
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
     # Convert to objects
@@ -1083,7 +1093,14 @@ async def analyze_inci(
                 )
             except:
                 pass
-        print(f"Error in analyze_inci_json: {e}")
+        print(f"Error in analyze_inci: {e}")
+        # Show operation stack
+        import traceback
+        print(f"\n{'='*60}")
+        print(f"OPERATION STACK in analyze_inci:")
+        print(f"{'='*60}")
+        traceback.print_exc()
+        print(f"{'='*60}\n")
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
     
     # 🔹 Auto-save: Update history with "completed" status and analysis_result
@@ -1418,12 +1435,13 @@ async def analyze_url(
 @router.get("/suppliers")
 async def get_suppliers(current_user: dict = Depends(verify_jwt_token)):  # JWT token validation
     """
-    Get all suppliers from ingre_suppliers collection
-    Returns list of supplier names
+    Get all valid suppliers from ingre_suppliers collection
+    Returns list of supplier names (only suppliers with isValid: true)
     """
     try:
         suppliers_collection = db["ingre_suppliers"]
-        cursor = suppliers_collection.find({}, {"supplierName": 1, "_id": 0})
+        # Only return valid suppliers
+        cursor = suppliers_collection.find({"isValid": True}, {"supplierName": 1, "_id": 0})
         suppliers = await cursor.to_list(length=None)
         
         # Extract supplier names and sort alphabetically
@@ -1495,13 +1513,13 @@ async def get_ingredient_categories(
 @router.get("/suppliers/paginated")
 async def get_suppliers_paginated(skip: int = 0, limit: int = 50, search: Optional[str] = None):
     """
-    Get suppliers with pagination and search
+    Get valid suppliers with pagination and search (only suppliers with isValid: true)
     """
     try:
         suppliers_collection = db["ingre_suppliers"]
         
-        # Build query
-        query = {}
+        # Build query - only valid suppliers
+        query = {"isValid": True}
         if search:
             query["supplierName"] = {"$regex": search, "$options": "i"}
         
@@ -3898,10 +3916,18 @@ async def analyze_product_categories_with_ai(
     ingredients: List[str],
     normalized_ingredients: List[str],
     extracted_text: str = "",
-    product_name: str = ""
+    product_name: str = "",
+    url: str = ""
 ) -> Dict[str, any]:
     """
     Use Claude AI to analyze input URL/INCI and determine product categories and subcategories.
+    
+    Args:
+        ingredients: List of ingredient names
+        normalized_ingredients: Normalized ingredient names
+        extracted_text: Extracted text from URL scraping
+        product_name: Product name if available
+        url: Product URL if available (helps AI understand product context)
     
     Returns dict with:
     - primary_category: Main category (haircare, skincare, lipcare, bodycare, etc.)
@@ -3938,11 +3964,25 @@ SUBCATEGORY EXAMPLES:
 - Lipcare: lip balm, lip scrub, lip mask, lip serum
 - Bodycare: body lotion, body wash, body scrub, body oil
 
-ANALYSIS APPROACH:
-1. Analyze ingredient profile to identify product type
-2. Consider ingredient combinations (e.g., surfactants suggest cleanser/shampoo)
-3. Look for category-specific ingredients (e.g., hair conditioning agents, facial actives)
-4. Use product name/description if provided for additional context
+CRITICAL ANALYSIS APPROACH (in priority order):
+1. **PRODUCT URL/NAME CONTEXT IS PRIMARY**: 
+   - If URL path contains clear category indicators (e.g., "/cleanser", "/shampoo", "/conditioner", "/serum", "/cetaphil", "/face", "/hair", "/lip"), use this as the PRIMARY indicator
+   - If product name contains category indicators, use this as PRIMARY indicator
+   - URLs and product names are highly reliable indicators
+2. **Ingredient profile analysis**: Analyze ingredient combinations (e.g., surfactants suggest cleanser/shampoo, but distinguish based on context)
+3. **Category-specific ingredients**: Look for category-specific ingredients (e.g., hair conditioning agents, facial actives)
+4. **Common patterns**: 
+   - "cleanser" in URL/name → skincare/cleanser (NOT haircare/conditioner)
+   - "face" or "facial" in URL/name → skincare
+   - "hair" in URL/name → haircare
+   - "lip" in URL/name → lipcare
+   - "body" in URL/name → bodycare
+
+IMPORTANT RULES:
+- If product name contains "cleanser", it is ALWAYS skincare/cleanser, NOT haircare/conditioner
+- If product name contains "face" or "facial", it is ALWAYS skincare
+- If product name contains "hair", it is ALWAYS haircare
+- Product name context takes precedence over ingredient analysis when there's ambiguity
 
 OUTPUT FORMAT:
 Return a JSON object with this structure:
@@ -3957,19 +3997,25 @@ Be specific and accurate. If uncertain, use "other" as primary_category and set 
 
     user_prompt = f"""Analyze this product formulation and determine its category and subcategory.
 
+{f'**PRODUCT URL (HIGHEST PRIORITY): {url}**' if url else ''}
+{f'**PRODUCT NAME/CONTEXT (HIGHEST PRIORITY): {product_name}**' if product_name else ''}
+
 INGREDIENTS:
 {chr(10).join(f"- {ing}" for ing in ingredients[:50])}
 
-{f'PRODUCT NAME: {product_name}' if product_name else ''}
-
 {f'EXTRACTED TEXT (if available): {extracted_text[:500]}' if extracted_text else ''}
 
-TASK:
-1. Analyze the ingredient profile
-2. Determine the primary category (haircare, skincare, lipcare, bodycare, or other)
-3. Identify the specific subcategory/product type
-4. Provide a clear interpretation explaining your reasoning
-5. Assess confidence level
+TASK (follow priority order):
+1. **FIRST**: Check URL path and product name for category indicators (cleanser, shampoo, conditioner, face, hair, lip, body, etc.)
+   - URL paths often contain product type information (e.g., "/cetaphil-gentle-skin-cleanser" → skincare/cleanser)
+   - Product names are also highly reliable indicators
+2. Analyze the ingredient profile to confirm or refine the category
+3. Determine the primary category (haircare, skincare, lipcare, bodycare, or other)
+4. Identify the specific subcategory/product type
+5. Provide a clear interpretation explaining your reasoning, emphasizing how URL/product name/context influenced the decision
+6. Assess confidence level (high if URL/product name clearly indicates category, medium/low if relying mainly on ingredients)
+
+CRITICAL: If the URL path or product name contains words like "cleanser", "face", "facial", "hair", "lip", or "body", use that as the PRIMARY indicator. URLs and product names are more reliable than ingredient analysis alone.
 
 Return your analysis as JSON with the structure specified in the system prompt."""
 
@@ -4054,9 +4100,21 @@ async def generate_market_research_overview_with_ai(
     Use Claude AI to generate a concluding overview of the market research.
     
     Returns a comprehensive overview string summarizing the research findings.
+    Always returns a string, never None.
     """
-    if not claude_client or len(matched_products) == 0:
-        return None
+    # If no products matched, return a default overview
+    if len(matched_products) == 0:
+        category = category_info.get('primary_category', 'product')
+        subcategory = category_info.get('subcategory', 'product')
+        return f"Market Research Overview\n\nNo matching products were found for this {category} {subcategory} formulation. This may indicate:\n- Unique ingredient combination\n- Limited market presence\n- Need for custom formulation\n\nConsider expanding the search criteria or exploring alternative ingredient combinations."
+    
+    if not claude_client:
+        # Fallback overview when AI is not available
+        category = category_info.get('primary_category', 'product')
+        subcategory = category_info.get('subcategory', 'product')
+        top_products = matched_products[:5]
+        product_names = [p.get("productName", "Unknown") for p in top_products]
+        return f"Market Research Overview\n\nFound {total_matched} matching {category} {subcategory} products in the market.\n\nTop Matched Products:\n" + "\n".join(f"- {name}" for name in product_names) + f"\n\nThis analysis identified {total_matched} products with similar active ingredient profiles. Review the detailed product list for specific ingredient matches and formulations."
     
     print(f"    [AI Overview] Generating market research overview for {len(matched_products)} products...")
     
@@ -4129,9 +4187,19 @@ Make it insightful, professional, and actionable."""
         )
         
         if not response.content or len(response.content) == 0:
-            return None
+            # Return fallback overview if AI response is empty
+            category = category_info.get('primary_category', 'product')
+            subcategory = category_info.get('subcategory', 'product')
+            return f"Market Research Overview\n\nFound {total_matched} matching {category} {subcategory} products. Review the product list for detailed ingredient matches and formulations."
         
         overview = response.content[0].text.strip()
+        
+        # Ensure overview is not empty
+        if not overview:
+            category = category_info.get('primary_category', 'product')
+            subcategory = category_info.get('subcategory', 'product')
+            overview = f"Market Research Overview\n\nFound {total_matched} matching {category} {subcategory} products. Review the product list for detailed ingredient matches and formulations."
+        
         print(f"    ✓ Generated market research overview ({len(overview)} characters)")
         
         return overview
@@ -4140,7 +4208,10 @@ Make it insightful, professional, and actionable."""
         print(f"    ⚠️  Error generating market research overview: {e}")
         import traceback
         traceback.print_exc()
-        return None
+        # Return fallback overview on error
+        category = category_info.get('primary_category', 'product')
+        subcategory = category_info.get('subcategory', 'product')
+        return f"Market Research Overview\n\nFound {total_matched} matching {category} {subcategory} products. An error occurred while generating the detailed overview. Review the product list for specific ingredient matches and formulations."
 
 
 async def enhance_product_ranking_with_ai(
@@ -4276,8 +4347,12 @@ async def save_market_research_history(
     """
     [DISABLED] Save market research history (user-specific)
     
-    ⚠️ THIS ENDPOINT IS CURRENTLY DISABLED TO PREVENT DUPLICATE SAVES ⚠️
+    ⚠️ THIS ENDPOINT IS CURRENTLY DISABLED ⚠️
+    Market research results are now automatically saved by the market research endpoints.
     This endpoint returns success but does not save to prevent duplicates.
+    
+    AUTO-SAVE: Market research endpoints (/market-research, /market-research/products) 
+    automatically save results to history when user is authenticated.
     
     Request body:
     {
@@ -4287,7 +4362,6 @@ async def save_market_research_history(
         "input_data": "ingredient list or URL",
         "research_result": {...} (optional),
         "ai_analysis": "AI analysis message",
-        "ai_product_type": "Product type",
         "ai_reasoning": "AI reasoning",
         "notes": "User notes"
     }
@@ -4375,7 +4449,6 @@ async def get_market_research_history(
                 "tag": 1,
                 "input_type": 1,
                 "input_data": 1,
-                "ai_product_type": 1,
                 "notes": 1,
                 "created_at": 1,
                 "research_result": 1  # Check if exists, but don't return full data
@@ -4409,7 +4482,6 @@ async def get_market_research_history(
                 "tag": item.get("tag"),
                 "input_type": item.get("input_type", ""),
                 "input_data": input_data,
-                "ai_product_type": item.get("ai_product_type"),
                 "notes": item.get("notes"),
                 "created_at": item.get("created_at"),
                 "has_research": research_result is not None,
@@ -4437,16 +4509,27 @@ async def get_market_research_history(
 @router.get("/market-research-history/{history_id}/details", response_model=MarketResearchHistoryDetailResponse)
 async def get_market_research_history_detail(
     history_id: str,
+    page: int = Query(1, ge=1, description="Page number (starts from 1)"),
+    page_size: int = Query(10, ge=1, le=100, description="Number of products per page (max 100)"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
     Get full details of a specific market research history item (includes all large fields)
     
     This endpoint returns the complete data including:
-    - Full research_result (large Dict with all products)
-    - All other fields
+    - Full research_result with PAGINATED products (products array is paginated)
+    - All other fields remain constant (ai_interpretation, category info, etc.)
     
-    Use this endpoint when you need to display the full research results.
+    Query Parameters:
+    - page: Page number (default: 1)
+    - page_size: Number of products per page (default: 10, max: 100)
+    
+    Pagination:
+    - Only the "products" array in research_result is paginated
+    - All other fields (ai_interpretation, primary_category, subcategory, etc.) remain constant
+    - Pagination metadata (page, page_size, total_pages, total_products) is included in research_result
+    
+    Use this endpoint when you need to display the full research results with paginated products.
     The list endpoint (/market-research-history) only returns summaries.
     
     Authentication:
@@ -4464,28 +4547,123 @@ async def get_market_research_history_detail(
         if not ObjectId.is_valid(history_id):
             raise HTTPException(status_code=400, detail="Invalid history ID")
         
-        # Fetch full item (including large fields)
-        item = await market_research_history_col.find_one({
-            "_id": ObjectId(history_id),
-            "user_id": user_id
-        })
+        # 🔹 EFFICIENT DB-LEVEL PAGINATION: Use MongoDB aggregation with $slice
+        # This reduces network transfer by only sending requested products
+        # Note: MongoDB still loads full document, but only requested slice is transferred over network
         
-        if not item:
+        # First, get total count and other fields (lightweight query)
+        item_meta = await market_research_history_col.find_one(
+            {"_id": ObjectId(history_id), "user_id": user_id},
+            {
+                "user_id": 1,
+                "name": 1,
+                "tag": 1,
+                "input_type": 1,
+                "input_data": 1,
+                "ai_analysis": 1,
+                "ai_reasoning": 1,
+                "ai_interpretation": 1,
+                "primary_category": 1,
+                "subcategory": 1,
+                "category_confidence": 1,
+                "notes": 1,
+                "created_at": 1,
+                "research_result.total_matched": 1,  # Get total count
+                "research_result.extracted_ingredients": 1,
+                "research_result.processing_time": 1,
+                "research_result.input_type": 1,
+                "research_result.ai_analysis": 1,
+                "research_result.ai_reasoning": 1,
+                "research_result.ai_interpretation": 1,
+                "research_result.primary_category": 1,
+                "research_result.subcategory": 1,
+                "research_result.category_confidence": 1
+            }
+        )
+        
+        if not item_meta:
             raise HTTPException(status_code=404, detail="History item not found")
         
-        # Convert ObjectId to string
-        item["id"] = str(item["_id"])
-        del item["_id"]
+        # Get total products count
+        research_result = item_meta.get("research_result", {})
+        total_products = research_result.get("total_matched", 0)
         
-        # Ensure all fields are included
-        if "research_result" not in item:
-            item["research_result"] = None
-        if "ai_analysis" not in item:
-            item["ai_analysis"] = None
-        if "ai_product_type" not in item:
-            item["ai_product_type"] = None
-        if "ai_reasoning" not in item:
-            item["ai_reasoning"] = None
+        # If no products, return early
+        if total_products == 0:
+            item_meta["id"] = str(item_meta["_id"])
+            del item_meta["_id"]
+            item_meta["research_result"] = {
+                **research_result,
+                "products": [],
+                "page": page,
+                "page_size": page_size,
+                "total_pages": 0,
+                "total_matched": 0
+            }
+            # Ensure all fields
+            for field in ["ai_analysis", "ai_reasoning", "ai_interpretation", "primary_category", "subcategory", "category_confidence"]:
+                if field not in item_meta:
+                    item_meta[field] = None
+            return MarketResearchHistoryDetailResponse(
+                item=MarketResearchHistoryItem(**item_meta)
+            )
+        
+        # Use aggregation to slice products array at DB level
+        pipeline = [
+            {"$match": {"_id": ObjectId(history_id), "user_id": user_id}},
+            {
+                "$project": {
+                    # Slice products array: skip (page-1)*page_size, take page_size
+                    "products_slice": {
+                        "$slice": [
+                            {"$ifNull": ["$research_result.products", []]},
+                            (page - 1) * page_size,
+                            page_size
+                        ]
+                    }
+                }
+            }
+        ]
+        
+        cursor = market_research_history_col.aggregate(pipeline)
+        products_result = await cursor.to_list(length=1)
+        paginated_products = products_result[0].get("products_slice", []) if products_result else []
+        
+        # Calculate pagination metadata
+        total_pages = (total_products + page_size - 1) // page_size
+        
+        # Build complete item
+        item = {
+            "id": str(item_meta["_id"]),
+            "user_id": item_meta.get("user_id"),
+            "name": item_meta.get("name"),
+            "tag": item_meta.get("tag"),
+            "input_type": item_meta.get("input_type"),
+            "input_data": item_meta.get("input_data"),
+            "ai_analysis": item_meta.get("ai_analysis"),
+            "ai_reasoning": item_meta.get("ai_reasoning"),
+            "ai_interpretation": item_meta.get("ai_interpretation"),
+            "primary_category": item_meta.get("primary_category"),
+            "subcategory": item_meta.get("subcategory"),
+            "category_confidence": item_meta.get("category_confidence"),
+            "notes": item_meta.get("notes"),
+            "created_at": item_meta.get("created_at"),
+            "research_result": {
+                **research_result,
+                "products": paginated_products,  # Only paginated products
+                "page": page,
+                "page_size": page_size,
+                "total_pages": total_pages,
+                "total_matched": total_products
+            }
+        }
+        
+        # Ensure all fields have defaults
+        for field in ["ai_analysis", "ai_reasoning", "ai_interpretation", "primary_category", "subcategory", "category_confidence"]:
+            if item.get(field) is None:
+                item[field] = None
+        
+        print(f"[DB PAGINATION] History {history_id}: Page {page}/{total_pages}, Showing {len(paginated_products)}/{total_products} products (DB-level slice)")
         
         return MarketResearchHistoryDetailResponse(
             item=MarketResearchHistoryItem(**item)
@@ -4525,7 +4703,6 @@ async def update_market_research_history(
     - input_type: Update input type (for regeneration)
     - research_result: Update research result (for regeneration)
     - ai_analysis: Update AI analysis (for regeneration)
-    - ai_product_type: Update AI product type (for regeneration)
     - ai_reasoning: Update AI reasoning (for regeneration)
     
     Note: user_id and created_at are automatically preserved and should not be included in payload
@@ -4636,6 +4813,9 @@ async def market_research(
     """
     Market Research: Match products from URL or INCI list with externalProducts collection.
     
+    AUTO-SAVE: Results are automatically saved to market research history if user is authenticated.
+    Provide optional "name" and "tag" in payload to customize the saved history item.
+    
     ENHANCED FEATURES:
     1. AI Category Analysis: Automatically analyzes input to determine product category (haircare, skincare, lipcare, etc.) and subcategory
     2. Category Filtering: Filters products by category to ensure relevance (e.g., face serum won't show hair products)
@@ -4670,7 +4850,6 @@ async def market_research(
         "page_size": number of products per page,
         "total_pages": total number of pages,
         "ai_analysis": "AI analysis message (if no actives found)",
-        "ai_product_type": "Product type identified by AI",
         "ai_reasoning": "AI reasoning for ingredient selection"
     }
     
@@ -4708,6 +4887,8 @@ async def market_research(
             # Get ingredients - could be list or string, ensure it's a list
             ingredients_raw = extraction_result.get("ingredients", [])
             extracted_text = extraction_result.get("extracted_text", "")
+            # Store extraction result for later use in category analysis
+            scraper_extraction_result = extraction_result
             
             # If ingredients is a string, parse it
             if isinstance(ingredients_raw, str):
@@ -4724,6 +4905,8 @@ async def market_research(
                     status_code=404,
                     detail="No ingredients found on the product page. Please ensure the page contains ingredient information."
                 )
+            
+            input_data_value = url  # Store URL for auto-save
         elif input_type == "inci":
             # INCI input
             inci = payload.get("inci", "").strip()
@@ -4733,6 +4916,7 @@ async def market_research(
             # Parse INCI string
             ingredients = parse_inci_string(inci)
             extracted_text = inci
+            input_data_value = inci  # Store INCI for auto-save
             
             if not ingredients:
                 raise HTTPException(
@@ -4772,9 +4956,69 @@ async def market_research(
         page = max(1, int(payload.get("page", 1)))
         page_size = max(1, min(100, int(payload.get("page_size", 10))))  # Limit to max 100 per page
         
+        # 🔹 Auto-save: Save initial state with "in_progress" status if user_id provided and no existing history_id
+        if user_id_value and not history_id and input_data_value:
+            try:
+                # Check if a history item with the same input_data already exists for this user
+                existing_history_item = await market_research_history_col.find_one({
+                    "user_id": user_id_value,
+                    "input_type": input_type,
+                    "input_data": input_data_value
+                }, sort=[("created_at", -1)])  # Get the most recent one
+                
+                if existing_history_item:
+                    history_id = str(existing_history_item["_id"])
+                    print(f"[AUTO-SAVE] Found existing history item with same input_data, reusing history_id: {history_id}")
+                else:
+                    # Generate default name if not provided
+                    display_name = name
+                    if not display_name:
+                        if input_type == "url":
+                            # Extract product name from URL
+                            from urllib.parse import unquote
+                            try:
+                                url_decoded = unquote(input_data_value)
+                                segments = url_decoded.split('/')
+                                for segment in reversed(segments):
+                                    segment = segment.split('?')[0].replace('-', ' ').replace('_', ' ')
+                                    if segment and len(segment) > 5 and len(segment) < 100:
+                                        if any(keyword in segment.lower() for keyword in ['cleanser', 'serum', 'moisturizer', 'shampoo', 'conditioner']):
+                                            display_name = segment.title() + " Research"
+                                            break
+                            except:
+                                pass
+                        if not display_name:
+                            # Use first ingredient or default
+                            if ingredients and len(ingredients) > 0:
+                                display_name = ingredients[0] + " Research"
+                            else:
+                                display_name = "Market Research"
+                    
+                    # Truncate if too long
+                    if len(display_name) > 100:
+                        display_name = display_name[:100]
+                    
+                    # Save initial state
+                    history_doc = {
+                        "user_id": user_id_value,
+                        "name": display_name,
+                        "tag": tag,
+                        "input_type": input_type,
+                        "input_data": input_data_value,
+                        "notes": notes,
+                        "created_at": (datetime.now(timezone(timedelta(hours=5, minutes=30)))).isoformat()
+                    }
+                    result = await market_research_history_col.insert_one(history_doc)
+                    history_id = str(result.inserted_id)
+                    print(f"[AUTO-SAVE] Saved initial state with history_id: {history_id}")
+            except Exception as e:
+                print(f"[AUTO-SAVE] Warning: Failed to save initial state: {e}")
+                import traceback
+                traceback.print_exc()
+                # Continue with research even if saving fails
+        
         # Initialize AI analysis variables (will be populated if AI is used)
         ai_analysis_message = None
-        ai_product_type = None
         ai_reasoning = None
         
         # NEW: AI Category Analysis - Analyze input to determine categories
@@ -4794,29 +5038,60 @@ async def market_research(
                 product_name = ""
                 if input_type == "url":
                     url = payload.get("url", "")
-                    # Try to extract product name from URL or extracted text
-                    if extracted_text:
-                        # Look for product name patterns in extracted text
-                        lines = extracted_text.split('\n')[:20]
-                        for line in lines:
-                            if any(keyword in line.lower() for keyword in ['product', 'name', 'title']):
-                                product_name = line.strip()[:100]
-                                break
+                    # First try to get product name from extraction result if available
+                    if 'scraper_extraction_result' in locals() and scraper_extraction_result:
+                        product_name = scraper_extraction_result.get("product_name", "")
+                    
+                    # If not found, try to extract from URL or extracted text
+                    if not product_name:
+                        if extracted_text:
+                            # Look for product name patterns in extracted text
+                            lines = extracted_text.split('\n')[:30]
+                            for line in lines:
+                                line_lower = line.lower()
+                                # Look for product name indicators
+                                if any(keyword in line_lower for keyword in ['product', 'name', 'title', 'cleanser', 'serum', 'moisturizer', 'shampoo', 'conditioner']):
+                                    # Extract the line but clean it up
+                                    cleaned = line.strip()[:150]
+                                    # Remove common prefixes
+                                    for prefix in ['product name:', 'product:', 'name:', 'title:']:
+                                        if cleaned.lower().startswith(prefix):
+                                            cleaned = cleaned[len(prefix):].strip()
+                                    if cleaned and len(cleaned) > 3:
+                                        product_name = cleaned
+                                        break
+                        
+                        # Fallback: try to extract from URL path
+                        if not product_name and url:
+                            from urllib.parse import unquote
+                            try:
+                                url_decoded = unquote(url)
+                                # Extract meaningful segments from URL
+                                segments = url_decoded.split('/')
+                                for segment in reversed(segments):
+                                    segment = segment.split('?')[0].replace('-', ' ').replace('_', ' ')
+                                    if segment and len(segment) > 5 and len(segment) < 100:
+                                        # Check if it contains product-related keywords
+                                        if any(keyword in segment.lower() for keyword in ['cleanser', 'serum', 'moisturizer', 'shampoo', 'conditioner', 'face', 'hair', 'lip']):
+                                            product_name = segment.title()
+                                            break
+                            except:
+                                pass
                 
                 print(f"  🤖 Calling AI for category analysis...")
+                if product_name:
+                    print(f"  📝 Product name/context: {product_name[:100]}")
+                url_for_ai = payload.get("url", "") if input_type == "url" else ""
+                if url_for_ai:
+                    print(f"  🔗 Product URL: {url_for_ai[:100]}")
                 category_info = await analyze_product_categories_with_ai(
                     ingredients,
                     normalized_input_ingredients,
                     extracted_text[:1000] if extracted_text else "",  # Limit text length
-                    product_name
+                    product_name,
+                    url_for_ai
                 )
                 print(f"  ✓ Category analysis completed")
-                
-                # Populate ai_product_type from subcategory if category analysis was successful
-                # This ensures ai_product_type is always populated when we have category info
-                if category_info.get("subcategory") and not ai_product_type:
-                    ai_product_type = category_info.get("subcategory")
-                    print(f"  ✓ Populated ai_product_type from category analysis: {ai_product_type}")
             except Exception as e:
                 print(f"  ⚠️  Error in AI category analysis: {e}")
                 import traceback
@@ -4826,13 +5101,6 @@ async def market_research(
         subcategory = category_info.get("subcategory")
         ai_interpretation = category_info.get("interpretation")
         category_confidence = category_info.get("confidence", "low")
-        
-        # Populate ai_product_type from subcategory if category analysis was successful
-        # This ensures ai_product_type is always populated when we have category info
-        # (Fallback in case it wasn't set inside the try block)
-        if subcategory and not ai_product_type:
-            ai_product_type = subcategory
-            print(f"  ✓ Populated ai_product_type from category analysis (fallback): {subcategory}")
         
         # Categorize input ingredients into actives and excipients
         print(f"\n{'='*60}")
@@ -4930,14 +5198,10 @@ async def market_research(
                         analysis_val = ai_analysis.get("analysis")
                         ai_analysis_message = analysis_val if analysis_val and analysis_val.strip() else None
                         
-                        product_type_val = ai_analysis.get("product_type")
-                        ai_product_type = product_type_val if product_type_val and product_type_val.strip() else None
-                        
                         reasoning_val = ai_analysis.get("reasoning")
                         ai_reasoning = reasoning_val if reasoning_val and reasoning_val.strip() else None
                         
                         print(f"  📊 AI Analysis stored: {ai_analysis_message}")
-                        print(f"  🏷️  Product Type stored: {ai_product_type}")
                         print(f"  💭 AI Reasoning stored: {ai_reasoning}")
                     
                     if ai_analysis and ai_analysis.get("ingredients_to_match"):
@@ -5030,6 +5294,9 @@ async def market_research(
                     print(f"   Found {len(any_products)} products in collection, but none have ingredients field")
                     print(f"   Sample product keys: {list(any_products[0].keys())[:10] if any_products else 'N/A'}")
                 
+                # Generate fallback overview for empty results
+                fallback_overview = f"Market Research Overview\n\nNo products found in the database to match against. Please ensure the database contains product data with ingredient information."
+                
                 return MarketResearchResponse(
                     products=[],
                     extracted_ingredients=ingredients,
@@ -5037,8 +5304,8 @@ async def market_research(
                     processing_time=round(time.time() - start, 2),
                     input_type=input_type,
                     ai_analysis=ai_analysis_message,
-                    ai_product_type=ai_product_type,
-                    ai_reasoning=ai_reasoning
+                    ai_reasoning=ai_reasoning,
+                    market_research_overview=fallback_overview
                 )
         except Exception as e:
             print(f"\n❌ ERROR fetching products: {e}")
@@ -5086,12 +5353,16 @@ async def market_research(
             print("  1. The externalProducts collection is empty")
             print("  2. No products have an 'ingredients' field")
             print("  3. Database connection issue")
+            # Generate fallback overview for no active ingredients case
+            fallback_overview = f"Market Research Overview\n\nNo active ingredients were identified in the input formulation. Market research requires active ingredients to match against products in the database."
+            
             return MarketResearchResponse(
                 products=[],
                 extracted_ingredients=ingredients,
                 total_matched=0,
                 processing_time=round(time.time() - start, 2),
-                input_type=input_type
+                input_type=input_type,
+                market_research_overview=fallback_overview
             )
         
         print(f"🔍 Starting to check {len(all_products)} products for matches...")
@@ -5456,25 +5727,29 @@ async def market_research(
         
         processing_time = time.time() - start
         
-        # NEW: Generate market research overview using AI
-        market_research_overview = None
-        if claude_client and len(matched_products) > 0:
-            try:
-                print(f"\n{'='*60}")
-                print("Generating Market Research Overview...")
-                print(f"{'='*60}")
-                market_research_overview = await generate_market_research_overview_with_ai(
-                    ingredients,
-                    matched_products[:50],  # Use top 50 for overview generation
-                    category_info,
-                    total_matched_count
-                )
-                if market_research_overview:
-                    print(f"  ✓ Market research overview generated")
-            except Exception as e:
-                print(f"  ⚠️  Error generating market research overview: {e}")
-                import traceback
-                traceback.print_exc()
+        # NEW: Generate market research overview using AI (always generate, never null)
+        print(f"\n{'='*60}")
+        print("Generating Market Research Overview...")
+        print(f"{'='*60}")
+        try:
+            market_research_overview = await generate_market_research_overview_with_ai(
+                ingredients,
+                matched_products[:50],  # Use top 50 for overview generation
+                category_info,
+                total_matched_count
+            )
+            # Ensure overview is never None (function should always return a string)
+            if not market_research_overview:
+                market_research_overview = f"Market Research Overview\n\nFound {total_matched_count} matching products. Review the product list for detailed ingredient matches and formulations."
+            print(f"  ✓ Market research overview generated ({len(market_research_overview)} characters)")
+        except Exception as e:
+            print(f"  ⚠️  Error generating market research overview: {e}")
+            import traceback
+            traceback.print_exc()
+            # Fallback overview on error
+            category = category_info.get('primary_category', 'product')
+            subcategory = category_info.get('subcategory', 'product')
+            market_research_overview = f"Market Research Overview\n\nFound {total_matched_count} matching {category} {subcategory} products. An error occurred while generating the detailed overview. Review the product list for specific ingredient matches and formulations."
         
         print(f"\n{'='*60}")
         print(f"Market Research Summary (Active Ingredients Only):")
@@ -5506,22 +5781,21 @@ async def market_research(
         # Debug: Log what we're returning
         print(f"\n📤 Returning response with enhanced AI analysis:")
         print(f"  ai_analysis: {ai_analysis_message}")
-        print(f"  ai_product_type: {ai_product_type}")
         print(f"  ai_reasoning: {ai_reasoning}")
         print(f"  ai_interpretation: {ai_interpretation}")
         print(f"  primary_category: {primary_category}")
         print(f"  subcategory: {subcategory}")
         print(f"  category_confidence: {category_confidence}")
+        print(f"  market_research_overview: {'Generated' if market_research_overview else 'Not generated'}")
         print(f"  pagination: page {page} of {total_pages} (showing {len(paginated_products)} of {total_matched_count})")
         
-        return MarketResearchResponse(
+        response = MarketResearchResponse(
             products=paginated_products,  # Return paginated products
             extracted_ingredients=ingredients,
             total_matched=total_matched_count,  # Total matched products (all pages)
             processing_time=round(processing_time, 2),
             input_type=input_type,
             ai_analysis=ai_analysis_message,  # AI analysis message
-            ai_product_type=ai_product_type,  # Product type identified by AI
             ai_reasoning=ai_reasoning,  # AI reasoning for ingredient selection
             # New fields
             ai_interpretation=ai_interpretation,  # AI interpretation of input
@@ -5535,6 +5809,35 @@ async def market_research(
             total_pages=total_pages
         )
         
+        # 🔹 Auto-save: Update history with completed status and research_result
+        if history_id and user_id_value:
+            try:
+                # Convert response to dict for storage
+                research_result_dict = response.dict()
+                
+                update_doc = {
+                    "research_result": research_result_dict,
+                    "ai_analysis": ai_analysis_message,
+                    "ai_reasoning": ai_reasoning,
+                    "ai_interpretation": ai_interpretation,
+                    "primary_category": primary_category,
+                    "subcategory": subcategory,
+                    "category_confidence": category_confidence
+                }
+                
+                await market_research_history_col.update_one(
+                    {"_id": ObjectId(history_id), "user_id": user_id_value},
+                    {"$set": update_doc}
+                )
+                print(f"[AUTO-SAVE] Updated history {history_id} with research results")
+            except Exception as e:
+                print(f"[AUTO-SAVE] Warning: Failed to update history: {e}")
+                import traceback
+                traceback.print_exc()
+                # Don't fail the response if saving fails
+        
+        return response
+        
     except HTTPException:
         raise
     except Exception as e:
@@ -5544,6 +5847,963 @@ async def market_research(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to perform market research: {str(e)}"
+        )
+    finally:
+        if scraper:
+            try:
+                await scraper.close()
+            except:
+                pass
+
+
+# ============================================================================
+# SPLIT MARKET RESEARCH APIs - Optimized for Performance
+# ============================================================================
+
+# API 1: Fast Products Endpoint (no overview generation)
+@router.post("/market-research/products", response_model=MarketResearchProductsResponse)
+async def market_research_products(
+    payload: dict,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
+    """
+    Market Research Products: Fast endpoint that returns matched products and category info.
+    
+    This is the optimized split API endpoint that returns products quickly without generating
+    the comprehensive overview. Use this for fast product listing and pagination.
+    
+    For detailed market research overview, call /market-research/overview separately.
+    
+    Request body:
+    {
+        "url": "https://example.com/product/..." (required if input_type is "url"),
+        "inci": "Water, Glycerin, ..." (required if input_type is "inci"),
+        "input_type": "url" or "inci",
+        "page": 1 (optional, default: 1),
+        "page_size": 10 (optional, default: 10, max: 100)
+    }
+    
+    Returns:
+    {
+        "products": [paginated list of matched products],
+        "extracted_ingredients": [list of ingredients],
+        "total_matched": total number of matched products,
+        "processing_time": time taken (typically 10-15s, no overview generation),
+        "input_type": "url" or "inci",
+        "ai_interpretation": "AI interpretation of category determination",
+        "primary_category": "haircare" | "skincare" | etc.,
+        "subcategory": "serum" | "cleanser" | etc.,
+        "category_confidence": "high" | "medium" | "low",
+        "ai_analysis": "AI analysis (only when no actives found)",
+        "ai_reasoning": "AI reasoning (only when no actives found)",
+        "page": current page number,
+        "page_size": number of products per page,
+        "total_pages": total number of pages
+    }
+    
+    Note: This endpoint does NOT include market_research_overview. 
+    Call /market-research/overview separately if you need the comprehensive overview.
+    
+    AUTO-SAVE: Results are automatically saved to market research history if user is authenticated.
+    Provide optional "name" and "tag" in payload to customize the saved history item.
+    """
+    start = time.time()
+    scraper = None
+    
+    # 🔹 Auto-save: Extract user info and optional name/tag for history
+    user_id_value = current_user.get("user_id") or current_user.get("_id")
+    name = payload.get("name")  # Optional: custom name for history
+    tag = payload.get("tag")  # Optional: tag for history
+    notes = payload.get("notes")  # Optional: notes for history
+    provided_history_id = payload.get("history_id")  # Optional: reuse existing history item
+    history_id = None
+    
+    # Validate history_id if provided
+    if provided_history_id:
+        try:
+            if ObjectId.is_valid(provided_history_id):
+                existing_item = await market_research_history_col.find_one({
+                    "_id": ObjectId(provided_history_id),
+                    "user_id": user_id_value
+                })
+                if existing_item:
+                    history_id = provided_history_id
+                    print(f"[AUTO-SAVE] Using existing history_id: {history_id}")
+                else:
+                    print(f"[AUTO-SAVE] Warning: Provided history_id {provided_history_id} not found or doesn't belong to user, creating new one")
+            else:
+                print(f"[AUTO-SAVE] Warning: Invalid history_id format: {provided_history_id}, creating new one")
+        except Exception as e:
+            print(f"[AUTO-SAVE] Warning: Error validating history_id: {e}, creating new one")
+    
+    try:
+        # Validate payload
+        input_type = payload.get("input_type", "").lower()
+        if input_type not in ["url", "inci"]:
+            raise HTTPException(status_code=400, detail="input_type must be 'url' or 'inci'")
+        
+        ingredients = []
+        extracted_text = ""
+        input_data_value = ""  # For auto-save
+        
+        if input_type == "url":
+            url = payload.get("url", "").strip()
+            if not url:
+                raise HTTPException(status_code=400, detail="url is required when input_type is 'url'")
+            
+            if not url.startswith(("http://", "https://")):
+                raise HTTPException(status_code=400, detail="Invalid URL format. Must start with http:// or https://")
+            
+            # Initialize URL scraper and extract ingredients
+            scraper = URLScraper()
+            print(f"Scraping URL for market research products: {url}")
+            extraction_result = await scraper.extract_ingredients_from_url(url)
+            
+            # Get ingredients - could be list or string, ensure it's a list
+            ingredients_raw = extraction_result.get("ingredients", [])
+            extracted_text = extraction_result.get("extracted_text", "")
+            scraper_extraction_result = extraction_result
+            
+            # If ingredients is a string, parse it
+            if isinstance(ingredients_raw, str):
+                ingredients = parse_inci_string(ingredients_raw)
+            elif isinstance(ingredients_raw, list):
+                ingredients = ingredients_raw
+            else:
+                ingredients = []
+            
+            print(f"Extracted ingredients from URL: {ingredients}")
+            
+            if not ingredients:
+                raise HTTPException(
+                    status_code=404,
+                    detail="No ingredients found on the product page. Please ensure the page contains ingredient information."
+                )
+            
+            input_data_value = url  # Store URL for auto-save
+        elif input_type == "inci":
+            # INCI input
+            inci = payload.get("inci", "").strip()
+            if not inci:
+                raise HTTPException(status_code=400, detail="inci is required when input_type is 'inci'")
+            
+            # Parse INCI string
+            ingredients = parse_inci_string(inci)
+            extracted_text = inci
+            input_data_value = inci  # Store INCI for auto-save
+            
+            if not ingredients:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No valid ingredients found after parsing. Please check your input format."
+                )
+        
+        # Query externalproducts collection
+        external_products_col = db["externalproducts"]
+        collection_name = "externalproducts"
+        print(f"✅ Using collection: {collection_name}")
+        
+        print(f"Extracted {len(ingredients)} ingredients for market research")
+        print(f"Ingredients list: {ingredients}")
+        
+        # Normalize ingredients for matching
+        import re
+        normalized_input_ingredients = []
+        for ing in ingredients:
+            if ing and ing.strip():
+                normalized = re.sub(r"\s+", " ", ing.strip()).strip().lower()
+                if normalized:
+                    normalized_input_ingredients.append(normalized)
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        normalized_input_ingredients = [x for x in normalized_input_ingredients if not (x in seen or seen.add(x))]
+        
+        print(f"Normalized {len(ingredients)} input ingredients to {len(normalized_input_ingredients)} unique normalized ingredients")
+        
+        # Get pagination parameters
+        page = max(1, int(payload.get("page", 1)))
+        page_size = max(1, min(100, int(payload.get("page_size", 10))))
+        
+        # 🔹 Auto-save: Save initial state if user_id provided and no existing history_id
+        if user_id_value and not history_id and input_data_value:
+            try:
+                # Check if a history item with the same input_data already exists for this user
+                existing_history_item = await market_research_history_col.find_one({
+                    "user_id": user_id_value,
+                    "input_type": input_type,
+                    "input_data": input_data_value
+                }, sort=[("created_at", -1)])  # Get the most recent one
+                
+                if existing_history_item:
+                    history_id = str(existing_history_item["_id"])
+                    print(f"[AUTO-SAVE] Found existing history item with same input_data, reusing history_id: {history_id}")
+                else:
+                    # Generate default name if not provided
+                    display_name = name
+                    if not display_name:
+                        if input_type == "url":
+                            # Extract product name from URL
+                            from urllib.parse import unquote
+                            try:
+                                url_decoded = unquote(input_data_value)
+                                segments = url_decoded.split('/')
+                                for segment in reversed(segments):
+                                    segment = segment.split('?')[0].replace('-', ' ').replace('_', ' ')
+                                    if segment and len(segment) > 5 and len(segment) < 100:
+                                        if any(keyword in segment.lower() for keyword in ['cleanser', 'serum', 'moisturizer', 'shampoo', 'conditioner']):
+                                            display_name = segment.title() + " Research"
+                                            break
+                            except:
+                                pass
+                        if not display_name:
+                            # Use first ingredient or default
+                            if ingredients and len(ingredients) > 0:
+                                display_name = ingredients[0] + " Research"
+                            else:
+                                display_name = "Market Research"
+                    
+                    # Truncate if too long
+                    if len(display_name) > 100:
+                        display_name = display_name[:100]
+                    
+                    # Save initial state
+                    history_doc = {
+                        "user_id": user_id_value,
+                        "name": display_name,
+                        "tag": tag,
+                        "input_type": input_type,
+                        "input_data": input_data_value,
+                        "notes": notes,
+                        "created_at": (datetime.now(timezone(timedelta(hours=5, minutes=30)))).isoformat()
+                    }
+                    result = await market_research_history_col.insert_one(history_doc)
+                    history_id = str(result.inserted_id)
+                    print(f"[AUTO-SAVE] Saved initial state with history_id: {history_id}")
+            except Exception as e:
+                print(f"[AUTO-SAVE] Warning: Failed to save initial state: {e}")
+                import traceback
+                traceback.print_exc()
+                # Continue with research even if saving fails
+        
+        # Initialize AI analysis variables
+        ai_analysis_message = None
+        ai_reasoning = None
+        
+        # AI Category Analysis - RUNS ONLY ONCE PER REQUEST (NOT PER PAGE)
+        # This analysis is independent of pagination and will return the same results
+        # for all pages. Pagination only affects which products are returned, not the category interpretation.
+        print(f"\n{'='*60}")
+        print("STEP 0: AI Category Analysis (RUNS ONCE - NOT AFFECTED BY PAGINATION)...")
+        print(f"{'='*60}")
+        category_info = {
+            "primary_category": None,
+            "subcategory": None,
+            "interpretation": None,
+            "confidence": "low"
+        }
+        
+        if claude_client and ingredients:
+            try:
+                # Extract product name from URL if available
+                product_name = ""
+                if input_type == "url":
+                    url = payload.get("url", "")
+                    if 'scraper_extraction_result' in locals() and scraper_extraction_result:
+                        product_name = scraper_extraction_result.get("product_name", "")
+                    
+                    if not product_name:
+                        if extracted_text:
+                            lines = extracted_text.split('\n')[:30]
+                            for line in lines:
+                                line_lower = line.lower()
+                                if any(keyword in line_lower for keyword in ['product', 'name', 'title', 'cleanser', 'serum', 'moisturizer', 'shampoo', 'conditioner']):
+                                    cleaned = line.strip()[:150]
+                                    for prefix in ['product name:', 'product:', 'name:', 'title:']:
+                                        if cleaned.lower().startswith(prefix):
+                                            cleaned = cleaned[len(prefix):].strip()
+                                    if cleaned and len(cleaned) > 3:
+                                        product_name = cleaned
+                                        break
+                        
+                        if not product_name and url:
+                            from urllib.parse import unquote
+                            try:
+                                url_decoded = unquote(url)
+                                segments = url_decoded.split('/')
+                                for segment in reversed(segments):
+                                    segment = segment.split('?')[0].replace('-', ' ').replace('_', ' ')
+                                    if segment and len(segment) > 5 and len(segment) < 100:
+                                        if any(keyword in segment.lower() for keyword in ['cleanser', 'serum', 'moisturizer', 'shampoo', 'conditioner', 'face', 'hair', 'lip']):
+                                            product_name = segment.title()
+                                            break
+                            except:
+                                pass
+                
+                print(f"  🤖 Calling AI for category analysis...")
+                if product_name:
+                    print(f"  📝 Product name/context: {product_name[:100]}")
+                url_for_ai = url if input_type == "url" else ""
+                if url_for_ai:
+                    print(f"  🔗 Product URL: {url_for_ai[:100]}")
+                category_info = await analyze_product_categories_with_ai(
+                    ingredients,
+                    normalized_input_ingredients,
+                    extracted_text[:1000] if extracted_text else "",
+                    product_name,
+                    url_for_ai
+                )
+                print(f"  ✓ Category analysis completed")
+            except Exception as e:
+                print(f"  ⚠️  Error in AI category analysis: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        primary_category = category_info.get("primary_category")
+        subcategory = category_info.get("subcategory")
+        ai_interpretation = category_info.get("interpretation")
+        category_confidence = category_info.get("confidence", "low")
+        
+        # Categorize input ingredients into actives and excipients
+        print(f"\n{'='*60}")
+        print("STEP 1.5: Categorizing input ingredients...")
+        print(f"{'='*60}")
+        input_actives = []
+        input_excipients = []
+        input_unknown = []
+        
+        if normalized_input_ingredients:
+            try:
+                inci_query = {
+                    "inciName_normalized": {"$in": normalized_input_ingredients}
+                }
+                print(f"  Querying INCI collection with {len(normalized_input_ingredients)} normalized ingredients...")
+                inci_cursor = inci_col.find(inci_query, {"inciName": 1, "inciName_normalized": 1, "category": 1})
+                inci_results = await inci_cursor.to_list(length=None)
+                print(f"  Found {len(inci_results)} INCI records in database")
+                
+                # Build category map
+                input_category_map = {}
+                for result in inci_results:
+                    norm_name = result.get("inciName_normalized")
+                    category = result.get("category", "").lower() if result.get("category") else ""
+                    if norm_name:
+                        input_category_map[norm_name] = category
+                
+                # Categorize ingredients
+                for norm_ing in normalized_input_ingredients:
+                    category = input_category_map.get(norm_ing, "").lower()
+                    if category == "active":
+                        input_actives.append(norm_ing)
+                    elif category == "excipient":
+                        input_excipients.append(norm_ing)
+                    else:
+                        input_unknown.append(norm_ing)
+                
+                print(f"  Categorized ingredients:")
+                print(f"    - Actives: {len(input_actives)}")
+                print(f"    - Excipients: {len(input_excipients)}")
+                print(f"    - Unknown: {len(input_unknown)}")
+                
+            except Exception as e:
+                print(f"  ⚠️  Error categorizing ingredients: {e}")
+                input_unknown = normalized_input_ingredients.copy()
+                print(f"  Fallback: Treating all {len(input_unknown)} ingredients as unknown")
+        
+        # If no actives found, use AI to analyze formulation
+        if len(input_actives) == 0:
+            print(f"\n⚠️  No active ingredients found in database lookup!")
+            print(f"  Using AI to analyze formulation and suggest matching strategy...")
+            
+            if claude_client and normalized_input_ingredients:
+                print(f"  🤖 Calling Claude AI to analyze formulation...")
+                try:
+                    ai_analysis = await analyze_formulation_and_suggest_matching_with_ai(
+                        ingredients,
+                        normalized_input_ingredients,
+                        input_category_map
+                    )
+                    
+                    if ai_analysis:
+                        analysis_val = ai_analysis.get("analysis")
+                        ai_analysis_message = analysis_val if analysis_val and analysis_val.strip() else None
+                        
+                        reasoning_val = ai_analysis.get("reasoning")
+                        ai_reasoning = reasoning_val if reasoning_val and reasoning_val.strip() else None
+                        
+                        print(f"  📊 AI Analysis stored: {ai_analysis_message}")
+                        print(f"  💭 AI Reasoning stored: {ai_reasoning}")
+                    
+                    if ai_analysis and ai_analysis.get("ingredients_to_match"):
+                        ai_identified_actives = ai_analysis.get("ingredients_to_match", [])
+                        print(f"  ✓ AI suggested {len(ai_identified_actives)} ingredients to match: {ai_identified_actives[:5]}")
+                        input_actives.extend(ai_identified_actives)
+                        
+                        if ai_analysis_message:
+                            print(f"  AI Message: {ai_analysis_message}")
+                except Exception as e:
+                    print(f"  ❌ Error using AI to analyze formulation: {e}")
+                    import traceback
+                    traceback.print_exc()
+        
+        # Fetch all products
+        try:
+            all_products = await external_products_col.find({
+                "ingredients": {"$exists": True, "$ne": None, "$ne": ""}
+            }).to_list(length=None)
+            
+            print(f"✅ Fetched {len(all_products)} products to check")
+            
+            if len(all_products) == 0:
+                fallback_overview = f"Market Research Overview\n\nNo products found in the database to match against. Please ensure the database contains product data with ingredient information."
+                
+                return MarketResearchProductsResponse(
+                    products=[],
+                    extracted_ingredients=ingredients,
+                    total_matched=0,
+                    processing_time=round(time.time() - start, 2),
+                    input_type=input_type,
+                    ai_analysis=ai_analysis_message,
+                    ai_reasoning=ai_reasoning,
+                    ai_interpretation=ai_interpretation,
+                    primary_category=primary_category,
+                    subcategory=subcategory,
+                    category_confidence=category_confidence
+                )
+        except Exception as e:
+            print(f"\n❌ ERROR fetching products: {e}")
+            import traceback
+            traceback.print_exc()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to fetch products from database: {str(e)}"
+            )
+        
+        if len(input_actives) == 0:
+            return MarketResearchProductsResponse(
+                products=[],
+                extracted_ingredients=ingredients,
+                total_matched=0,
+                processing_time=round(time.time() - start, 2),
+                input_type=input_type,
+                ai_analysis=ai_analysis_message,
+                ai_reasoning=ai_reasoning,
+                ai_interpretation=ai_interpretation,
+                primary_category=primary_category,
+                subcategory=subcategory,
+                category_confidence=category_confidence
+            )
+        
+        # Match products
+        print(f"\n{'='*60}")
+        print("STEP 2: Matching products...")
+        print(f"{'='*60}")
+        matched_products = []
+        
+        for product in all_products:
+            product_ingredients = product.get("ingredients", "")
+            if not product_ingredients:
+                continue
+            
+            # Parse product ingredients
+            if isinstance(product_ingredients, str):
+                product_ing_list = parse_inci_string(product_ingredients)
+            elif isinstance(product_ingredients, list):
+                product_ing_list = product_ingredients
+            else:
+                continue
+            
+            # Normalize product ingredients
+            normalized_product_ings = []
+            for ing in product_ing_list:
+                if ing and ing.strip():
+                    normalized = re.sub(r"\s+", " ", ing.strip()).strip().lower()
+                    if normalized:
+                        normalized_product_ings.append(normalized)
+            
+            # Find matching actives
+            matched_actives = [ing for ing in input_actives if ing in normalized_product_ings]
+            active_match_count = len(matched_actives)
+            
+            if active_match_count > 0:
+                # Calculate match percentage
+                active_match_percentage = (active_match_count / len(input_actives)) * 100
+                
+                # Category filtering
+                should_include = True
+                if primary_category and category_confidence in ["high", "medium"]:
+                    product_category = product.get("category", "").lower() if product.get("category") else ""
+                    product_subcategory = product.get("subcategory", "").lower() if product.get("subcategory") else ""
+                    
+                    category_match = False
+                    if product_category and primary_category in product_category:
+                        category_match = True
+                    elif product_subcategory and primary_category in product_subcategory:
+                        category_match = True
+                    
+                    if not category_match and subcategory:
+                        if product_subcategory and subcategory in product_subcategory:
+                            category_match = True
+                        elif product_category and subcategory in product_category:
+                            category_match = True
+                    
+                    if not category_match:
+                        should_include = False
+                
+                if should_include:
+                    product_data = {
+                        "id": str(product.get("_id", "")),
+                        "productName": product.get("productName") or product.get("name", "Unknown"),
+                        "brand": product.get("brand", ""),
+                        "category": product.get("category", ""),
+                        "subcategory": product.get("subcategory", ""),
+                        "match_percentage": round(active_match_percentage, 1),
+                        "active_match_count": active_match_count,
+                        "active_ingredients": matched_actives,
+                        "total_ingredients": len(normalized_product_ings),
+                        "image": product.get("image") or product.get("productImage", ""),
+                        "price": product.get("price"),
+                        "url": product.get("url", ""),
+                        "description": product.get("description", "")
+                    }
+                    
+                    # Clean description
+                    if product_data.get("description"):
+                        desc = product_data["description"]
+                        patterns_to_remove = [
+                            r"Expiry Date:\s*[^\n]*",
+                            r"Country of Origin:\s*[^\n]*",
+                            r"Manufacturer:\s*[^\n]*",
+                            r"Address:\s*[^\n]*",
+                            r"&nbsp;",
+                        ]
+                        for pattern in patterns_to_remove:
+                            desc = re.sub(pattern, "", desc, flags=re.IGNORECASE)
+                        desc = re.sub(r"\s+", " ", desc).strip()
+                        if desc:
+                            product_data["description"] = desc
+                        else:
+                            product_data.pop("description", None)
+                    
+                    matched_products.append(product_data)
+        
+        # AI-Powered Product Ranking (optional)
+        if claude_client and len(matched_products) > 0 and len(input_actives) > 0:
+            try:
+                print(f"\n{'='*60}")
+                print("AI-Powered Product Ranking...")
+                print(f"{'='*60}")
+                matched_products = await enhance_product_ranking_with_ai(
+                    matched_products,
+                    input_actives,
+                    ingredients
+                )
+                print(f"  ✓ AI-enhanced ranking completed")
+            except Exception as e:
+                print(f"  ⚠️  Error in AI ranking (using default ranking): {e}")
+        
+        # Sort by match percentage
+        matched_products.sort(
+            key=lambda x: (
+                x.get("match_percentage", 0),
+                x.get("active_match_count", 0),
+            ),
+            reverse=True
+        )
+        
+        # Pagination - ONLY AFFECTS PRODUCTS RETURNED, NOT CATEGORY INTERPRETATION
+        # Category info (ai_interpretation, primary_category, subcategory) remains the same across all pages
+        total_matched_count = len(matched_products)
+        total_pages = (total_matched_count + page_size - 1) // page_size
+        
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        paginated_products = matched_products[start_idx:end_idx]
+        
+        processing_time = time.time() - start
+        
+        print(f"\n{'='*60}")
+        print(f"Market Research Products Summary:")
+        print(f"  Total products matched: {total_matched_count}")
+        print(f"  Showing page {page} of {total_pages} ({len(paginated_products)} products)")
+        print(f"  Category: {primary_category}/{subcategory} (same for all pages)")
+        print(f"  Processing time: {processing_time:.2f}s")
+        print(f"{'='*60}\n")
+        
+        # Return response - category info is the same regardless of page number
+        response = MarketResearchProductsResponse(
+            products=paginated_products,  # Only this changes with pagination
+            extracted_ingredients=ingredients,  # Same for all pages
+            total_matched=total_matched_count,  # Same for all pages
+            processing_time=round(processing_time, 2),
+            input_type=input_type,  # Same for all pages
+            ai_analysis=ai_analysis_message,  # Same for all pages
+            ai_reasoning=ai_reasoning,  # Same for all pages
+            ai_interpretation=ai_interpretation,  # Same for all pages - determined once
+            primary_category=primary_category,  # Same for all pages - determined once
+            subcategory=subcategory,  # Same for all pages - determined once
+            category_confidence=category_confidence,  # Same for all pages - determined once
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages
+        )
+        
+        # 🔹 Auto-save: Update history with completed status and research_result
+        if history_id and user_id_value:
+            try:
+                # Convert response to dict for storage
+                research_result_dict = response.dict()
+                
+                update_doc = {
+                    "research_result": research_result_dict,
+                    "ai_analysis": ai_analysis_message,
+                    "ai_reasoning": ai_reasoning,
+                    "ai_interpretation": ai_interpretation,
+                    "primary_category": primary_category,
+                    "subcategory": subcategory,
+                    "category_confidence": category_confidence
+                }
+                
+                await market_research_history_col.update_one(
+                    {"_id": ObjectId(history_id), "user_id": user_id_value},
+                    {"$set": update_doc}
+                )
+                print(f"[AUTO-SAVE] Updated history {history_id} with research results")
+            except Exception as e:
+                print(f"[AUTO-SAVE] Warning: Failed to update history: {e}")
+                import traceback
+                traceback.print_exc()
+                # Don't fail the response if saving fails
+        
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in market research products: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to perform market research: {str(e)}"
+        )
+    finally:
+        if scraper:
+            try:
+                await scraper.close()
+            except:
+                pass
+
+
+# API 2: Overview Endpoint (detailed analysis)
+@router.post("/market-research/overview", response_model=MarketResearchOverviewResponse)
+async def market_research_overview(
+    payload: dict,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
+    """
+    Market Research Overview: Generate comprehensive AI-powered overview of market research findings.
+    
+    This endpoint generates a detailed market research overview based on the input formulation.
+    It can optionally use pre-computed category info to avoid re-analysis.
+    
+    Request body:
+    {
+        "input_type": "url" or "inci",
+        "url": "https://example.com/product/..." (required if input_type is "url"),
+        "inci": "Water, Glycerin, ..." (required if input_type is "inci"),
+        "primary_category": "skincare" (optional, if already known),
+        "subcategory": "cleanser" (optional, if already known),
+        "category_confidence": "high" (optional, if already known)
+    }
+    
+    Returns:
+    {
+        "market_research_overview": "Comprehensive AI-generated overview with summary, key findings, trends, insights, and recommendations",
+        "processing_time": time taken (typically 5-8s)
+    }
+    
+    Note: This endpoint requires matching products to generate a meaningful overview.
+    If no products are found, it will return a basic overview message.
+    """
+    start = time.time()
+    scraper = None
+    
+    try:
+        # Validate payload
+        input_type = payload.get("input_type", "").lower()
+        if input_type not in ["url", "inci"]:
+            raise HTTPException(status_code=400, detail="input_type must be 'url' or 'inci'")
+        
+        ingredients = []
+        extracted_text = ""
+        
+        if input_type == "url":
+            url = payload.get("url", "").strip()
+            if not url:
+                raise HTTPException(status_code=400, detail="url is required when input_type is 'url'")
+            
+            if not url.startswith(("http://", "https://")):
+                raise HTTPException(status_code=400, detail="Invalid URL format. Must start with http:// or https://")
+            
+            scraper = URLScraper()
+            print(f"Scraping URL for market research overview: {url}")
+            extraction_result = await scraper.extract_ingredients_from_url(url)
+            
+            ingredients_raw = extraction_result.get("ingredients", [])
+            extracted_text = extraction_result.get("extracted_text", "")
+            
+            if isinstance(ingredients_raw, str):
+                ingredients = parse_inci_string(ingredients_raw)
+            elif isinstance(ingredients_raw, list):
+                ingredients = ingredients_raw
+            else:
+                ingredients = []
+            
+            if not ingredients:
+                raise HTTPException(
+                    status_code=404,
+                    detail="No ingredients found on the product page. Please ensure the page contains ingredient information."
+                )
+        elif input_type == "inci":
+            inci = payload.get("inci", "").strip()
+            if not inci:
+                raise HTTPException(status_code=400, detail="inci is required when input_type is 'inci'")
+            
+            ingredients = parse_inci_string(inci)
+            extracted_text = inci
+            
+            if not ingredients:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No valid ingredients found after parsing. Please check your input format."
+                )
+        
+        # Normalize ingredients
+        import re
+        normalized_input_ingredients = []
+        for ing in ingredients:
+            if ing and ing.strip():
+                normalized = re.sub(r"\s+", " ", ing.strip()).strip().lower()
+                if normalized:
+                    normalized_input_ingredients.append(normalized)
+        
+        seen = set()
+        normalized_input_ingredients = [x for x in normalized_input_ingredients if not (x in seen or seen.add(x))]
+        
+        # Get category info (use provided or analyze)
+        category_info = {
+            "primary_category": payload.get("primary_category"),
+            "subcategory": payload.get("subcategory"),
+            "interpretation": None,
+            "confidence": payload.get("category_confidence", "low")
+        }
+        
+        # If category info not provided, analyze it
+        if not category_info.get("primary_category") and claude_client and ingredients:
+            try:
+                print(f"\n{'='*60}")
+                print("AI Category Analysis for Overview...")
+                print(f"{'='*60}")
+                
+                product_name = ""
+                if input_type == "url":
+                    url = payload.get("url", "")
+                    if extracted_text:
+                        lines = extracted_text.split('\n')[:30]
+                        for line in lines:
+                            line_lower = line.lower()
+                            if any(keyword in line_lower for keyword in ['product', 'name', 'title', 'cleanser', 'serum', 'moisturizer', 'shampoo', 'conditioner']):
+                                cleaned = line.strip()[:150]
+                                for prefix in ['product name:', 'product:', 'name:', 'title:']:
+                                    if cleaned.lower().startswith(prefix):
+                                        cleaned = cleaned[len(prefix):].strip()
+                                if cleaned and len(cleaned) > 3:
+                                    product_name = cleaned
+                                    break
+                
+                url_for_ai = payload.get("url", "") if input_type == "url" else ""
+                analyzed_category = await analyze_product_categories_with_ai(
+                    ingredients,
+                    normalized_input_ingredients,
+                    extracted_text[:1000] if extracted_text else "",
+                    product_name,
+                    url_for_ai
+                )
+                
+                category_info.update(analyzed_category)
+                print(f"  ✓ Category analysis completed")
+            except Exception as e:
+                print(f"  ⚠️  Error in AI category analysis: {e}")
+        
+        # Get active ingredients for matching
+        input_actives = []
+        input_category_map = {}
+        if normalized_input_ingredients:
+            try:
+                inci_query = {
+                    "inciName_normalized": {"$in": normalized_input_ingredients}
+                }
+                inci_cursor = inci_col.find(inci_query, {"inciName_normalized": 1, "category": 1})
+                inci_results = await inci_cursor.to_list(length=None)
+                
+                for result in inci_results:
+                    norm_name = result.get("inciName_normalized")
+                    category = result.get("category", "").lower() if result.get("category") else ""
+                    if norm_name:
+                        input_category_map[norm_name] = category
+                
+                for norm_ing in normalized_input_ingredients:
+                    category = input_category_map.get(norm_ing, "").lower()
+                    if category == "active":
+                        input_actives.append(norm_ing)
+            except Exception as e:
+                print(f"  ⚠️  Error categorizing ingredients: {e}")
+        
+        # If no actives, try AI analysis
+        if len(input_actives) == 0 and claude_client:
+            try:
+                ai_analysis = await analyze_formulation_and_suggest_matching_with_ai(
+                    ingredients,
+                    normalized_input_ingredients,
+                    input_category_map
+                )
+                if ai_analysis and ai_analysis.get("ingredients_to_match"):
+                    input_actives.extend(ai_analysis.get("ingredients_to_match", []))
+            except Exception as e:
+                print(f"  ⚠️  Error in AI analysis: {e}")
+        
+        # Fetch and match products (simplified - just get top matches for overview)
+        matched_products = []
+        try:
+            external_products_col = db["externalproducts"]
+            all_products = await external_products_col.find({
+                "ingredients": {"$exists": True, "$ne": None, "$ne": ""}
+            }).to_list(length=None)
+            
+            if len(input_actives) > 0:
+                for product in all_products:
+                    product_ingredients = product.get("ingredients", "")
+                    if not product_ingredients:
+                        continue
+                    
+                    if isinstance(product_ingredients, str):
+                        product_ing_list = parse_inci_string(product_ingredients)
+                    elif isinstance(product_ingredients, list):
+                        product_ing_list = product_ingredients
+                    else:
+                        continue
+                    
+                    normalized_product_ings = []
+                    for ing in product_ing_list:
+                        if ing and ing.strip():
+                            normalized = re.sub(r"\s+", " ", ing.strip()).strip().lower()
+                            if normalized:
+                                normalized_product_ings.append(normalized)
+                    
+                    matched_actives = [ing for ing in input_actives if ing in normalized_product_ings]
+                    if len(matched_actives) > 0:
+                        active_match_percentage = (len(matched_actives) / len(input_actives)) * 100
+                        
+                        # Category filtering
+                        should_include = True
+                        primary_category = category_info.get("primary_category")
+                        subcategory = category_info.get("subcategory")
+                        category_confidence = category_info.get("confidence", "low")
+                        
+                        if primary_category and category_confidence in ["high", "medium"]:
+                            product_category = product.get("category", "").lower() if product.get("category") else ""
+                            product_subcategory = product.get("subcategory", "").lower() if product.get("subcategory") else ""
+                            
+                            category_match = False
+                            if product_category and primary_category in product_category:
+                                category_match = True
+                            elif product_subcategory and primary_category in product_subcategory:
+                                category_match = True
+                            
+                            if not category_match and subcategory:
+                                if product_subcategory and subcategory in product_subcategory:
+                                    category_match = True
+                                elif product_category and subcategory in product_category:
+                                    category_match = True
+                            
+                            if not category_match:
+                                should_include = False
+                        
+                        if should_include:
+                            product_data = {
+                                "id": str(product.get("_id", "")),
+                                "productName": product.get("productName") or product.get("name", "Unknown"),
+                                "brand": product.get("brand", ""),
+                                "category": product.get("category", ""),
+                                "subcategory": product.get("subcategory", ""),
+                                "match_percentage": round(active_match_percentage, 1),
+                                "active_match_count": len(matched_actives),
+                                "active_ingredients": matched_actives,
+                                "total_ingredients": len(normalized_product_ings)
+                            }
+                            matched_products.append(product_data)
+                
+                # Sort by match percentage
+                matched_products.sort(
+                    key=lambda x: (x.get("match_percentage", 0), x.get("active_match_count", 0)),
+                    reverse=True
+                )
+                matched_products = matched_products[:50]  # Top 50 for overview
+        except Exception as e:
+            print(f"  ⚠️  Error fetching products for overview: {e}")
+        
+        total_matched = len(matched_products)
+        
+        # Generate overview
+        print(f"\n{'='*60}")
+        print("Generating Market Research Overview...")
+        print(f"{'='*60}")
+        
+        try:
+            market_research_overview = await generate_market_research_overview_with_ai(
+                ingredients,
+                matched_products,
+                category_info,
+                total_matched
+            )
+            
+            if not market_research_overview:
+                category = category_info.get('primary_category', 'product')
+                subcategory = category_info.get('subcategory', 'product')
+                market_research_overview = f"Market Research Overview\n\nFound {total_matched} matching {category} {subcategory} products. Review the product list for detailed ingredient matches and formulations."
+            
+            print(f"  ✓ Market research overview generated ({len(market_research_overview)} characters)")
+        except Exception as e:
+            print(f"  ⚠️  Error generating market research overview: {e}")
+            import traceback
+            traceback.print_exc()
+            category = category_info.get('primary_category', 'product')
+            subcategory = category_info.get('subcategory', 'product')
+            market_research_overview = f"Market Research Overview\n\nFound {total_matched} matching {category} {subcategory} products. An error occurred while generating the detailed overview. Review the product list for specific ingredient matches and formulations."
+        
+        processing_time = time.time() - start
+        
+        print(f"\n{'='*60}")
+        print(f"Market Research Overview Summary:")
+        print(f"  Total products matched: {total_matched}")
+        print(f"  Processing time: {processing_time:.2f}s")
+        print(f"{'='*60}\n")
+        
+        return MarketResearchOverviewResponse(
+            market_research_overview=market_research_overview,
+            processing_time=round(processing_time, 2)
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in market research overview: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate market research overview: {str(e)}"
         )
     finally:
         if scraper:
