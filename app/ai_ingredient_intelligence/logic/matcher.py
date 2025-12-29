@@ -229,7 +229,10 @@ async def match_inci_names(
                 "from": "ingre_suppliers",
                 "localField": "supplier_id",
                 "foreignField": "_id",
-                "as": "supplier_docs"
+                "as": "supplier_docs",
+                "pipeline": [
+                    {"$match": {"isValid": True}}  # Only include valid suppliers
+                ]
             }
         },
         {
@@ -259,6 +262,11 @@ async def match_inci_names(
             
             # Search for branded ingredients where ALL INCI in the combination are present
             async for doc in branded_ingredients_col.aggregate(pipeline_combos):
+                # Skip ingredients without valid suppliers
+                supplier_docs = doc.get("supplier_docs", [])
+                if not supplier_docs or len(supplier_docs) == 0:
+                    continue  # Skip ingredients with invalid or missing suppliers
+                
                 brand_inci_list = [i.strip().lower() for i in doc.get("inci_list", [])]
                 brand_inci_set = set(brand_inci_list)
                 
@@ -329,7 +337,10 @@ async def match_inci_names(
                 "from": "ingre_suppliers",
                 "localField": "supplier_id",
                 "foreignField": "_id",
-                "as": "supplier_docs"
+                "as": "supplier_docs",
+                "pipeline": [
+                    {"$match": {"isValid": True}}  # Only include valid suppliers
+                ]
             }
         },
         {
@@ -348,6 +359,11 @@ async def match_inci_names(
     ]
 
     async for doc in branded_ingredients_col.aggregate(pipeline):
+        # Skip ingredients without valid suppliers
+        supplier_docs = doc.get("supplier_docs", [])
+        if not supplier_docs or len(supplier_docs) == 0:
+            continue  # Skip ingredients with invalid or missing suppliers
+        
         brand_inci_list = [i.strip().lower() for i in doc.get("inci_list", [])]
         brand_inci_set = set(brand_inci_list)
         total_brand_inci = len(brand_inci_set)
@@ -413,6 +429,11 @@ async def match_inci_names(
         # Get all branded ingredient INCI names for fuzzy matching
         all_branded_inci = []
         async for doc in branded_ingredients_col.aggregate(pipeline):
+            # Skip ingredients without valid suppliers
+            supplier_docs = doc.get("supplier_docs", [])
+            if not supplier_docs or len(supplier_docs) == 0:
+                continue  # Skip ingredients with invalid or missing suppliers
+            
             brand_inci_list = [i.strip().lower() for i in doc.get("inci_list", [])]
             for inci in brand_inci_list:
                 if inci not in matched_inci_all:
@@ -504,6 +525,11 @@ async def match_inci_names(
             
             # Check if any synonym matches a branded ingredient
             async for doc in branded_ingredients_col.aggregate(pipeline):
+                # Skip ingredients without valid suppliers
+                supplier_docs = doc.get("supplier_docs", [])
+                if not supplier_docs or len(supplier_docs) == 0:
+                    continue  # Skip ingredients with invalid or missing suppliers
+                
                 brand_inci_list = [i.strip().lower() for i in doc.get("inci_list", [])]
                 brand_inci_set = set(brand_inci_list)
                 
