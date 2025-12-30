@@ -208,6 +208,7 @@ def custom_openapi():
 app.openapi = custom_openapi
 
 # ✅ CORS - Updated for production
+# Using both explicit origins and regex pattern for flexibility
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -220,8 +221,11 @@ app.add_middleware(
         "http://localhost:8501",
         "https://metaverse.skinbb.com",
         "https://formulynx.in",
-        "https://www.formulynx.in"
+        "https://www.formulynx.in",
+        "http://formulynx.in",
+        "http://www.formulynx.in"
     ],
+    allow_origin_regex=r"https?://(www\.)?formulynx\.in",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
     allow_headers=["*"],
