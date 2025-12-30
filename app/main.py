@@ -35,6 +35,11 @@ except ImportError as e:
 
 from app.ai_ingredient_intelligence.api.cost_calculator import router as cost_calculator_router
 from app.ai_ingredient_intelligence.api.ingredient_search import router as ingredient_search_router
+from app.ai_ingredient_intelligence.api.market_research import router as market_research_router
+from app.ai_ingredient_intelligence.api.distributor_management import router as distributor_management_router
+from app.ai_ingredient_intelligence.api.ingredient_history import router as ingredient_history_router
+from app.ai_ingredient_intelligence.api.product_comparison import router as product_comparison_router
+from app.ai_ingredient_intelligence.api.health_checks import router as health_checks_router
 
 # Import Formula Generation router (with error handling for missing dependencies)
 try:
@@ -252,6 +257,21 @@ app.include_router(cost_calculator_router, prefix="/api")
 
 # ✅ Add ingredient search API
 app.include_router(ingredient_search_router, prefix="/api")
+
+# ✅ Add market research API
+app.include_router(market_research_router, prefix="/api")
+
+# ✅ Add distributor management API
+app.include_router(distributor_management_router, prefix="/api")
+
+# ✅ Add ingredient history API
+app.include_router(ingredient_history_router, prefix="/api")
+
+# ✅ Add product comparison API
+app.include_router(product_comparison_router, prefix="/api")
+
+# ✅ Add health checks API
+app.include_router(health_checks_router, prefix="/api")
 
 # ✅ Add formula generation API
 if formula_generation_router is not None:
