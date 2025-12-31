@@ -289,7 +289,7 @@ async def match_inci_names(
                         matched_results.append({
                             "ingredient_name": doc["ingredient_name"],
                             "ingredient_id": str(doc["_id"]),
-                            "supplier_id": str(doc.get("supplier_id")) if doc.get("supplier_id") else None,
+                            "supplier_id": str(doc.get("supplier_id")) if doc.get("supplier_id") else None,  # Convert ObjectId to string (handles both ObjectId and string) (handles both ObjectId and string) (handles both ObjectId and string)
                             "supplier_name": doc.get("supplier_name"),
                             "description": description,  # Use enhanced_description if available
                             "rephrased_description": doc.get("enhanced_description"),  # Keep for backward compatibility
@@ -378,7 +378,7 @@ async def match_inci_names(
             matched_results.append({
                 "ingredient_name": doc["ingredient_name"],
                 "ingredient_id": str(doc["_id"]),  # Add ingredient ID for distributor mapping
-                "supplier_id": str(doc.get("supplier_id")) if doc.get("supplier_id") else None,
+                "supplier_id": str(doc.get("supplier_id")) if doc.get("supplier_id") else None,  # Convert ObjectId to string (handles both ObjectId and string)
                 "supplier_name": doc.get("supplier_name"),
                 "description": description,  # Use enhanced_description if available
                 "rephrased_description": doc.get("enhanced_description"),  # Keep for backward compatibility
@@ -470,6 +470,7 @@ async def match_inci_names(
                                 matched_results.append({
                                     "ingredient_name": doc["ingredient_name"],
                                     "ingredient_id": str(doc["_id"]),  # Add ingredient ID for distributor mapping
+                                    "supplier_id": str(doc.get("supplier_id")) if doc.get("supplier_id") else None,  # Convert ObjectId to string (handles both ObjectId and string) (handles both ObjectId and string) (handles both ObjectId and string) (handles both ObjectId and string)
                                     "supplier_name": doc.get("supplier_name"),
                                     "description": description,  # Use enhanced_description if available
                                     "rephrased_description": doc.get("enhanced_description"),  # Keep for backward compatibility
@@ -542,7 +543,7 @@ async def match_inci_names(
                     matched_results.append({
                         "ingredient_name": doc["ingredient_name"],
                         "ingredient_id": str(doc["_id"]),  # Add ingredient ID for distributor mapping
-                        "supplier_id": str(doc.get("supplier_id")) if doc.get("supplier_id") else None,
+                        "supplier_id": str(doc.get("supplier_id")) if doc.get("supplier_id") else None,  # Convert ObjectId to string (handles both ObjectId and string) (handles both ObjectId and string)
                         "supplier_name": doc.get("supplier_name"),
                         "description": description,  # Use enhanced_description if available
                         "rephrased_description": doc.get("enhanced_description"),  # Keep for backward compatibility
