@@ -10,6 +10,7 @@ from typing import List, Dict
 from bson import ObjectId
 from app.ai_ingredient_intelligence.models.schemas import AnalyzeInciItem
 from app.ai_ingredient_intelligence.db.collections import distributor_col, branded_ingredients_col
+from app.ai_ingredient_intelligence.db.mongodb import db
 
 
 async def fetch_distributors_for_branded_ingredients(items: List[AnalyzeInciItem]) -> Dict[str, List[Dict]]:
@@ -112,23 +113,53 @@ async def fetch_distributors_for_branded_ingredients(items: List[AnalyzeInciItem
                     except:
                         pass
         
-        # Batch fetch all ingredient documents in one query
+        # Batch fetch all ingredient documents in one query (including supplier info)
         ingredient_id_to_name_map = {}
+        ingredient_id_to_supplier_map = {}  # Maps ingredient_id -> supplier_name
+        suppliers_col = db["ingre_suppliers"]
+        
         if all_ingredient_ids_to_fetch:
             ingredient_docs = await branded_ingredients_col.find(
                 {"_id": {"$in": list(all_ingredient_ids_to_fetch)}}
             ).to_list(length=None)
+            
+            # Collect supplier IDs
+            supplier_ids = set()
             for ing_doc in ingredient_docs:
-                ingredient_id_to_name_map[ing_doc["_id"]] = ing_doc.get("ingredient_name", "")
+                ing_id = ing_doc["_id"]
+                ingredient_id_to_name_map[ing_id] = ing_doc.get("ingredient_name", "")
+                supplier_id = ing_doc.get("supplier_id")
+                if supplier_id:
+                    try:
+                        if isinstance(supplier_id, str):
+                            supplier_id = ObjectId(supplier_id)
+                        supplier_ids.add(supplier_id)
+                        ingredient_id_to_supplier_map[ing_id] = supplier_id
+                    except:
+                        pass
+            
+            # Batch fetch supplier names - fetch ALL suppliers (old behavior, no isValid filter)
+            if supplier_ids:
+                supplier_docs = await suppliers_col.find(
+                    {"_id": {"$in": list(supplier_ids)}},
+                    {"supplierName": 1}
+                ).to_list(length=None)
+                supplier_id_to_name = {doc["_id"]: doc.get("supplierName", "") for doc in supplier_docs}
+                
+                # Update ingredient_id_to_supplier_map with supplier names
+                for ing_id, supplier_id in ingredient_id_to_supplier_map.items():
+                    supplier_name = supplier_id_to_name.get(supplier_id, "")
+                    ingredient_id_to_supplier_map[ing_id] = supplier_name
         
-        # Process distributors: convert ObjectId to string and fetch ingredient names from map
+        # Process distributors: convert ObjectId to string and fetch ingredient names and supplier info from map
         processed_distributors = []
         for distributor in all_distributors:
             distributor["_id"] = str(distributor["_id"])
             
-            # Fetch ingredientName from ingredientIds using the pre-fetched map
+            # Fetch ingredientName and supplierName from ingredientIds using the pre-fetched maps
             if "ingredientIds" in distributor and distributor.get("ingredientIds"):
                 ingredient_names = []
+                supplier_names = []
                 for ing_id in distributor["ingredientIds"]:
                     try:
                         if isinstance(ing_id, str):
@@ -139,10 +170,14 @@ async def fetch_distributors_for_branded_ingredients(items: List[AnalyzeInciItem
                         else:
                             ing_id_obj = ing_id
                         
-                        # Use pre-fetched map instead of individual query
+                        # Use pre-fetched maps instead of individual queries
                         ingredient_name = ingredient_id_to_name_map.get(ing_id_obj)
                         if ingredient_name:
                             ingredient_names.append(ingredient_name)
+                        
+                        supplier_name = ingredient_id_to_supplier_map.get(ing_id_obj)
+                        if supplier_name:  # Only add non-None, non-empty supplier names
+                            supplier_names.append(supplier_name)
                     except Exception as e:
                         pass
                 
@@ -150,8 +185,20 @@ async def fetch_distributors_for_branded_ingredients(items: List[AnalyzeInciItem
                     distributor["ingredientName"] = ingredient_names[0] if len(ingredient_names) == 1 else ", ".join(ingredient_names)
                 else:
                     distributor["ingredientName"] = distributor.get("ingredientName", "")
+                
+                # Add supplier name(s) - use first if single, or join if multiple
+                if supplier_names:
+                    unique_suppliers = list(set(supplier_names))  # Remove duplicates
+                    distributor["supplierName"] = unique_suppliers[0] if len(unique_suppliers) == 1 else ", ".join(unique_suppliers)
+                else:
+                    # Don't set supplierName if not found - keep existing value or None
+                    if "supplierName" not in distributor:
+                        distributor["supplierName"] = None
             else:
                 distributor["ingredientName"] = distributor.get("ingredientName", "")
+                # Don't set supplierName if not found - keep existing value or None
+                if "supplierName" not in distributor:
+                    distributor["supplierName"] = None
             
             processed_distributors.append(distributor)
         

@@ -386,11 +386,22 @@ async def generate_formula_endpoint(
         "compliance": {...}
     }
     """
+    print(f"\n{'='*80}")
+    print(f"[DEBUG] 🚀 API CALL: /api/formula/generate")
+    print(f"[DEBUG] Request received at: {datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()}")
+    print(f"{'='*80}\n")
+    
     start_time = time.time()
     
     try:
         # Convert Pydantic model to dict
         wish_data = request.model_dump()
+        print(f"[DEBUG] Wish data keys: {list(wish_data.keys())}")
+        print(f"[DEBUG] Product type: {wish_data.get('productType')}")
+        print(f"[DEBUG] Benefits: {wish_data.get('benefits')}")
+        print(f"[DEBUG] Exclusions: {wish_data.get('exclusions')}")
+        print(f"[DEBUG] Hero ingredients: {wish_data.get('heroIngredients')}")
+        print(f"[DEBUG] Cost range: {wish_data.get('costMin')} - {wish_data.get('costMax')}")
         
         # Validate required fields
         if not wish_data.get("productType"):
@@ -496,10 +507,10 @@ async def generate_formula_endpoint(
             )
         
         processing_time = time.time() - start_time
-        print(f"✅ Formula generated in {processing_time:.2f}s")
-        print(f"   Cost: ₹{formula.get('cost', 0)}/100g")
-        print(f"   Phases: {len(formula.get('phases', []))}")
-        print(f"   Ingredients: {sum(len(p.get('ingredients', [])) for p in formula.get('phases', []))}")
+        print(f"[DEBUG] ✅ Formula generated in {processing_time:.2f}s")
+        print(f"[DEBUG]    Cost: ₹{formula.get('cost', 0)}/100g")
+        print(f"[DEBUG]    Phases: {len(formula.get('phases', []))}")
+        print(f"[DEBUG]    Ingredients: {sum(len(p.get('ingredients', [])) for p in formula.get('phases', []))}")
         
         # Ensure all required fields are present
         formula.setdefault("name", f"{wish_data['productType'].title()} Formula")
@@ -575,9 +586,15 @@ async def save_wish_history(
     - Requires JWT token in Authorization header
     - User ID is automatically extracted from the JWT token
     """
+    print(f"\n{'='*80}")
+    print(f"[DEBUG] 🚀 API CALL: /api/formula/save-wish-history")
+    print(f"[DEBUG] Request received at: {datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()}")
+    print(f"[DEBUG] Payload keys: {list(payload.keys())}")
+    print(f"{'='*80}\n")
+    
     try:
-        print(f"📝 Save wish history request received")
-        print(f"   Payload keys: {list(payload.keys())}")
+        print(f"[DEBUG] 📝 Save wish history request received")
+        print(f"[DEBUG]    Payload keys: {list(payload.keys())}")
         
         # Validate payload
         if "name" not in payload:
@@ -660,9 +677,16 @@ async def get_wish_history(
     - Requires JWT token in Authorization header
     - User ID is automatically extracted from the JWT token
     """
+    print(f"\n{'='*80}")
+    print(f"[DEBUG] 🚀 API CALL: /api/formula/wish-history")
+    print(f"[DEBUG] Request received at: {datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()}")
+    print(f"[DEBUG] Query params - search: {search}, limit: {limit}, skip: {skip}")
+    print(f"{'='*80}\n")
+    
     try:
         # Extract user_id from JWT token (already verified by verify_jwt_token)
         user_id = current_user.get("user_id") or current_user.get("_id")
+        print(f"[DEBUG] User ID extracted: {user_id}")
         if not user_id:
             raise HTTPException(
                 status_code=400,
@@ -749,9 +773,16 @@ async def get_wish_history_detail(
     - User ID is automatically extracted from the JWT token
     - Only returns items belonging to the authenticated user
     """
+    print(f"\n{'='*80}")
+    print(f"[DEBUG] 🚀 API CALL: /api/formula/wish-history/{history_id}/details")
+    print(f"[DEBUG] Request received at: {datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()}")
+    print(f"[DEBUG] History ID: {history_id}")
+    print(f"{'='*80}\n")
+    
     try:
         # Extract user_id from JWT token (already verified by verify_jwt_token)
         user_id = current_user.get("user_id") or current_user.get("_id")
+        print(f"[DEBUG] User ID extracted: {user_id}")
         if not user_id:
             raise HTTPException(
                 status_code=400,
@@ -820,9 +851,17 @@ async def update_wish_history(
     - Requires JWT token in Authorization header
     - User ID is automatically extracted from the JWT token
     """
+    print(f"\n{'='*80}")
+    print(f"[DEBUG] 🚀 API CALL: /api/formula/wish-history/{history_id} (PATCH)")
+    print(f"[DEBUG] Request received at: {datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()}")
+    print(f"[DEBUG] History ID: {history_id}")
+    print(f"[DEBUG] Payload keys: {list(payload.keys())}")
+    print(f"{'='*80}\n")
+    
     try:
         # Extract user_id from JWT token (already verified by verify_jwt_token)
         user_id = current_user.get("user_id") or current_user.get("_id")
+        print(f"[DEBUG] User ID extracted: {user_id}")
         if not user_id:
             raise HTTPException(
                 status_code=400,
@@ -885,9 +924,16 @@ async def delete_wish_history(
     - Requires JWT token in Authorization header
     - User ID is automatically extracted from the JWT token
     """
+    print(f"\n{'='*80}")
+    print(f"[DEBUG] 🚀 API CALL: /api/formula/wish-history/{history_id} (DELETE)")
+    print(f"[DEBUG] Request received at: {datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()}")
+    print(f"[DEBUG] History ID: {history_id}")
+    print(f"{'='*80}\n")
+    
     try:
         # Extract user_id from JWT token (already verified by verify_jwt_token)
         user_id = current_user.get("user_id") or current_user.get("_id")
+        print(f"[DEBUG] User ID extracted: {user_id}")
         if not user_id:
             raise HTTPException(
                 status_code=400,

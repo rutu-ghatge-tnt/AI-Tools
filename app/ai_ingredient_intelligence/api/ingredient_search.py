@@ -8,7 +8,8 @@ from app.ai_ingredient_intelligence.auth import verify_jwt_token
 from app.ai_ingredient_intelligence.db.collections import (
     branded_ingredients_col, 
     inci_col,
-    distributor_col
+    distributor_col,
+    suppliers_col
 )
 
 router = APIRouter(prefix="/ingredients", tags=["Ingredient Search"])
@@ -203,6 +204,273 @@ async def get_ingredient_by_name(
             "function": category or "Other",
             "all_inci": [i["name"] for i in inci_names] if inci_names else ([inci_name] if inci_name else [])
         }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+
+@router.get("/by-supplier/{supplier_name}")
+async def get_ingredients_by_supplier(
+    supplier_name: str,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
+    """Get all ingredients for a specific supplier by supplier name"""
+    try:
+        from bson import ObjectId
+        
+        # First, find the supplier by name (case-insensitive, exact match)
+        # Try exact match first
+        supplier_doc = await suppliers_col.find_one(
+            {"supplierName": {"$regex": f"^{supplier_name.strip()}$", "$options": "i"}}
+        )
+        
+        # If not found, try without case sensitivity and with trimmed whitespace
+        if not supplier_doc:
+            # Try with trimmed supplier name from DB
+            all_suppliers = await suppliers_col.find(
+                {"supplierName": {"$regex": supplier_name.strip(), "$options": "i"}}
+            ).to_list(length=None)
+            
+            # Find the best match (exact case-insensitive match preferred)
+            supplier_name_lower = supplier_name.strip().lower()
+            for sup in all_suppliers:
+                if sup.get("supplierName", "").strip().lower() == supplier_name_lower:
+                    supplier_doc = sup
+                    break
+            
+            # If still not found, use first match if any
+            if not supplier_doc and all_suppliers:
+                supplier_doc = all_suppliers[0]
+        
+        if not supplier_doc:
+            raise HTTPException(
+                status_code=404, 
+                detail=f'Supplier "{supplier_name}" not found. Please verify the supplier name.'
+            )
+        
+        supplier_id = supplier_doc["_id"]
+        
+        # Find all ingredients with this supplier_id
+        # Handle both ObjectId and string formats (supplier_id can be stored as either)
+        query = {
+            "$or": [
+                {"supplier_id": supplier_id},  # ObjectId match
+                {"supplier_id": str(supplier_id)}  # String match
+            ]
+        }
+        cursor = branded_ingredients_col.find(
+            query,
+            {
+                "ingredient_name": 1,
+                "original_inci_name": 1,
+                "inci_ids": 1,
+                "_id": 1,
+                "category_decided": 1,
+                "supplier_id": 1
+            }
+        )
+        
+        results = []
+        async for doc in cursor:
+            ing_id = str(doc["_id"])
+            ing_name = doc.get("ingredient_name", "")
+            
+            # Get INCI name - prefer original_inci_name, fallback to inci_ids
+            inci_name = doc.get("original_inci_name", "")
+            inci_names = []
+            category = doc.get("category_decided", "")
+            
+            # If no original_inci_name, get from inci_ids
+            if not inci_name and doc.get("inci_ids"):
+                inci_cursor = inci_col.find(
+                    {"_id": {"$in": doc["inci_ids"]}},
+                    {"inciName": 1, "category": 1}
+                )
+                async for inci_doc in inci_cursor:
+                    inci_name_from_db = inci_doc.get("inciName", "")
+                    if inci_name_from_db:
+                        inci_names.append(inci_name_from_db)
+                        if not inci_name:
+                            inci_name = inci_name_from_db
+                    if not category:
+                        category = inci_doc.get("category", "")
+            
+            if inci_name and inci_name not in inci_names:
+                inci_names.insert(0, inci_name)
+            
+            # Get cost from distributor using supplier_id or ingredientIds
+            cost_per_kg = None
+            
+            # Try supplier_id first
+            if supplier_id:
+                distributor_doc = await distributor_col.find_one(
+                    {"supplierId": str(supplier_id)},
+                    sort=[("createdAt", -1)]
+                )
+                if distributor_doc and distributor_doc.get("pricePerKg"):
+                    cost_per_kg = float(distributor_doc.get("pricePerKg", 0))
+            
+            # If not found, try ingredientIds
+            if not cost_per_kg:
+                distributor_doc = await distributor_col.find_one(
+                    {"ingredientIds": ing_id},
+                    sort=[("createdAt", -1)]
+                )
+                if distributor_doc and distributor_doc.get("pricePerKg"):
+                    cost_per_kg = float(distributor_doc.get("pricePerKg", 0))
+            
+            # Default cost based on category
+            if not cost_per_kg:
+                if category == "Active":
+                    cost_per_kg = 5000
+                else:
+                    cost_per_kg = 500
+            
+            result_item = {
+                "id": ing_id,
+                "name": ing_name,
+                "inci": inci_name or (inci_names[0] if inci_names else ""),
+                "all_inci": inci_names if inci_names else ([inci_name] if inci_name else []),
+                "category": category or "Other",
+                "cost_per_kg": cost_per_kg
+            }
+            results.append(result_item)
+        
+        return {
+            "supplier": supplier_doc.get("supplierName", ""),
+            "ingredients": results,
+            "count": len(results)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+
+@router.get("/by-supplier-id/{supplier_id}")
+async def get_ingredients_by_supplier_id(
+    supplier_id: str,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
+    """Get all ingredients for a specific supplier by supplier ID"""
+    try:
+        from bson import ObjectId
+        
+        # Validate and convert supplier_id to ObjectId
+        try:
+            supplier_object_id = ObjectId(supplier_id)
+        except Exception:
+            raise HTTPException(
+                status_code=400,
+                detail=f'Invalid supplier ID format: "{supplier_id}". Must be a valid MongoDB ObjectId.'
+            )
+        
+        # Find the supplier by ID
+        supplier_doc = await suppliers_col.find_one({"_id": supplier_object_id})
+        
+        if not supplier_doc:
+            raise HTTPException(
+                status_code=404,
+                detail=f'Supplier with ID "{supplier_id}" not found.'
+            )
+        
+        # Find all ingredients with this supplier_id
+        # Handle both ObjectId and string formats (supplier_id can be stored as either)
+        query = {
+            "$or": [
+                {"supplier_id": supplier_object_id},  # ObjectId match
+                {"supplier_id": str(supplier_object_id)}  # String match
+            ]
+        }
+        cursor = branded_ingredients_col.find(
+            query,
+            {
+                "ingredient_name": 1,
+                "original_inci_name": 1,
+                "inci_ids": 1,
+                "_id": 1,
+                "category_decided": 1,
+                "supplier_id": 1
+            }
+        )
+        
+        results = []
+        async for doc in cursor:
+            ing_id = str(doc["_id"])
+            ing_name = doc.get("ingredient_name", "")
+            
+            # Get INCI name - prefer original_inci_name, fallback to inci_ids
+            inci_name = doc.get("original_inci_name", "")
+            inci_names = []
+            category = doc.get("category_decided", "")
+            
+            # If no original_inci_name, get from inci_ids
+            if not inci_name and doc.get("inci_ids"):
+                inci_cursor = inci_col.find(
+                    {"_id": {"$in": doc["inci_ids"]}},
+                    {"inciName": 1, "category": 1}
+                )
+                async for inci_doc in inci_cursor:
+                    inci_name_from_db = inci_doc.get("inciName", "")
+                    if inci_name_from_db:
+                        inci_names.append(inci_name_from_db)
+                        if not inci_name:
+                            inci_name = inci_name_from_db
+                    if not category:
+                        category = inci_doc.get("category", "")
+            
+            if inci_name and inci_name not in inci_names:
+                inci_names.insert(0, inci_name)
+            
+            # Get cost from distributor using supplier_id or ingredientIds
+            cost_per_kg = None
+            
+            # Try supplier_id first
+            if supplier_object_id:
+                distributor_doc = await distributor_col.find_one(
+                    {"supplierId": str(supplier_object_id)},
+                    sort=[("createdAt", -1)]
+                )
+                if distributor_doc and distributor_doc.get("pricePerKg"):
+                    cost_per_kg = float(distributor_doc.get("pricePerKg", 0))
+            
+            # If not found, try ingredientIds
+            if not cost_per_kg:
+                distributor_doc = await distributor_col.find_one(
+                    {"ingredientIds": ing_id},
+                    sort=[("createdAt", -1)]
+                )
+                if distributor_doc and distributor_doc.get("pricePerKg"):
+                    cost_per_kg = float(distributor_doc.get("pricePerKg", 0))
+            
+            # Default cost based on category
+            if not cost_per_kg:
+                if category == "Active":
+                    cost_per_kg = 5000
+                else:
+                    cost_per_kg = 500
+            
+            result_item = {
+                "id": ing_id,
+                "name": ing_name,
+                "inci": inci_name or (inci_names[0] if inci_names else ""),
+                "all_inci": inci_names if inci_names else ([inci_name] if inci_name else []),
+                "category": category or "Other",
+                "cost_per_kg": cost_per_kg
+            }
+            results.append(result_item)
+        
+        return {
+            "supplier_id": str(supplier_object_id),
+            "supplier": supplier_doc.get("supplierName", ""),
+            "ingredients": results,
+            "count": len(results)
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         traceback.print_exc()

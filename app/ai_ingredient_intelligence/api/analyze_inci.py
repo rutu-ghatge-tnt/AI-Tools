@@ -492,15 +492,25 @@ async def extract_ingredients_from_url(
         "processing_time": 5.123
     }
     """
+    print(f"\n{'='*80}")
+    print(f"[DEBUG] 🚀 API CALL: /api/extract-ingredients-from-url")
+    print(f"[DEBUG] Request received at: {datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()}")
+    print(f"[DEBUG] Payload keys: {list(payload.keys())}")
+    if "url" in payload:
+        print(f"[DEBUG] URL: {payload['url']}")
+    print(f"{'='*80}\n")
+    
     start = time.time()
     scraper = None
     
     try:
         # Validate payload
         if "url" not in payload:
+            print(f"[DEBUG] ❌ Error: Missing required field: url")
             raise HTTPException(status_code=400, detail="Missing required field: url")
         
         url = payload["url"]
+        print(f"[DEBUG] Processing URL: {url}")
         if not isinstance(url, str) or not url.strip():
             raise HTTPException(status_code=400, detail="url must be a non-empty string")
         
@@ -703,9 +713,11 @@ async def analyze_ingredients_core(ingredients: List[str]) -> AnalyzeInciRespons
     else:
         print("No distributor information found")
 
-    # 🔹 Group ALL detected ingredients (branded + general) by matched_inci
+    # 🔹 Group items by exact matched_inci (same INCI names = same group)
+    # Multiple branded ingredients with the same matched_inci will be shown together
     detected_dict = defaultdict(list)
     for item in items_processed:
+        # Use sorted tuple as key to group items with exact same INCI names
         key = tuple(sorted(item.matched_inci))
         detected_dict[key].append(item)
 
@@ -717,8 +729,8 @@ async def analyze_ingredients_core(ingredients: List[str]) -> AnalyzeInciRespons
         )
         for key, val in detected_dict.items()
     ]
-    # Sort by number of INCI: more INCI first, then lower, single at last
-    detected.sort(key=lambda x: len(x.inci_list), reverse=True)
+    # Sort by number of INCI: more INCI first, then by first INCI name
+    detected.sort(key=lambda x: (-len(x.inci_list), x.inci_list[0].lower() if x.inci_list else ""))
 
     # Filter out water-related BIS cautions
     filtered_bis_cautions = None
@@ -808,19 +820,39 @@ async def save_inci_history_background(
         
         # Generate display name
         print(f"[DEBUG] 📝 Generating display name...")
-        name = payload.get("name", "").strip()
-        if not name:
-            # Generate from first ingredient
-            ingredients_preview = parse_inci_string(payload.get("inci_names", ""))
-            if ingredients_preview:
-                first_ing = ingredients_preview[0]
-                name = first_ing + "..." if len(first_ing) > 20 else first_ing
-                print(f"[DEBUG]   Generated name from first ingredient: {name}")
-            else:
-                name = "Untitled Analysis"
-                print(f"[DEBUG]   Using default name: {name}")
+        name = payload.get("name")
+        if name is None:
+            name = ""
+        elif isinstance(name, str):
+            name = name.strip()
         else:
-            print(f"[DEBUG]   Using provided name: {name}")
+            name = str(name).strip()
+        
+        print(f"[DEBUG]   Name from payload: {repr(name)}")
+        
+        if not name:
+            # Try to get name from history if history_id exists
+            if history_id and ObjectId.is_valid(history_id):
+                try:
+                    existing_history = await decode_history_col.find_one({"_id": ObjectId(history_id)})
+                    if existing_history and existing_history.get("name"):
+                        name = existing_history["name"]
+                        print(f"[DEBUG]   Using name from existing history: {name}")
+                except Exception as e:
+                    print(f"[DEBUG]   Could not fetch name from history: {e}")
+            
+            # If still no name, generate from first ingredient
+            if not name:
+                ingredients_preview = parse_inci_string(payload.get("inci_names", ""))
+                if ingredients_preview:
+                    first_ing = ingredients_preview[0]
+                    name = first_ing + "..." if len(first_ing) > 20 else first_ing
+                    print(f"[DEBUG]   Generated name from first ingredient: {name}")
+                else:
+                    name = "Untitled Analysis"
+                    print(f"[DEBUG]   Using default name: {name}")
+        else:
+            print(f"[DEBUG]   ✅ Using provided name: {name}")
         
         # Truncate name if too long
         if len(name) > 100:
@@ -917,8 +949,22 @@ async def analyze_inci(
     - Requires JWT token in Authorization header
     - User ID is automatically extracted from the JWT token
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    print(f"\n{'='*80}")
+    print(f"[DEBUG] 🚀 API CALL: /api/analyze-inci")
+    print(f"[DEBUG] Request received at: {datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()}")
+    print(f"[DEBUG] Payload keys: {list(payload.keys())}")
+    print(f"[DEBUG] Payload size: {len(str(payload))} characters")
+    if "inci_names" in payload:
+        inci_preview = str(payload["inci_names"])[:200] + "..." if len(str(payload["inci_names"])) > 200 else str(payload["inci_names"])
+        print(f"[DEBUG] INCI names preview: {inci_preview}")
+    print(f"{'='*80}\n")
+    
     # Extract user_id from JWT token (already verified by verify_jwt_token)
     user_id_value = current_user.get("user_id") or current_user.get("_id") or payload.get("user_id")
+    print(f"[DEBUG] User ID extracted: {user_id_value}")
     
     # Validate and parse input
     if "inci_names" not in payload:
@@ -1117,12 +1163,21 @@ async def analyze_url(
     3. Analyze the extracted ingredients
     4. Return the analysis results with extracted text
     """
+    print(f"\n{'='*80}")
+    print(f"[DEBUG] 🚀 API CALL: /api/analyze-url")
+    print(f"[DEBUG] Request received at: {datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()}")
+    print(f"[DEBUG] Payload keys: {list(payload.keys())}")
+    if "url" in payload:
+        print(f"[DEBUG] URL: {payload['url']}")
+    print(f"{'='*80}\n")
+    
     start = time.time()
     scraper = None
     history_id = None
     
     # Extract user_id from JWT token (already verified by verify_jwt_token)
     user_id_value = current_user.get("user_id") or current_user.get("_id") or payload.get("user_id")
+    print(f"[DEBUG] User ID extracted: {user_id_value}")
     name = payload.get("name", "").strip()
     tag = payload.get("tag")
     notes = payload.get("notes", "")
@@ -1326,9 +1381,11 @@ async def analyze_url(
     else:
         print("No distributor information found")
 
-    # 🔹 Group ALL detected ingredients (branded + general) by matched_inci
+    # 🔹 Group items by exact matched_inci (same INCI names = same group)
+    # Multiple branded ingredients with the same matched_inci will be shown together
     detected_dict = defaultdict(list)
     for item in items_processed:
+        # Use sorted tuple as key to group items with exact same INCI names
         key = tuple(sorted(item.matched_inci))
         detected_dict[key].append(item)
 
@@ -1340,8 +1397,8 @@ async def analyze_url(
         )
         for key, val in detected_dict.items()
     ]
-    # Sort by number of INCI: more INCI first, then lower, single at last
-    detected.sort(key=lambda x: len(x.inci_list), reverse=True)
+    # Sort by number of INCI: more INCI first, then by first INCI name
+    detected.sort(key=lambda x: (-len(x.inci_list), x.inci_list[0].lower() if x.inci_list else ""))
 
     # Filter out water-related BIS cautions
     filtered_bis_cautions = None
@@ -2282,12 +2339,21 @@ async def compare_products(
         "processing_time": float
     }
     """
+    print(f"\n{'='*80}")
+    print(f"[DEBUG] 🚀 API CALL: /api/compare-products")
+    print(f"[DEBUG] Request received at: {datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()}")
+    print(f"[DEBUG] Payload keys: {list(payload.keys())}")
+    if "products" in payload:
+        print(f"[DEBUG] Number of products to compare: {len(payload['products']) if isinstance(payload.get('products'), list) else 'N/A'}")
+    print(f"{'='*80}\n")
+    
     start = time.time()
     scraper = None
     
     try:
         # Parse products from payload
         if "products" not in payload or not payload["products"]:
+            print(f"[DEBUG] ❌ Error: Missing required field: 'products' array")
             raise HTTPException(status_code=400, detail="Missing required field: 'products' array")
         
         products_list = payload["products"]
@@ -2831,6 +2897,14 @@ async def save_decode_history(
 ):
     """
     Create a decode history item with "in_progress" status (for frontend to track pending analyses)
+    """
+    print(f"\n{'='*80}")
+    print(f"[DEBUG] 🚀 API CALL: /api/save-decode-history")
+    print(f"[DEBUG] Request received at: {datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()}")
+    print(f"[DEBUG] Payload keys: {list(payload.keys())}")
+    print(f"{'='*80}\n")
+    
+    """
     
     This endpoint allows the frontend to create a history item upfront before analysis starts.
     The history item will be updated later by /analyze-inci or /analyze-url endpoints when analysis completes.
@@ -2958,6 +3032,14 @@ async def get_decode_history(
 ):
     """
     Get decode history with optional unified search by name or tag (user-specific)
+    """
+    print(f"\n{'='*80}")
+    print(f"[DEBUG] 🚀 API CALL: /api/decode-history")
+    print(f"[DEBUG] Request received at: {datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()}")
+    print(f"[DEBUG] Query params - search: {search}, limit: {limit}, skip: {skip}")
+    print(f"{'='*80}\n")
+    
+    """
     
     HISTORY FUNCTIONALITY:
     - Returns all decode history items for the authenticated user
@@ -3074,6 +3156,11 @@ async def get_decode_history_detail(
     history_id: str,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
+    print(f"\n{'='*80}")
+    print(f"[DEBUG] 🚀 API CALL: /api/decode-history/{history_id}/details")
+    print(f"[DEBUG] Request received at: {datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()}")
+    print(f"[DEBUG] History ID: {history_id}")
+    print(f"{'='*80}\n")
     """
     Get full details of a specific decode history item (includes all large fields)
     
@@ -3161,6 +3248,12 @@ async def update_decode_history(
     payload: dict,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
+    print(f"\n{'='*80}")
+    print(f"[DEBUG] 🚀 API CALL: /api/decode-history/{history_id} (PATCH)")
+    print(f"[DEBUG] Request received at: {datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()}")
+    print(f"[DEBUG] History ID: {history_id}")
+    print(f"[DEBUG] Payload keys: {list(payload.keys())}")
+    print(f"{'='*80}\n")
     """
     Update a decode history item - all fields are optional and can be updated
     
@@ -3252,6 +3345,11 @@ async def delete_decode_history(
     history_id: str,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
+    print(f"\n{'='*80}")
+    print(f"[DEBUG] 🚀 API CALL: /api/decode-history/{history_id} (DELETE)")
+    print(f"[DEBUG] Request received at: {datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()}")
+    print(f"[DEBUG] History ID: {history_id}")
+    print(f"{'='*80}\n")
     """
     Delete a decode history item by ID (user-specific)
     
