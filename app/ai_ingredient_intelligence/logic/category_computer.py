@@ -126,6 +126,7 @@ async def fetch_and_compute_categories(items: List[AnalyzeInciItem]) -> Tuple[Di
         item_dict = {
             "ingredient_name": item.ingredient_name,
             "ingredient_id": item.ingredient_id,
+            "supplier_id": getattr(item, 'supplier_id', None),  # Include supplier_id if available
             "supplier_name": item.supplier_name,
             "description": display_description,  # Uses enhanced_description for branded ingredients
             "category_decided": item.category_decided,  # Keep category_decided from MongoDB for branded
