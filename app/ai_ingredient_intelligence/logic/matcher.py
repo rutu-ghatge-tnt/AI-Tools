@@ -233,10 +233,16 @@ async def match_inci_names(
             }
         },
         {
+            "$addFields": {
+                # Ensure supplier_id field exists (preserve original value or set to null)
+                "supplier_id": {"$ifNull": ["$supplier_id", None]}
+            }
+        },
+        {
             "$project": {
                 "_id": 1,
                 "ingredient_name": 1,
-                "supplier_id": 1,  # Include supplier_id
+                "supplier_id": 1,  # Include supplier_id (now guaranteed to exist as string or None)
                 "supplier_name": {"$arrayElemAt": ["$supplier_docs.supplierName", 0]},
                 "description": 1,
                 "enhanced_description": 1,  # Prefer enhanced_description for branded ingredients
@@ -251,6 +257,11 @@ async def match_inci_names(
     if combinations:
         print(f"[INFO] Step 0: Searching for {len(combinations)} INCI combination(s) in branded ingredients...")
         
+        # Debug: Check a sample document directly from MongoDB to verify supplier_id exists
+        sample_doc = await branded_ingredients_col.find_one({}, {"ingredient_name": 1, "supplier_id": 1, "_id": 1})
+        if sample_doc:
+            print(f"[DEBUG] Sample document from MongoDB: ingredient_name={sample_doc.get('ingredient_name')}, supplier_id={sample_doc.get('supplier_id')}, supplier_id_type={type(sample_doc.get('supplier_id')).__name__}")
+        
         for combo_string, combo_inci_list in combinations:
             if combo_string.lower() in matched_combinations:
                 continue
@@ -260,6 +271,10 @@ async def match_inci_names(
             
             # Search for branded ingredients where ALL INCI in the combination are present
             async for doc in branded_ingredients_col.aggregate(pipeline_combos):
+                # Debug: Check all fields in doc
+                print(f"[DEBUG] Step 0 - Full doc keys: {list(doc.keys())}")
+                print(f"[DEBUG] Step 0 - Full doc: {doc}")
+                
                 # Skip ingredients without valid suppliers
                 supplier_docs = doc.get("supplier_docs", [])
                 # Don't skip ingredients - show them even if supplier is missing (supplier_name will be None)
@@ -286,10 +301,24 @@ async def match_inci_names(
                         # Use enhanced_description if available, otherwise fallback to description
                         description = doc.get("enhanced_description") or doc.get("description")
                         
+                        # Debug: Check supplier_id value
+                        raw_supplier_id = doc.get("supplier_id")
+                        print(f"[DEBUG] Step 0 - Combination match: ingredient_name={doc['ingredient_name']}, raw_supplier_id={raw_supplier_id}, type={type(raw_supplier_id)}")
+                        # Convert ObjectId to string, or keep as string/None
+                        if raw_supplier_id is None:
+                            supplier_id_str = None
+                        elif isinstance(raw_supplier_id, ObjectId):
+                            supplier_id_str = str(raw_supplier_id)
+                        elif isinstance(raw_supplier_id, str):
+                            supplier_id_str = raw_supplier_id
+                        else:
+                            supplier_id_str = str(raw_supplier_id)
+                        print(f"[DEBUG] Step 0 - After conversion: supplier_id_str={supplier_id_str}")
+                        
                         matched_results.append({
                             "ingredient_name": doc["ingredient_name"],
                             "ingredient_id": str(doc["_id"]),
-                            "supplier_id": str(doc.get("supplier_id")) if doc.get("supplier_id") else None,  # Convert ObjectId to string (handles both ObjectId and string) (handles both ObjectId and string) (handles both ObjectId and string)
+                            "supplier_id": supplier_id_str,
                             "supplier_name": doc.get("supplier_name"),
                             "description": description,  # Use enhanced_description if available
                             "rephrased_description": doc.get("enhanced_description"),  # Keep for backward compatibility
@@ -339,10 +368,16 @@ async def match_inci_names(
             }
         },
         {
+            "$addFields": {
+                # Ensure supplier_id field exists (preserve original value or set to null)
+                "supplier_id": {"$ifNull": ["$supplier_id", None]}
+            }
+        },
+        {
             "$project": {
                 "_id": 1,
                 "ingredient_name": 1,
-                "supplier_id": 1,  # Include supplier_id
+                "supplier_id": 1,  # Include supplier_id (now guaranteed to exist as string or None)
                 "supplier_name": {"$arrayElemAt": ["$supplier_docs.supplierName", 0]},
                 "description": 1,
                 "enhanced_description": 1,  # Prefer enhanced_description for branded ingredients
@@ -355,6 +390,11 @@ async def match_inci_names(
     ]
 
     async for doc in branded_ingredients_col.aggregate(pipeline):
+        # Debug: Check all fields in doc (only for first match to avoid spam)
+        if len(matched_results) == 0:
+            print(f"[DEBUG] Step 1 - Full doc keys: {list(doc.keys())}")
+            print(f"[DEBUG] Step 1 - Full doc: {doc}")
+        
         # Show all ingredients regardless of supplier status (old behavior)
         brand_inci_list = [i.strip().lower() for i in doc.get("inci_list", [])]
         brand_inci_set = set(brand_inci_list)
@@ -375,10 +415,24 @@ async def match_inci_names(
             # Use enhanced_description if available, otherwise fallback to description
             description = doc.get("enhanced_description") or doc.get("description")
             
+            # Debug: Check supplier_id value
+            raw_supplier_id = doc.get("supplier_id")
+            print(f"[DEBUG] Step 1 - Exact match: ingredient_name={doc['ingredient_name']}, raw_supplier_id={raw_supplier_id}, type={type(raw_supplier_id)}")
+            # Convert ObjectId to string, or keep as string/None
+            if raw_supplier_id is None:
+                supplier_id_str = None
+            elif isinstance(raw_supplier_id, ObjectId):
+                supplier_id_str = str(raw_supplier_id)
+            elif isinstance(raw_supplier_id, str):
+                supplier_id_str = raw_supplier_id
+            else:
+                supplier_id_str = str(raw_supplier_id)
+            print(f"[DEBUG] Step 1 - After conversion: supplier_id_str={supplier_id_str}")
+            
             matched_results.append({
                 "ingredient_name": doc["ingredient_name"],
                 "ingredient_id": str(doc["_id"]),  # Add ingredient ID for distributor mapping
-                "supplier_id": str(doc.get("supplier_id")) if doc.get("supplier_id") else None,  # Convert ObjectId to string (handles both ObjectId and string)
+                "supplier_id": supplier_id_str,
                 "supplier_name": doc.get("supplier_name"),
                 "description": description,  # Use enhanced_description if available
                 "rephrased_description": doc.get("enhanced_description"),  # Keep for backward compatibility
@@ -467,10 +521,24 @@ async def match_inci_names(
                                 # Use enhanced_description if available, otherwise fallback to description
                                 description = doc.get("enhanced_description") or doc.get("description")
                                 
+                                # Debug: Check supplier_id value
+                                raw_supplier_id = doc.get("supplier_id")
+                                print(f"[DEBUG] Step 2 - Fuzzy match: ingredient_name={doc['ingredient_name']}, raw_supplier_id={raw_supplier_id}, type={type(raw_supplier_id)}")
+                                # Convert ObjectId to string, or keep as string/None
+                                if raw_supplier_id is None:
+                                    supplier_id_str = None
+                                elif isinstance(raw_supplier_id, ObjectId):
+                                    supplier_id_str = str(raw_supplier_id)
+                                elif isinstance(raw_supplier_id, str):
+                                    supplier_id_str = raw_supplier_id
+                                else:
+                                    supplier_id_str = str(raw_supplier_id)
+                                print(f"[DEBUG] Step 2 - After conversion: supplier_id_str={supplier_id_str}")
+                                
                                 matched_results.append({
                                     "ingredient_name": doc["ingredient_name"],
                                     "ingredient_id": str(doc["_id"]),  # Add ingredient ID for distributor mapping
-                                    "supplier_id": str(doc.get("supplier_id")) if doc.get("supplier_id") else None,  # Convert ObjectId to string (handles both ObjectId and string) (handles both ObjectId and string) (handles both ObjectId and string) (handles both ObjectId and string)
+                                    "supplier_id": supplier_id_str,
                                     "supplier_name": doc.get("supplier_name"),
                                     "description": description,  # Use enhanced_description if available
                                     "rephrased_description": doc.get("enhanced_description"),  # Keep for backward compatibility
@@ -540,10 +608,24 @@ async def match_inci_names(
                     # Use enhanced_description if available, otherwise fallback to description
                     description = doc.get("enhanced_description") or doc.get("description")
                     
+                    # Debug: Check supplier_id value
+                    raw_supplier_id = doc.get("supplier_id")
+                    print(f"[DEBUG] Step 3 - Synonym match: ingredient_name={doc['ingredient_name']}, raw_supplier_id={raw_supplier_id}, type={type(raw_supplier_id)}")
+                    # Convert ObjectId to string, or keep as string/None
+                    if raw_supplier_id is None:
+                        supplier_id_str = None
+                    elif isinstance(raw_supplier_id, ObjectId):
+                        supplier_id_str = str(raw_supplier_id)
+                    elif isinstance(raw_supplier_id, str):
+                        supplier_id_str = raw_supplier_id
+                    else:
+                        supplier_id_str = str(raw_supplier_id)
+                    print(f"[DEBUG] Step 3 - After conversion: supplier_id_str={supplier_id_str}")
+                    
                     matched_results.append({
                         "ingredient_name": doc["ingredient_name"],
                         "ingredient_id": str(doc["_id"]),  # Add ingredient ID for distributor mapping
-                        "supplier_id": str(doc.get("supplier_id")) if doc.get("supplier_id") else None,  # Convert ObjectId to string (handles both ObjectId and string) (handles both ObjectId and string)
+                        "supplier_id": supplier_id_str,
                         "supplier_name": doc.get("supplier_name"),
                         "description": description,  # Use enhanced_description if available
                         "rephrased_description": doc.get("enhanced_description"),  # Keep for backward compatibility

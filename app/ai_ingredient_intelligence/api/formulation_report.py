@@ -6,7 +6,7 @@ import re
 import httpx
 import asyncio
 import time
-from fastapi import APIRouter, HTTPException, Response, Request, Body, Depends, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Response, Request, Body, Depends
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 from datetime import datetime, timezone, timedelta
@@ -950,112 +950,20 @@ REFORMATTED CAUTIONS:"""
     # If Claude not available
     raise HTTPException(status_code=500, detail="Claude API not available. Please check your CLAUDE_API_KEY environment variable.")
 
-async def save_formulation_report_history_background(
-    user_id: Optional[str],
-    payload: dict,
-    report_result: dict,
-    status: str,
-    processing_time: float,
-    history_id: Optional[str] = None
-):
-    """
-    Background task to save formulation report history.
-    Runs after response is sent to client.
-    """
-    print(f"\n{'='*80}")
-    print(f"[HISTORY] 🔵 BACKGROUND TASK: save_formulation_report_history_background")
-    print(f"[HISTORY] User ID: {user_id}")
-    print(f"[HISTORY] History ID: {history_id or 'None (will create new)'}")
-    print(f"[HISTORY] Status: {status}")
-    print(f"{'='*80}\n")
-    
-    try:
-        if not user_id:
-            print(f"[HISTORY] Skipping save - no user_id provided")
-            return
-        
-        # Extract input data
-        input_data = payload.get("input_data")
-        if not input_data:
-            inci_list = payload.get("inciList", [])
-            if isinstance(inci_list, list):
-                input_data = ", ".join(inci_list)
-            else:
-                input_data = str(inci_list)
-        
-        # Generate name if not provided
-        name = payload.get("name") or ""
-        if isinstance(name, str):
-            name = name.strip()
-        else:
-            name = ""
-        if not name:
-            if payload.get("inciList"):
-                first_ing = payload["inciList"][0] if isinstance(payload["inciList"], list) else str(payload["inciList"]).split(",")[0]
-                name = first_ing + "..." if len(first_ing) > 20 else first_ing
-            else:
-                name = "Untitled Formulation Report"
-        
-        # Truncate name if too long
-        if len(name) > 100:
-            name = name[:97] + "..."
-        
-        # Prepare history document
-        history_doc = {
-            "user_id": user_id,
-            "name": name,
-            "tag": payload.get("tag"),
-            "notes": payload.get("notes", ""),
-            "input_type": "formulation_report",
-            "input_data": input_data,
-            "status": status,
-            "analysis_result": report_result if status == "completed" else None,
-            "processing_time": processing_time,
-            "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
-        }
-        
-        # REGENERATE: Update existing history item
-        if history_id and ObjectId.is_valid(history_id):
-            print(f"[HISTORY] 🔄 REGENERATE MODE: Updating existing history {history_id}...")
-            try:
-                result = await decode_history_col.update_one(
-                    {"_id": ObjectId(history_id), "user_id": user_id},
-                    {"$set": history_doc}
-                )
-                if result.matched_count > 0:
-                    print(f"[HISTORY] ✅ Successfully updated existing history {history_id}")
-                    return
-                else:
-                    print(f"[HISTORY] ⚠️  History ID {history_id} not found, will create new one")
-            except Exception as e:
-                print(f"[HISTORY] ❌ Error updating history: {e}")
-        
-        # NEW REPORT: Insert new history item
-        print(f"[HISTORY] ➕ NEW REPORT MODE: Inserting new history item...")
-        result = await decode_history_col.insert_one(history_doc)
-        new_history_id = str(result.inserted_id)
-        print(f"[HISTORY] ✅ Successfully created new history with ID: {new_history_id}")
-        
-    except Exception as e:
-        print(f"[HISTORY] ❌ Error saving formulation report history: {e}")
-        import traceback
-        traceback.print_exc()
-
-
 @router.post("/formulation-report-json", response_model=FormulationReportResponse)
 async def generate_report_json(
     request: Request,
-    background_tasks: BackgroundTasks,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
-    Generate report and return as structured JSON with automatic background history saving.
+    Generate report and return as structured JSON with automatic history saving.
     
     Auto-saving behavior:
-    - History is saved in background after response is returned (non-blocking)
-    - If history_id is provided, updates existing history item (for regenerate)
-    - If no history_id, creates new history item
+    - If name is provided, automatically saves to formulation history
+    - Saves with "in_progress" status before generation
+    - Updates with "completed" status and report_result after generation
     - Saving errors don't fail the report generation (graceful degradation)
+    - If history_id is provided, updates existing history item instead of creating new one
     """
     print(f"\n{'='*80}")
     print(f"[DEBUG] 🚀 API CALL: /api/formulation-report-json")
@@ -1136,42 +1044,96 @@ async def generate_report_json(
         processing_time = round(time.time() - start_time, 3)
         print(f"[DEBUG] ⏱️ Total processing time: {processing_time}s")
         
-        # Prepare payload dict for history saving (include optional fields from body)
-        payload_dict = {
-            "inciList": payload.inciList,
-            "brandedIngredients": payload.brandedIngredients,
-            "notBrandedIngredients": payload.notBrandedIngredients,
-            "bisCautions": payload.bisCautions,
-            "expectedBenefits": payload.expectedBenefits,
-            "name": body.get("name"),
-            "tag": body.get("tag"),
-            "notes": body.get("notes"),
-            "history_id": body.get("history_id"),
-            "input_data": inci_str
-        }
+        # Handle history_id and auto-save
+        history_id = body.get("history_id")
+        name = body.get("name", "").strip()
         
-        # Serialize report result for history
-        report_result_dict = report_json.dict() if hasattr(report_json, "dict") else report_json
+        # 🔹 Auto-save: Save initial state with "in_progress" status if user_id provided and no existing history_id
+        # Name is REQUIRED for auto-save (not optional)
+        if user_id_value and not history_id and name:
+            try:
+                # Truncate name if too long
+                if len(name) > 100:
+                    name = name[:97] + "..."
+                
+                # Check if there's an existing history item with same input_data
+                existing_history = await decode_history_col.find_one({
+                    "user_id": user_id_value,
+                    "input_type": "formulation",
+                    "input_data": inci_str
+                })
+                
+                if existing_history:
+                    history_id = str(existing_history["_id"])
+                    print(f"[AUTO-SAVE] Found existing history item with same input, reusing history_id: {history_id}")
+                    
+                    # Reset status to in_progress
+                    await decode_history_col.update_one(
+                        {"_id": ObjectId(history_id)},
+                        {"$set": {
+                            "status": "in_progress",
+                            "name": name,
+                            "tag": body.get("tag"),
+                            "notes": body.get("notes", ""),
+                            "expected_benefits": body.get("expected_benefits")
+                        }}
+                    )
+                    print(f"[AUTO-SAVE] Reset existing history item {history_id} status to 'in_progress'")
+                else:
+                    # Create new history document with "in_progress" status
+                    history_doc = {
+                        "user_id": user_id_value,
+                        "name": name,
+                        "tag": body.get("tag"),
+                        "notes": body.get("notes", ""),
+                        "expected_benefits": body.get("expected_benefits"),
+                        "input_type": "formulation",
+                        "input_data": inci_str,
+                        "status": "in_progress",
+                        "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
+                    }
+                    
+                    result = await decode_history_col.insert_one(history_doc)
+                    history_id = str(result.inserted_id)
+                    print(f"[AUTO-SAVE] Saved initial state with history_id: {history_id}")
+            except Exception as e:
+                print(f"[AUTO-SAVE] Warning: Failed to save initial state: {e}")
+                import traceback
+                traceback.print_exc()
+                # Continue without history_id
         
-        # Add background task to save history (non-blocking)
-        if user_id_value:
-            background_tasks.add_task(
-                save_formulation_report_history_background,
-                user_id_value,
-                payload_dict,
-                report_result_dict,
-                "completed",
-                processing_time,
-                payload_dict.get("history_id")
-            )
-            print(f"[HISTORY] ✅ Background task added to save formulation report history")
-        
-        # Add history_id to response if available
+        # Build response
         response_dict = report_json.dict() if hasattr(report_json, "dict") else report_json
-        if user_id_value and payload_dict.get("history_id"):
-            response_dict["history_id"] = payload_dict["history_id"]
+        if history_id:
+            response_dict["history_id"] = history_id
         
-        return FormulationReportResponse(**response_dict) if isinstance(report_json, FormulationReportResponse) else report_json
+        response = FormulationReportResponse(**response_dict) if isinstance(report_json, FormulationReportResponse) else report_json
+        
+        # 🔹 Auto-save: Update history with "completed" status and analysis_result
+        if history_id and user_id_value:
+            try:
+                # Convert response to dict for storage
+                # Store in analysis_result for consistency with analyze-inci endpoint
+                analysis_result_dict = response.dict(exclude_none=True) if hasattr(response, "dict") else response
+                
+                update_doc = {
+                    "status": "completed",
+                    "analysis_result": analysis_result_dict,  # Use analysis_result for consistency
+                    "processing_time": processing_time
+                }
+                
+                await decode_history_col.update_one(
+                    {"_id": ObjectId(history_id), "user_id": user_id_value},
+                    {"$set": update_doc}
+                )
+                print(f"[AUTO-SAVE] Updated history {history_id} with completed status")
+            except Exception as e:
+                print(f"[AUTO-SAVE] Warning: Failed to update history: {e}")
+                import traceback
+                traceback.print_exc()
+                # Don't fail the response if saving fails
+        
+        return response
         
     except HTTPException:
         raise

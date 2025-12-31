@@ -1,5 +1,5 @@
 from typing import List, Optional, Union, Dict, Any
-from pydantic import BaseModel, Field, ConfigDict, model_serializer
+from pydantic import BaseModel, Field, ConfigDict
 from fastapi import UploadFile
 
 class AnalyzeInciRequest(BaseModel):
@@ -56,9 +56,9 @@ class AnalyzeInciResponse(BaseModel):
     distributor_info: Optional[Dict[str, List[Dict]]] = Field(None, description="Distributor information for branded ingredients: { 'ingredient_name': [distributor1, distributor2, ...] }")
     history_id: Optional[str] = Field(None, description="History item ID (MongoDB ObjectId) - returned when history is auto-saved")
     
-    class Config:
-        # Exclude None values from JSON serialization to remove deprecated fields
-        exclude_none = True
+    # Pydantic v2: Use model_config - exclude_none=True for top-level, but nested models use their own settings
+    model_config = ConfigDict(exclude_none=True)
+    
 
                         # how many branded ingredients matched
 

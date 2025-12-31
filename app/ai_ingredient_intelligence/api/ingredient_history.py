@@ -80,24 +80,10 @@ async def save_decode_history(
         if not user_id_value:
             raise HTTPException(status_code=400, detail="User ID not found in JWT token")
         
-        # Extract payload fields
+        # Extract payload fields - name is required
         name = payload.get("name", "").strip()
         if not name:
-            # Generate from input_data if available
-            input_data = payload.get("input_data", "")
-            if input_data:
-                # Try to extract first ingredient or product name
-                if payload.get("input_type") == "inci":
-                    ingredients = parse_inci_string(input_data)
-                    if ingredients:
-                        first_ing = ingredients[0]
-                        name = first_ing + "..." if len(first_ing) > 20 else first_ing
-                    else:
-                        name = "Untitled Analysis"
-                else:
-                    name = "Untitled Analysis"
-            else:
-                name = "Untitled Analysis"
+            raise HTTPException(status_code=400, detail="name is required")
         
         # Truncate name if too long
         if len(name) > 100:

@@ -1,5 +1,5 @@
 # app/api/analyze_inci.py
-from fastapi import APIRouter, HTTPException, Form, Request, Depends, Query, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Form, Request, Depends, Query
 from fastapi.responses import Response
 import time
 import os
@@ -194,6 +194,7 @@ async def fetch_and_compute_categories(items: List[AnalyzeInciItem]) -> Tuple[Di
         item_dict = {
             "ingredient_name": item.ingredient_name,
             "ingredient_id": item.ingredient_id,
+            "supplier_id": getattr(item, 'supplier_id', None),  # Include supplier_id if available
             "supplier_name": item.supplier_name,
             "description": display_description,  # Uses enhanced_description for branded ingredients
             "category_decided": item.category_decided,  # Keep category_decided from MongoDB for branded
@@ -756,184 +757,21 @@ async def analyze_ingredients_core(ingredients: List[str]) -> AnalyzeInciRespons
     return response
 
 
-# ============================================================================
-# BACKGROUND HISTORY SAVING FUNCTION
-# ============================================================================
-
-async def save_inci_history_background(
-    user_id: Optional[str],
-    payload: dict,
-    analysis_result: dict,
-    status: str,
-    processing_time: float,
-    history_id: Optional[str] = None
-):
-    """
-    Background task to save INCI analysis history.
-    Runs after response is sent to client.
-    
-    Args:
-        user_id: User ID from JWT token
-        payload: Original request payload with name, tag, notes, expected_benefits, inci_names, input_data
-        analysis_result: Full analysis result dict (serialized response)
-        status: "completed" or "failed"
-        processing_time: Processing time in seconds
-        history_id: Optional existing history_id for regeneration (UPDATE instead of INSERT)
-    """
-    print(f"\n{'='*80}")
-    print(f"[DEBUG] 🔵 BACKGROUND TASK STARTED: save_inci_history_background")
-    print(f"[DEBUG] Timestamp: {datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()}")
-    print(f"[DEBUG] User ID: {user_id}")
-    print(f"[DEBUG] History ID: {history_id or 'None (will create new)'}")
-    print(f"[DEBUG] Status: {status}")
-    print(f"[DEBUG] Processing time: {processing_time}s")
-    print(f"[DEBUG] Payload keys: {list(payload.keys())}")
-    print(f"[DEBUG] Analysis result keys: {list(analysis_result.keys())}")
-    print(f"{'='*80}\n")
-    
-    try:
-        if not user_id:
-            print(f"[DEBUG] ⚠️  Skipping save - no user_id provided")
-            print(f"[HISTORY] Skipping save - no user_id")
-            return
-        
-        # Extract input_data - prioritize explicit input_data, then parse inci_names
-        print(f"[DEBUG] 📝 Extracting input_data from payload...")
-        input_data = payload.get("input_data")
-        if not input_data:
-            print(f"[DEBUG]   No explicit input_data, parsing from inci_names...")
-            inci_input = payload.get("inci_names", [])
-            if isinstance(inci_input, str):
-                ingredients = parse_inci_string(inci_input)
-                input_data = ", ".join(ingredients) if ingredients else inci_input
-                print(f"[DEBUG]   Parsed {len(ingredients)} ingredients from string")
-            elif isinstance(inci_input, list):
-                input_data = ", ".join(inci_input)
-                print(f"[DEBUG]   Joined {len(inci_input)} ingredients from list")
-            else:
-                input_data = str(inci_input)
-                print(f"[DEBUG]   Converted to string")
-        else:
-            print(f"[DEBUG]   Using explicit input_data (length: {len(input_data)} chars)")
-        
-        print(f"[DEBUG] ✅ Input data extracted: {input_data[:100]}{'...' if len(input_data) > 100 else ''}")
-        
-        # Generate display name
-        print(f"[DEBUG] 📝 Generating display name...")
-        name = payload.get("name")
-        if name is None:
-            name = ""
-        elif isinstance(name, str):
-            name = name.strip()
-        else:
-            name = str(name).strip()
-        
-        print(f"[DEBUG]   Name from payload: {repr(name)}")
-        
-        if not name:
-            # Try to get name from history if history_id exists
-            if history_id and ObjectId.is_valid(history_id):
-                try:
-                    existing_history = await decode_history_col.find_one({"_id": ObjectId(history_id)})
-                    if existing_history and existing_history.get("name"):
-                        name = existing_history["name"]
-                        print(f"[DEBUG]   Using name from existing history: {name}")
-                except Exception as e:
-                    print(f"[DEBUG]   Could not fetch name from history: {e}")
-            
-            # If still no name, generate from first ingredient
-            if not name:
-                ingredients_preview = parse_inci_string(payload.get("inci_names", ""))
-                if ingredients_preview:
-                    first_ing = ingredients_preview[0]
-                    name = first_ing + "..." if len(first_ing) > 20 else first_ing
-                    print(f"[DEBUG]   Generated name from first ingredient: {name}")
-                else:
-                    name = "Untitled Analysis"
-                    print(f"[DEBUG]   Using default name: {name}")
-        else:
-            print(f"[DEBUG]   ✅ Using provided name: {name}")
-        
-        # Truncate name if too long
-        if len(name) > 100:
-            name = name[:97] + "..."
-            print(f"[DEBUG]   Truncated name to 100 chars")
-        
-        # Prepare history document
-        print(f"[DEBUG] 📦 Preparing history document...")
-        history_doc = {
-            "user_id": user_id,
-            "name": name,
-            "tag": payload.get("tag"),
-            "notes": payload.get("notes", ""),
-            "expected_benefits": payload.get("expected_benefits"),
-            "input_type": "inci",
-            "input_data": input_data,
-            "status": status,
-            "analysis_result": analysis_result,
-            "processing_time": processing_time,
-            "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
-        }
-        print(f"[DEBUG]   History doc keys: {list(history_doc.keys())}")
-        print(f"[DEBUG]   Analysis result size: {len(str(analysis_result))} chars")
-        print(f"[DEBUG]   Input data size: {len(input_data)} chars")
-        
-        # REGENERATE: Update existing history item
-        if history_id and ObjectId.is_valid(history_id):
-            print(f"[DEBUG] 🔄 REGENERATE MODE: Updating existing history {history_id}...")
-            try:
-                result = await decode_history_col.update_one(
-                    {"_id": ObjectId(history_id), "user_id": user_id},
-                    {"$set": history_doc}
-                )
-                print(f"[DEBUG]   Update result - matched: {result.matched_count}, modified: {result.modified_count}")
-                if result.matched_count > 0:
-                    print(f"[DEBUG] ✅ Successfully updated existing history {history_id}")
-                    print(f"[HISTORY] Updated existing history {history_id} (status: {status})")
-                    print(f"{'='*80}\n")
-                    return
-                else:
-                    print(f"[DEBUG] ⚠️  History ID {history_id} not found, will create new one")
-                    print(f"[HISTORY] Warning: history_id {history_id} not found, creating new one")
-            except Exception as e:
-                print(f"[DEBUG] ❌ Error updating history: {e}")
-                print(f"[HISTORY] Error updating history {history_id}: {e}")
-                # Fall through to INSERT
-        
-        # NEW ANALYSIS: Insert new history item
-        print(f"[DEBUG] ➕ NEW ANALYSIS MODE: Inserting new history item...")
-        result = await decode_history_col.insert_one(history_doc)
-        new_history_id = str(result.inserted_id)
-        print(f"[DEBUG] ✅ Successfully created new history with ID: {new_history_id}")
-        print(f"[HISTORY] Created new history {new_history_id} (status: {status})")
-        print(f"{'='*80}\n")
-        
-    except Exception as e:
-        # Log but don't fail - background task errors shouldn't crash
-        print(f"\n{'='*80}")
-        print(f"[DEBUG] ❌ BACKGROUND TASK ERROR: {type(e).__name__}: {e}")
-        print(f"[HISTORY SAVE FAILED] {e}")
-        import traceback
-        traceback.print_exc()
-        print(f"{'='*80}\n")
-
-
 # Simple JSON endpoint for frontend compatibility
 @router.post("/analyze-inci", response_model=AnalyzeInciResponse)
 async def analyze_inci(
     payload: dict,
-    background_tasks: BackgroundTasks,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
-    Analyze INCI ingredients with automatic background history saving.
+    Analyze INCI ingredients with automatic history saving.
     
     Auto-saving behavior:
-    - History is saved in background after response is returned (non-blocking)
-    - If history_id is provided, updates existing history item (for regenerate)
-    - If no history_id, creates new history item
+    - If name is provided, automatically saves to decode history
+    - Saves with "in_progress" status before analysis
+    - Updates with "completed" status and analysis_result after analysis
     - Saving errors don't fail the analysis (graceful degradation)
-    - Background task only runs when response is successfully returned
+    - If history_id is provided, updates existing history item instead of creating new one
     
     Request body:
     {
@@ -992,52 +830,73 @@ async def analyze_inci(
                 })
                 if existing_history:
                     history_id = provided_history_id
-                    print(f"[HISTORY] Using existing history_id for regenerate: {history_id}")
+                    print(f"[AUTO-SAVE] Using existing history_id: {history_id}")
                 else:
-                    print(f"[HISTORY] Warning: Provided history_id {provided_history_id} not found or doesn't belong to user, will create new one")
+                    print(f"[AUTO-SAVE] Warning: Provided history_id {provided_history_id} not found or doesn't belong to user, creating new one")
             else:
-                print(f"[HISTORY] Warning: Invalid history_id format: {provided_history_id}, will create new one")
+                print(f"[AUTO-SAVE] Warning: Invalid history_id format: {provided_history_id}, creating new one")
         except Exception as e:
-            print(f"[HISTORY] Warning: Error validating history_id: {e}, will create new one")
+            print(f"[AUTO-SAVE] Warning: Error validating history_id: {e}, creating new one")
     
-    # 🔹 Create history item upfront (if name/tag provided) so frontend gets history_id immediately
-    # This allows frontend to track the analysis and update it later
-    if user_id_value and not history_id and (payload.get("name") or payload.get("tag")):
+    # 🔹 Auto-save: Save initial state with "in_progress" status if user_id provided and no existing history_id
+    # Name is required for auto-save
+    if user_id_value and not history_id:
         try:
-            # Generate name if not provided
+            # Name is required
             name = payload.get("name", "").strip()
             if not name:
-                if ingredients:
-                    first_ing = ingredients[0]
-                    name = first_ing + "..." if len(first_ing) > 20 else first_ing
-                else:
-                    name = "Untitled Analysis"
+                raise HTTPException(status_code=400, detail="name is required for auto-save")
             
             # Truncate name if too long
             if len(name) > 100:
                 name = name[:97] + "..."
             
-            # Create history document with "in_progress" status
-            history_doc = {
+            # Check if there's an existing history item with same input_data (for URL-based, check URL)
+            # For INCI-based, we can check input_data
+            existing_history = await decode_history_col.find_one({
                 "user_id": user_id_value,
-                "name": name,
-                "tag": payload.get("tag"),
-                "notes": payload.get("notes", ""),
-                "expected_benefits": payload.get("expected_benefits"),
                 "input_type": "inci",
-                "input_data": payload.get("inci_names", ""),
-                "status": "in_progress",
-                "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
-            }
+                "input_data": payload.get("inci_names", "")
+            })
             
-            result = await decode_history_col.insert_one(history_doc)
-            history_id = str(result.inserted_id)
-            print(f"[HISTORY] ✅ Created upfront history item: {history_id} with 'in_progress' status")
+            if existing_history:
+                history_id = str(existing_history["_id"])
+                print(f"[AUTO-SAVE] Found existing history item with same input, reusing history_id: {history_id}")
+                
+                # Reset status to in_progress
+                await decode_history_col.update_one(
+                    {"_id": ObjectId(history_id)},
+                    {"$set": {
+                        "status": "in_progress",
+                        "name": name,
+                        "tag": payload.get("tag"),
+                        "notes": payload.get("notes", ""),
+                        "expected_benefits": payload.get("expected_benefits")
+                    }}
+                )
+                print(f"[AUTO-SAVE] Reset existing history item {history_id} status to 'in_progress'")
+            else:
+                # Create new history document with "in_progress" status
+                history_doc = {
+                    "user_id": user_id_value,
+                    "name": name,
+                    "tag": payload.get("tag"),
+                    "notes": payload.get("notes", ""),
+                    "expected_benefits": payload.get("expected_benefits"),
+                    "input_type": "inci",
+                    "input_data": payload.get("inci_names", ""),
+                    "status": "in_progress",
+                    "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
+                }
+                
+                result = await decode_history_col.insert_one(history_doc)
+                history_id = str(result.inserted_id)
+                print(f"[AUTO-SAVE] Saved initial state with history_id: {history_id}")
         except Exception as e:
-            print(f"[HISTORY] ⚠️  Warning: Failed to create upfront history item: {e}")
+            print(f"[AUTO-SAVE] Warning: Failed to save initial state: {e}")
             import traceback
             traceback.print_exc()
-            # Continue without history_id - background task will create it
+            # Continue without history_id
     
     # Run analysis
     try:
@@ -1047,6 +906,19 @@ async def analyze_inci(
         print(f"{'='*80}\n")
         
         response = await analyze_ingredients_core(ingredients)
+        
+        # IMMEDIATE CHECK: Verify supplier_id is in response items right after analyze_ingredients_core returns
+        print(f"\n{'='*80}")
+        print(f"[DEBUG] 🔍 IMMEDIATE CHECK - supplier_id in response items (first 5 items from first 2 groups):")
+        print(f"{'='*80}")
+        for group_idx, group in enumerate(response.detected[:2]):
+            for item_idx, item in enumerate(group.items[:5]):
+                supplier_id_val = getattr(item, 'supplier_id', 'MISSING')
+                # Also check the raw dict representation
+                item_dict = item.model_dump(exclude_none=False)
+                supplier_id_in_dict = item_dict.get('supplier_id')
+                print(f"[DEBUG] response[{group_idx}].items[{item_idx}] - '{item.ingredient_name}': supplier_id={supplier_id_val}, type={type(supplier_id_val).__name__ if supplier_id_val != 'MISSING' else 'MISSING'}, in_dict={supplier_id_in_dict}")
+        print(f"{'='*80}\n")
         
         print(f"\n{'='*80}")
         print(f"[DEBUG] ✅ Analysis completed successfully!")
@@ -1070,59 +942,62 @@ async def analyze_inci(
         print(f"{'='*60}\n")
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
     
-    # ✅ SUCCESS: Response is ready, now add background task
-    # Serialize response once for background task
+    # FINAL CHECK: Verify supplier_id before building final response
     print(f"\n{'='*80}")
-    print(f"[DEBUG] 📦 Serializing response for background task...")
-    analysis_result_dict = response.dict(exclude_none=True)
-    print(f"[DEBUG] Serialized response keys: {list(analysis_result_dict.keys())}")
-    print(f"[DEBUG] Serialized response size: {len(str(analysis_result_dict))} characters")
+    print(f"[DEBUG] 🔍 FINAL CHECK - supplier_id in response.detected BEFORE building final response:")
+    print(f"{'='*80}")
+    for group_idx, group in enumerate(response.detected[:2]):
+        for item_idx, item in enumerate(group.items[:5]):
+            supplier_id_val = getattr(item, 'supplier_id', 'MISSING')
+            item_dict = item.model_dump(exclude_none=False)
+            supplier_id_in_dict = item_dict.get('supplier_id')
+            print(f"[DEBUG] BEFORE final response[{group_idx}].items[{item_idx}] - '{item.ingredient_name}': supplier_id={supplier_id_val}, in_dict={supplier_id_in_dict}")
     print(f"{'='*80}\n")
     
-    # Add background task to save history (only runs after response is sent)
-    if user_id_value:
-        print(f"\n{'='*80}")
-        print(f"[DEBUG] 🔄 Adding background task to save history...")
-        print(f"[DEBUG] User ID: {user_id_value}")
-        print(f"[DEBUG] History ID: {history_id or 'NEW (will create)'}")
-        print(f"[DEBUG] Payload keys: {list(payload.keys())}")
-        print(f"[DEBUG] Analysis result keys: {list(analysis_result_dict.keys())}")
-        print(f"[DEBUG] Status: completed")
-        print(f"[DEBUG] Processing time: {response.processing_time}s")
-        print(f"{'='*80}\n")
-        
-        background_tasks.add_task(
-            save_inci_history_background,
-            user_id=user_id_value,
-            payload=payload,
-            analysis_result=analysis_result_dict,
-            status="completed",
+    # Build response with history_id if available
+    response = AnalyzeInciResponse(
+        detected=response.detected,
+        unable_to_decode=response.unable_to_decode,
             processing_time=response.processing_time,
-            history_id=history_id  # None for new, ID for regenerate
-        )
-        print(f"[HISTORY] ✅ Background task added for saving history (history_id: {history_id or 'new'})")
-        print(f"[DEBUG] ⚠️  Note: Background task will execute AFTER response is sent to client")
-    else:
-        print(f"[DEBUG] ⚠️  No user_id_value, skipping background task")
+        bis_cautions=response.bis_cautions if response.bis_cautions else None,
+        categories=response.categories if response.categories else None,
+        distributor_info=response.distributor_info if response.distributor_info else None,
+        history_id=history_id if history_id else None,
+    )
     
-    # Add history_id to response if available
-    if history_id:
-        # Create a new response object with history_id
-        response_dict = response.dict(exclude_none=True)
-        response_dict["history_id"] = history_id
-        response = AnalyzeInciResponse(**response_dict)
-        print(f"[HISTORY] ✅ Added history_id to response: {history_id}")
-    
-    # Return response immediately (background task runs after this)
+    # FINAL CHECK AFTER: Verify supplier_id after building final response
     print(f"\n{'='*80}")
-    print(f"[DEBUG] 📤 Returning response to client...")
-    print(f"[DEBUG] Response summary:")
-    print(f"  - Detected: {len(response.detected)} groups")
-    print(f"  - Unable to decode: {len(response.unable_to_decode)} items")
-    print(f"  - Processing time: {response.processing_time}s")
-    if history_id:
-        print(f"  - History ID: {history_id}")
+    print(f"[DEBUG] 🔍 FINAL CHECK AFTER - supplier_id in response.detected AFTER building final response:")
+    print(f"{'='*80}")
+    for group_idx, group in enumerate(response.detected[:2]):
+        for item_idx, item in enumerate(group.items[:5]):
+            supplier_id_val = getattr(item, 'supplier_id', 'MISSING')
+            item_dict = item.model_dump(exclude_none=False)
+            supplier_id_in_dict = item_dict.get('supplier_id')
+            print(f"[DEBUG] AFTER final response[{group_idx}].items[{item_idx}] - '{item.ingredient_name}': supplier_id={supplier_id_val}, in_dict={supplier_id_in_dict}")
     print(f"{'='*80}\n")
+    
+    # 🔹 Auto-save: Update history with "completed" status and analysis_result
+    if history_id and user_id_value:
+        try:
+            # Convert response to dict for storage
+            # Use model_dump to ensure supplier_id and supplier_name are included (via custom model_dump in AnalyzeInciItem)
+            analysis_result_dict = response.model_dump(exclude_none=True) if hasattr(response, "model_dump") else response.dict(exclude_none=True)
+            
+            update_doc = {
+                "status": "completed",
+                "analysis_result": analysis_result_dict,
+                "processing_time": response.processing_time
+            }
+            
+            await decode_history_col.update_one(
+                {"_id": ObjectId(history_id), "user_id": user_id_value},
+                {"$set": update_doc}
+            )
+            print(f"[AUTO-SAVE] Updated history {history_id} with completed status")
+        except Exception as e:
+            print(f"[AUTO-SAVE] Warning: Failed to update history: {e}")
+            # Don't fail the response if saving fails
     
     return response
 
@@ -1221,9 +1096,17 @@ async def analyze_url(
             raise HTTPException(status_code=400, detail="Invalid URL format. Must start with http:// or https://")
         
         # 🔹 Auto-save: Save initial state with "in_progress" status if user_id provided and no existing history_id
-        # Auto-save always happens if user_id is provided (name is optional, will use default if not provided)
+        # Name is required for auto-save
         if user_id_value and not history_id:
             try:
+                # Name is required
+                if not name:
+                    raise HTTPException(status_code=400, detail="name is required for auto-save")
+                
+                # Truncate name if too long
+                if len(name) > 100:
+                    name = name[:97] + "..."
+                
                 # 🔹 BUG FIX: Check if a history item with the same input_data (URL) already exists for this user
                 # This prevents creating duplicate history items when the same analysis is run multiple times
                 existing_history_item = await decode_history_col.find_one({
@@ -1239,18 +1122,13 @@ async def analyze_url(
                     if existing_history_item.get("status") in ["completed", "failed"]:
                         await decode_history_col.update_one(
                             {"_id": existing_history_item["_id"]},
-                            {"$set": {"status": "in_progress"}}
+                            {"$set": {"status": "in_progress", "name": name}}
                         )
                         print(f"[AUTO-SAVE] Reset existing history item {history_id} status to 'in_progress'")
                 else:
-                    # Use provided name or generate default name from URL
-                    display_name = name if name else (url.split('/')[-1] if url else "Untitled Analysis")
-                    if not display_name or len(display_name) > 100:
-                        display_name = "Untitled Analysis"
-                    
                     history_doc = {
                         "user_id": user_id_value,
-                        "name": display_name,
+                        "name": name,
                         "tag": tag,
                         "input_type": "url",
                         "input_data": url,
@@ -1426,7 +1304,8 @@ async def analyze_url(
     if history_id and user_id_value:
         try:
             # Convert response to dict for storage
-            analysis_result_dict = response.dict()
+            # Use model_dump to ensure supplier_id and supplier_name are included (via custom model_dump in AnalyzeInciItem)
+            analysis_result_dict = response.model_dump(exclude_none=True) if hasattr(response, "model_dump") else response.dict(exclude_none=True)
             
             update_doc = {
                 "status": "completed",
@@ -2350,6 +2229,36 @@ async def compare_products(
     start = time.time()
     scraper = None
     
+    # 🔹 Auto-save: Extract user info and required name/tag for history
+    user_id_value = current_user.get("user_id") or current_user.get("_id")
+    name = payload.get("name", "").strip() if payload.get("name") else ""  # Required: custom name for history
+    tag = payload.get("tag")  # Optional: tag for history
+    notes = payload.get("notes")  # Optional: notes for history
+    provided_history_id = payload.get("history_id")  # Optional: reuse existing history item
+    history_id = None
+    
+    # Validate name is provided if auto-save is enabled (user_id is present)
+    if user_id_value and not provided_history_id and not name:
+        raise HTTPException(status_code=400, detail="name is required for auto-save")
+    
+    # Validate history_id if provided
+    if provided_history_id:
+        try:
+            if ObjectId.is_valid(provided_history_id):
+                existing_item = await compare_history_col.find_one({
+                    "_id": ObjectId(provided_history_id),
+                    "user_id": user_id_value
+                })
+                if existing_item:
+                    history_id = provided_history_id
+                    print(f"[AUTO-SAVE] Using existing history_id: {history_id}")
+                else:
+                    print(f"[AUTO-SAVE] Warning: Provided history_id {provided_history_id} not found or doesn't belong to user, creating new one")
+            else:
+                print(f"[AUTO-SAVE] Warning: Invalid history_id format: {provided_history_id}, creating new one")
+        except Exception as e:
+            print(f"[AUTO-SAVE] Warning: Error validating history_id: {e}, creating new one")
+    
     try:
         # Parse products from payload
         if "products" not in payload or not payload["products"]:
@@ -2876,7 +2785,94 @@ CRITICAL: NEVER use null. Always provide a value (even if it's "Unknown" for tex
             "processing_time": processing_time
         }
         
-        return CompareProductsResponse(**response_data)
+        response = CompareProductsResponse(**response_data)
+        
+        # 🔹 Auto-save: Save initial state with "in_progress" status if user_id provided and no existing history_id
+        # Name is required for auto-save
+        if user_id_value and not history_id:
+            try:
+                # Name is required
+                if not name:
+                    raise HTTPException(status_code=400, detail="name is required for auto-save")
+                
+                # Truncate name if too long
+                if len(name) > 100:
+                    name = name[:97] + "..."
+                
+                # Prepare products array for history (unified format)
+                products_array = []
+                for product in products_list:
+                    products_array.append({
+                        "input": product.get("input", ""),
+                        "input_type": product.get("input_type", "inci")
+                    })
+                
+                # Check if there's an existing history item with same products
+                existing_history = await compare_history_col.find_one({
+                    "user_id": user_id_value,
+                    "products": products_array
+                })
+                
+                if existing_history:
+                    history_id = str(existing_history["_id"])
+                    print(f"[AUTO-SAVE] Found existing history item with same products, reusing history_id: {history_id}")
+                    
+                    # Reset status to in_progress
+                    await compare_history_col.update_one(
+                        {"_id": ObjectId(history_id)},
+                        {"$set": {
+                            "status": "in_progress",
+                            "name": name,
+                            "tag": tag,
+                            "notes": notes or ""
+                        }}
+                    )
+                    print(f"[AUTO-SAVE] Reset existing history item {history_id} status to 'in_progress'")
+                else:
+                    # Create new history document with "in_progress" status
+                    history_doc = {
+                        "user_id": user_id_value,
+                        "name": name,
+                        "tag": tag,
+                        "notes": notes or "",
+                        "products": products_array,
+                        "status": "in_progress",
+                        "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
+                    }
+                    
+                    result = await compare_history_col.insert_one(history_doc)
+                    history_id = str(result.inserted_id)
+                    print(f"[AUTO-SAVE] Saved initial state with history_id: {history_id}")
+            except Exception as e:
+                print(f"[AUTO-SAVE] Warning: Failed to save initial state: {e}")
+                import traceback
+                traceback.print_exc()
+                # Continue without history_id
+        
+        # 🔹 Auto-save: Update history with "completed" status and comparison_result
+        if history_id and user_id_value:
+            try:
+                # Convert response to dict for storage
+                comparison_result_dict = response.dict(exclude_none=True) if hasattr(response, "dict") else response.model_dump(exclude_none=True)
+                
+                update_doc = {
+                    "status": "completed",
+                    "comparison_result": comparison_result_dict,
+                    "processing_time": processing_time
+                }
+                
+                await compare_history_col.update_one(
+                    {"_id": ObjectId(history_id), "user_id": user_id_value},
+                    {"$set": update_doc}
+                )
+                print(f"[AUTO-SAVE] Updated history {history_id} with completed status")
+            except Exception as e:
+                print(f"[AUTO-SAVE] Warning: Failed to update history: {e}")
+                import traceback
+                traceback.print_exc()
+                # Don't fail the response if saving fails
+        
+        return response
         
     except HTTPException:
         raise
@@ -2946,24 +2942,10 @@ async def save_decode_history(
         if not user_id_value:
             raise HTTPException(status_code=400, detail="User ID not found in JWT token")
         
-        # Extract payload fields
+        # Extract payload fields - name is required
         name = payload.get("name", "").strip()
         if not name:
-            # Generate from input_data if available
-            input_data = payload.get("input_data", "")
-            if input_data:
-                # Try to extract first ingredient or product name
-                if payload.get("input_type") == "inci":
-                    ingredients = parse_inci_string(input_data)
-                    if ingredients:
-                        first_ing = ingredients[0]
-                        name = first_ing + "..." if len(first_ing) > 20 else first_ing
-                    else:
-                        name = "Untitled Analysis"
-                else:
-                    name = "Untitled Analysis"
-            else:
-                name = "Untitled Analysis"
+            raise HTTPException(status_code=400, detail="name is required")
         
         # Truncate name if too long
         if len(name) > 100:
@@ -3117,7 +3099,15 @@ async def get_decode_history(
                 status = "pending"  # Default to pending if status is missing (likely in progress)
             
             # Truncate input_data for preview (max 100 chars)
-            input_data = item.get("input_data", "")
+            # Handle both string and list formats (some old data might be stored as list)
+            input_data_raw = item.get("input_data", "")
+            if isinstance(input_data_raw, list):
+                input_data = ", ".join(str(x) for x in input_data_raw if x)
+            elif isinstance(input_data_raw, str):
+                input_data = input_data_raw
+            else:
+                input_data = str(input_data_raw) if input_data_raw else ""
+            
             if input_data and len(input_data) > 100:
                 input_data = input_data[:100] + "..."
             
@@ -3223,6 +3213,13 @@ async def get_decode_history_detail(
         if item.get("status") in ["pending", "failed"]:
             item["analysis_result"] = {}
             item["report_data"] = ""
+        
+        # Handle input_data - convert list to string if needed (for backward compatibility with old data)
+        input_data_raw = item.get("input_data", "")
+        if isinstance(input_data_raw, list):
+            item["input_data"] = ", ".join(str(x) for x in input_data_raw if x)
+        elif not isinstance(input_data_raw, str):
+            item["input_data"] = str(input_data_raw) if input_data_raw else ""
         
         return DecodeHistoryDetailResponse(
             item=DecodeHistoryItem(**item)
