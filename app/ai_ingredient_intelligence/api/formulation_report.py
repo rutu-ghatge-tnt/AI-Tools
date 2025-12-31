@@ -5,15 +5,19 @@ import os
 import re
 import httpx
 import asyncio
-from fastapi import APIRouter, HTTPException, Response, Request, Body, Depends
+import time
+from fastapi import APIRouter, HTTPException, Response, Request, Body, Depends, BackgroundTasks
 from pydantic import BaseModel
 from typing import List, Optional, Dict
+from datetime import datetime, timezone, timedelta
+from bson import ObjectId
 import anthropic
 from jinja2 import Environment, FileSystemLoader
 from app.ai_ingredient_intelligence.models.schemas import FormulationReportResponse, FormulationSummary, ReportTableRow
 
 # Import authentication
 from app.ai_ingredient_intelligence.auth import verify_jwt_token
+from app.ai_ingredient_intelligence.db.collections import decode_history_col
 
 router = APIRouter(tags=["Formulation Reports"])
 
@@ -720,7 +724,11 @@ async def generate_report_text(
     # Clean and reformat BIS cautions using Claude to make them proper sentences
     cleaned_bis_cautions = {}
     if bis_cautions and len(bis_cautions) > 0:
-        print(f"🧹 Cleaning and reformatting BIS cautions with Claude...")
+        print(f"[DEBUG] 🧹 Cleaning and reformatting BIS cautions with Claude...")
+        print(f"[DEBUG]    Input BIS cautions: {len(bis_cautions)} ingredients with cautions")
+        total_input_cautions = sum(len(c) for c in bis_cautions.values() if c)
+        print(f"[DEBUG]    Total input cautions: {total_input_cautions}")
+        
         if claude_client:
             for ingredient, cautions in bis_cautions.items():
                 if cautions and len(cautions) > 0:
@@ -765,28 +773,73 @@ REFORMATTED CAUTIONS:"""
                         
                         if reformatted_cautions:
                             cleaned_bis_cautions[ingredient] = reformatted_cautions
-                            print(f"   ✅ {ingredient}: Reformatted {len(reformatted_cautions)} caution(s) from {len(cautions)} fragments")
+                            print(f"[DEBUG]   ✅ {ingredient}: Reformatted {len(reformatted_cautions)} caution(s) from {len(cautions)} fragments")
                         else:
-                            # Fallback: use original if reformatting failed
-                            cleaned_bis_cautions[ingredient] = cautions
-                            print(f"   ⚠️ {ingredient}: Reformatting failed, using original {len(cautions)} caution(s)")
+                            # Fallback: use original if reformatting failed - but also try with lower threshold
+                            # Sometimes short cautions are valid (e.g., "Not for use in eye area")
+                            original_valid = [c for c in cautions if c and len(c.strip()) > 5]
+                            if original_valid:
+                                cleaned_bis_cautions[ingredient] = original_valid
+                                print(f"[DEBUG]   ⚠️ {ingredient}: Reformatting failed, using {len(original_valid)} original caution(s)")
+                            else:
+                                # Last resort: use all original cautions
+                                cleaned_bis_cautions[ingredient] = cautions
+                                print(f"[DEBUG]   ⚠️ {ingredient}: Reformatting failed, using all {len(cautions)} original caution(s)")
                     except Exception as e:
-                        print(f"   ❌ Error reformatting cautions for {ingredient}: {e}")
+                        print(f"[DEBUG]   ❌ Error reformatting cautions for {ingredient}: {e}")
                         # Fallback to original
                         cleaned_bis_cautions[ingredient] = cautions
         else:
             # No Claude client, use original
             cleaned_bis_cautions = bis_cautions
-            print("⚠️ Claude client not available, using original BIS cautions")
+            print("[DEBUG] ⚠️ Claude client not available, using original BIS cautions")
         
-        # Use cleaned cautions
-        bis_cautions = cleaned_bis_cautions
+        # Use cleaned cautions - ensure we have at least some cautions
+        if cleaned_bis_cautions and len(cleaned_bis_cautions) > 0:
+            # Check if we have any non-empty caution lists
+            non_empty_cleaned = {ing: cautions for ing, cautions in cleaned_bis_cautions.items() if cautions and len(cautions) > 0}
+            if non_empty_cleaned:
+                bis_cautions = non_empty_cleaned
+                total_output_cautions = sum(len(c) for c in bis_cautions.values())
+                print(f"[DEBUG] ✅ BIS cautions cleaned: {len(bis_cautions)} ingredients, {total_output_cautions} total cautions")
+            else:
+                # If cleaning removed all cautions, use original
+                print(f"[DEBUG] ⚠️ WARNING: Cleaning removed all cautions from all ingredients, using original BIS cautions")
+                # Filter original to only non-empty
+                original_non_empty = {ing: cautions for ing, cautions in bis_cautions.items() if cautions and len(cautions) > 0}
+                if original_non_empty:
+                    bis_cautions = original_non_empty
+                    print(f"[DEBUG] ✅ Using {len(bis_cautions)} original ingredients with non-empty cautions")
+                else:
+                    bis_cautions = {}  # Truly empty
+                    print(f"[DEBUG] ⚠️ WARNING: Original BIS cautions also empty, no cautions available")
+        else:
+            # If cleaning failed completely, use original
+            print(f"[DEBUG] ⚠️ WARNING: Cleaning failed, using original BIS cautions")
+            # Filter original to only non-empty
+            original_non_empty = {ing: cautions for ing, cautions in bis_cautions.items() if cautions and len(cautions) > 0}
+            if original_non_empty:
+                bis_cautions = original_non_empty
+                print(f"[DEBUG] ✅ Using {len(bis_cautions)} original ingredients with non-empty cautions")
+            else:
+                bis_cautions = {}  # Truly empty
+                print(f"[DEBUG] ⚠️ WARNING: Original BIS cautions also empty, no cautions available")
     
     # Build BIS cautions context if provided
     bis_cautions_info = ""
     if bis_cautions and len(bis_cautions) > 0:
+        # Filter out ingredients with empty caution lists
+        non_empty_cautions = {ing: cautions for ing, cautions in bis_cautions.items() if cautions and len(cautions) > 0}
+        if non_empty_cautions:
+            bis_cautions = non_empty_cautions  # Use only non-empty
+            total_cautions = sum(len(cautions) for cautions in bis_cautions.values())
+            print(f"[DEBUG] 📋 Building BIS cautions context for {len(bis_cautions)} ingredients (total {total_cautions} cautions)")
+        else:
+            print(f"[DEBUG] ⚠️ WARNING: All BIS cautions were empty after cleaning, no cautions will be included")
+            bis_cautions = {}  # Set to empty so the check below fails
+    
+    if bis_cautions and len(bis_cautions) > 0:
         total_cautions = sum(len(cautions) for cautions in bis_cautions.values() if cautions)
-        print(f"📋 Including cleaned BIS cautions for {len(bis_cautions)} ingredients (total {total_cautions} cautions)")
         bis_cautions_info = "\n\n" + "=" * 70 + "\n"
         bis_cautions_info += "BUREAU OF INDIAN STANDARDS (BIS) CAUTIONS & REGULATORY NOTES\n"
         bis_cautions_info += "=" * 70 + "\n"
@@ -825,7 +878,7 @@ REFORMATTED CAUTIONS:"""
         bis_cautions_info += "- DO NOT summarize or combine cautions - list each one separately\n"
         bis_cautions_info += "=" * 70 + "\n"
     else:
-        print("⚠️ No BIS cautions provided or empty")
+        print(f"[DEBUG] ⚠️ No BIS cautions provided or empty (bis_cautions={bis_cautions}, type={type(bis_cautions)})")
     
     # Build expected benefits context if provided (optional - only include if provided)
     expected_benefits_info = ""
@@ -897,24 +950,161 @@ REFORMATTED CAUTIONS:"""
     # If Claude not available
     raise HTTPException(status_code=500, detail="Claude API not available. Please check your CLAUDE_API_KEY environment variable.")
 
+async def save_formulation_report_history_background(
+    user_id: Optional[str],
+    payload: dict,
+    report_result: dict,
+    status: str,
+    processing_time: float,
+    history_id: Optional[str] = None
+):
+    """
+    Background task to save formulation report history.
+    Runs after response is sent to client.
+    """
+    print(f"\n{'='*80}")
+    print(f"[HISTORY] 🔵 BACKGROUND TASK: save_formulation_report_history_background")
+    print(f"[HISTORY] User ID: {user_id}")
+    print(f"[HISTORY] History ID: {history_id or 'None (will create new)'}")
+    print(f"[HISTORY] Status: {status}")
+    print(f"{'='*80}\n")
+    
+    try:
+        if not user_id:
+            print(f"[HISTORY] Skipping save - no user_id provided")
+            return
+        
+        # Extract input data
+        input_data = payload.get("input_data")
+        if not input_data:
+            inci_list = payload.get("inciList", [])
+            if isinstance(inci_list, list):
+                input_data = ", ".join(inci_list)
+            else:
+                input_data = str(inci_list)
+        
+        # Generate name if not provided
+        name = payload.get("name") or ""
+        if isinstance(name, str):
+            name = name.strip()
+        else:
+            name = ""
+        if not name:
+            if payload.get("inciList"):
+                first_ing = payload["inciList"][0] if isinstance(payload["inciList"], list) else str(payload["inciList"]).split(",")[0]
+                name = first_ing + "..." if len(first_ing) > 20 else first_ing
+            else:
+                name = "Untitled Formulation Report"
+        
+        # Truncate name if too long
+        if len(name) > 100:
+            name = name[:97] + "..."
+        
+        # Prepare history document
+        history_doc = {
+            "user_id": user_id,
+            "name": name,
+            "tag": payload.get("tag"),
+            "notes": payload.get("notes", ""),
+            "input_type": "formulation_report",
+            "input_data": input_data,
+            "status": status,
+            "analysis_result": report_result if status == "completed" else None,
+            "processing_time": processing_time,
+            "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
+        }
+        
+        # REGENERATE: Update existing history item
+        if history_id and ObjectId.is_valid(history_id):
+            print(f"[HISTORY] 🔄 REGENERATE MODE: Updating existing history {history_id}...")
+            try:
+                result = await decode_history_col.update_one(
+                    {"_id": ObjectId(history_id), "user_id": user_id},
+                    {"$set": history_doc}
+                )
+                if result.matched_count > 0:
+                    print(f"[HISTORY] ✅ Successfully updated existing history {history_id}")
+                    return
+                else:
+                    print(f"[HISTORY] ⚠️  History ID {history_id} not found, will create new one")
+            except Exception as e:
+                print(f"[HISTORY] ❌ Error updating history: {e}")
+        
+        # NEW REPORT: Insert new history item
+        print(f"[HISTORY] ➕ NEW REPORT MODE: Inserting new history item...")
+        result = await decode_history_col.insert_one(history_doc)
+        new_history_id = str(result.inserted_id)
+        print(f"[HISTORY] ✅ Successfully created new history with ID: {new_history_id}")
+        
+    except Exception as e:
+        print(f"[HISTORY] ❌ Error saving formulation report history: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 @router.post("/formulation-report-json", response_model=FormulationReportResponse)
 async def generate_report_json(
-    payload: FormulationReportRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
-    """Generate report and return as structured JSON"""
+    """
+    Generate report and return as structured JSON with automatic background history saving.
+    
+    Auto-saving behavior:
+    - History is saved in background after response is returned (non-blocking)
+    - If history_id is provided, updates existing history item (for regenerate)
+    - If no history_id, creates new history item
+    - Saving errors don't fail the report generation (graceful degradation)
+    """
+    print(f"\n{'='*80}")
+    print(f"[DEBUG] 🚀 API CALL: /api/formulation-report-json")
+    print(f"[DEBUG] Request received at: {datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()}")
+    print(f"{'='*80}\n")
+    
+    start_time = time.time()
     try:
+        # Get request body as dict to access optional fields
+        body = await request.json()
+        print(f"[DEBUG] Request body keys: {list(body.keys())}")
+        print(f"[DEBUG] Request body size: {len(str(body))} characters")
+        
+        payload = FormulationReportRequest(**body)
+        
+        # Extract user_id from JWT token
+        user_id_value = current_user.get("user_id") or current_user.get("_id")
+        print(f"[DEBUG] User ID extracted: {user_id_value}")
+        
         # Validate input
         if not payload.inciList or len(payload.inciList) == 0:
+            print(f"[DEBUG] ❌ Error: No ingredients provided in inciList")
             raise HTTPException(status_code=400, detail="No ingredients provided in inciList")
         
-        print(f"📋 Generating report for {len(payload.inciList)} ingredients")
-        print(f"📋 First few ingredients: {payload.inciList[:5]}")
+        print(f"[DEBUG] 📋 Generating report for {len(payload.inciList)} ingredients")
+        print(f"[DEBUG] 📋 First few ingredients: {payload.inciList[:5]}")
+        print(f"[DEBUG] Branded ingredients count: {len(payload.brandedIngredients) if payload.brandedIngredients else 0}")
+        print(f"[DEBUG] Not branded ingredients count: {len(payload.notBrandedIngredients) if payload.notBrandedIngredients else 0}")
+        
+        # Detailed BIS cautions logging
+        if payload.bisCautions:
+            bis_count = len(payload.bisCautions)
+            total_cautions = sum(len(c) for c in payload.bisCautions.values() if c)
+            non_empty = sum(1 for c in payload.bisCautions.values() if c and len(c) > 0)
+            print(f"[DEBUG] BIS cautions dict: {bis_count} ingredients, {non_empty} with non-empty lists, {total_cautions} total cautions")
+            if bis_count > 0:
+                sample_ing = list(payload.bisCautions.keys())[0]
+                sample_cautions = payload.bisCautions[sample_ing]
+                print(f"[DEBUG] Sample BIS caution - {sample_ing}: {len(sample_cautions) if sample_cautions else 0} caution(s)")
+        else:
+            print(f"[DEBUG] BIS cautions: None or empty")
+        
+        print(f"[DEBUG] Expected benefits: {payload.expectedBenefits[:100] + '...' if payload.expectedBenefits and len(payload.expectedBenefits) > 100 else payload.expectedBenefits}")
         
         inci_str = ", ".join(payload.inciList)
 
         # Generate report text using Claude
-        print("🤖 Generating report text with Claude...")
+        print(f"[DEBUG] 🤖 Generating report text with Claude...")
+        print(f"[DEBUG]    Passing BIS cautions to generate_report_text: {payload.bisCautions is not None and len(payload.bisCautions) > 0 if payload.bisCautions else False}")
         report_text = await generate_report_text(
             inci_str, 
             branded_ingredients=payload.brandedIngredients,
@@ -924,10 +1114,11 @@ async def generate_report_json(
         )
         
         if not report_text or not report_text.strip():
+            print(f"[DEBUG] ❌ Error: Report text generation returned empty result")
             raise HTTPException(status_code=500, detail="Report text generation returned empty result")
         
-        print(f"✅ Report text generated ({len(report_text)} characters)")
-        print(f"📄 First 500 chars of report: {report_text[:500]}")
+        print(f"[DEBUG] ✅ Report text generated ({len(report_text)} characters)")
+        print(f"[DEBUG] 📄 First 500 chars of report: {report_text[:500]}")
         
         # Validate BIS cautions are present
         if payload.bisCautions:
@@ -937,12 +1128,50 @@ async def generate_report_json(
                 print(f"⚠️ WARNING: BIS cautions validation failed for: {', '.join(missing_cautions)}")
         
         # Parse report text into JSON structure
-        print("🔍 Parsing report text into JSON structure...")
+        print(f"[DEBUG] 🔍 Parsing report text into JSON structure...")
         report_json = parse_report_to_json(report_text)
         
-        print(f"✅ Parsed report - INCI list: {len(report_json.inci_list)}, Analysis rows: {len(report_json.analysis_table)}")
+        print(f"[DEBUG] ✅ Parsed report - INCI list: {len(report_json.inci_list)}, Analysis rows: {len(report_json.analysis_table)}")
         
-        return report_json
+        processing_time = round(time.time() - start_time, 3)
+        print(f"[DEBUG] ⏱️ Total processing time: {processing_time}s")
+        
+        # Prepare payload dict for history saving (include optional fields from body)
+        payload_dict = {
+            "inciList": payload.inciList,
+            "brandedIngredients": payload.brandedIngredients,
+            "notBrandedIngredients": payload.notBrandedIngredients,
+            "bisCautions": payload.bisCautions,
+            "expectedBenefits": payload.expectedBenefits,
+            "name": body.get("name"),
+            "tag": body.get("tag"),
+            "notes": body.get("notes"),
+            "history_id": body.get("history_id"),
+            "input_data": inci_str
+        }
+        
+        # Serialize report result for history
+        report_result_dict = report_json.dict() if hasattr(report_json, "dict") else report_json
+        
+        # Add background task to save history (non-blocking)
+        if user_id_value:
+            background_tasks.add_task(
+                save_formulation_report_history_background,
+                user_id_value,
+                payload_dict,
+                report_result_dict,
+                "completed",
+                processing_time,
+                payload_dict.get("history_id")
+            )
+            print(f"[HISTORY] ✅ Background task added to save formulation report history")
+        
+        # Add history_id to response if available
+        response_dict = report_json.dict() if hasattr(report_json, "dict") else report_json
+        if user_id_value and payload_dict.get("history_id"):
+            response_dict["history_id"] = payload_dict["history_id"]
+        
+        return FormulationReportResponse(**response_dict) if isinstance(report_json, FormulationReportResponse) else report_json
         
     except HTTPException:
         raise
@@ -958,8 +1187,15 @@ async def generate_report(
     request: Request,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
+    print(f"\n{'='*80}")
+    print(f"[DEBUG] 🚀 API CALL: /api/formulation-report")
+    print(f"[DEBUG] Request received at: {datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()}")
+    print(f"[DEBUG] INCI list count: {len(payload.inciList) if payload.inciList else 0}")
+    print(f"{'='*80}\n")
+    
     try:
         inci_str = ", ".join(payload.inciList)
+        print(f"[DEBUG] Processing INCI string (length: {len(inci_str)} characters)")
 
         # 🔹 Generate report text using OpenAI with categorization info, BIS cautions, and expected benefits
         report_text = await generate_report_text(
@@ -1232,8 +1468,16 @@ async def generate_ppt(
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """Generate PPT presentation using Presenton API from report JSON data"""
+    print(f"\n{'='*80}")
+    print(f"[DEBUG] 🚀 API CALL: /api/formulation-report/ppt")
+    print(f"[DEBUG] Request received at: {datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()}")
+    print(f"[DEBUG] Body type: {type(body)}")
+    print(f"[DEBUG] Body keys: {list(body.keys()) if isinstance(body, dict) else 'N/A'}")
+    print(f"{'='*80}\n")
+    
     try:
         if not presenton_api_key:
+            print(f"[DEBUG] ❌ Error: PRESENTON_API_KEY not set")
             raise HTTPException(
                 status_code=500,
                 detail="PRESENTON_API_KEY environment variable not set. Please configure it in your .env file."
@@ -1241,12 +1485,13 @@ async def generate_ppt(
         
         # Validate request body
         if not body or not isinstance(body, dict):
+            print(f"[DEBUG] ❌ Error: Invalid request body type: {type(body).__name__}")
             raise HTTPException(
                 status_code=400,
                 detail=f"Request body must be a JSON object with 'reportData' field. Got: {type(body).__name__}"
             )
         
-        print(f"📥 Received PPT request - body type: {type(body)}, keys: {list(body.keys()) if isinstance(body, dict) else 'N/A'}")
+        print(f"[DEBUG] 📥 Received PPT request - body type: {type(body)}, keys: {list(body.keys()) if isinstance(body, dict) else 'N/A'}")
         
         if "reportData" not in body:
             raise HTTPException(
@@ -1483,8 +1728,16 @@ async def generate_pdf(
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """Generate PDF presentation using Presenton API from report JSON data"""
+    print(f"\n{'='*80}")
+    print(f"[DEBUG] 🚀 API CALL: /api/formulation-report/pdf")
+    print(f"[DEBUG] Request received at: {datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()}")
+    print(f"[DEBUG] Body type: {type(body)}")
+    print(f"[DEBUG] Body keys: {list(body.keys()) if isinstance(body, dict) else 'N/A'}")
+    print(f"{'='*80}\n")
+    
     try:
         if not presenton_api_key:
+            print(f"[DEBUG] ❌ Error: PRESENTON_API_KEY not set")
             raise HTTPException(
                 status_code=500,
                 detail="PRESENTON_API_KEY environment variable not set. Please configure it in your .env file."
@@ -1492,12 +1745,14 @@ async def generate_pdf(
         
         # Validate request body
         if not body or not isinstance(body, dict):
+            print(f"[DEBUG] ❌ Error: Invalid request body type: {type(body).__name__}")
             raise HTTPException(
                 status_code=400,
                 detail=f"Request body must be a JSON object with 'reportData' field. Got: {type(body).__name__}"
             )
         
         if "reportData" not in body:
+            print(f"[DEBUG] ❌ Error: Missing 'reportData' in request body. Got keys: {list(body.keys())}")
             raise HTTPException(
                 status_code=400,
                 detail=f"Missing 'reportData' in request body. Expected: {{'reportData': {{...}}}}. Got keys: {list(body.keys())}"

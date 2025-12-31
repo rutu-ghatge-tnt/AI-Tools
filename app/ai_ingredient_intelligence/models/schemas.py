@@ -1,5 +1,5 @@
 from typing import List, Optional, Union, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict, model_serializer
 from fastapi import UploadFile
 
 class AnalyzeInciRequest(BaseModel):
@@ -13,7 +13,7 @@ class AnalyzeInciRequest(BaseModel):
 class AnalyzeInciItem(BaseModel):
     ingredient_name: str
     ingredient_id: Optional[str] = Field(None, description="Ingredient ID from branded ingredients collection (for distributor mapping)")
-    supplier_name: Optional[str] = None
+    supplier_name: Optional[str] = Field(None, description="Supplier name for branded ingredients", exclude=False)
     description: Optional[str] = Field(None, description="Description (uses enhanced_description from MongoDB for branded ingredients)")
     category_decided: Optional[str] = Field(None, description="Category from MongoDB for branded ingredients: 'Active' or 'Excipient'")
     category: Optional[str] = Field(None, description="Computed category for general INCI and combinations: 'Active' or 'Excipient' (handles combinations automatically)")
@@ -23,6 +23,19 @@ class AnalyzeInciItem(BaseModel):
     matched_inci: List[str]
     tag: Optional[str] = Field(None, description="Tag: 'B' for branded, 'G' for general INCI")
     match_method: Optional[str] = Field(None, description="Match method: 'exact', 'fuzzy', 'synonym', or 'combination'")
+    
+    # Pydantic v2: Use model_config to ensure supplier_name is always included even when None
+    # This ensures the field is always serialized, even when None
+    model_config = ConfigDict(exclude_none=False)
+    
+    def model_dump(self, **kwargs):
+        """Override model_dump to always include supplier_name even when None"""
+        # Get the default dump
+        data = super().model_dump(**kwargs)
+        # Force include supplier_name even if it was excluded
+        if 'supplier_name' not in data:
+            data['supplier_name'] = getattr(self, 'supplier_name', None)
+        return data
 
 class InciGroup(BaseModel):
     inci_list: List[str]                  # the set of INCI names matched
