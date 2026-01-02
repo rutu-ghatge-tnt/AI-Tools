@@ -182,7 +182,15 @@ async def get_market_research_history(
             del item["_id"]
             
             # Truncate input_data for preview (max 100 chars)
-            input_data = item.get("input_data", "")
+            # Handle both string and list formats (some old data might be stored as list)
+            input_data_raw = item.get("input_data", "")
+            if isinstance(input_data_raw, list):
+                input_data = ", ".join(str(x) for x in input_data_raw if x)
+            elif isinstance(input_data_raw, str):
+                input_data = input_data_raw
+            else:
+                input_data = str(input_data_raw) if input_data_raw else ""
+            
             if input_data and len(input_data) > 100:
                 input_data = input_data[:100] + "..."
             
@@ -311,6 +319,14 @@ async def get_market_research_history_detail(
         if total_products == 0:
             item_meta["id"] = str(item_meta["_id"])
             del item_meta["_id"]
+            
+            # Handle input_data - convert list to string if needed (for backward compatibility with old data)
+            input_data_raw = item_meta.get("input_data", "")
+            if isinstance(input_data_raw, list):
+                item_meta["input_data"] = ", ".join(str(x) for x in input_data_raw if x)
+            elif not isinstance(input_data_raw, str):
+                item_meta["input_data"] = str(input_data_raw) if input_data_raw else ""
+            
             item_meta["research_result"] = {
                 **research_result,
                 "products": [],
@@ -351,6 +367,15 @@ async def get_market_research_history_detail(
         # Calculate pagination metadata
         total_pages = (total_products + page_size - 1) // page_size
         
+        # Handle input_data - convert list to string if needed (for backward compatibility with old data)
+        input_data_raw = item_meta.get("input_data", "")
+        if isinstance(input_data_raw, list):
+            input_data = ", ".join(str(x) for x in input_data_raw if x)
+        elif isinstance(input_data_raw, str):
+            input_data = input_data_raw
+        else:
+            input_data = str(input_data_raw) if input_data_raw else ""
+        
         # Build complete item
         item = {
             "id": str(item_meta["_id"]),
@@ -358,7 +383,7 @@ async def get_market_research_history_detail(
             "name": item_meta.get("name"),
             "tag": item_meta.get("tag"),
             "input_type": item_meta.get("input_type"),
-            "input_data": item_meta.get("input_data"),
+            "input_data": input_data,
             "ai_analysis": item_meta.get("ai_analysis"),
             "ai_reasoning": item_meta.get("ai_reasoning"),
             "ai_interpretation": item_meta.get("ai_interpretation"),
@@ -585,13 +610,17 @@ async def market_research(
     start = time.time()
     scraper = None
     
-    # 🔹 Auto-save: Extract user info and optional name/tag for history
+    # 🔹 Auto-save: Extract user info and required name/tag for history
     user_id_value = current_user.get("user_id") or current_user.get("_id")
-    name = payload.get("name")  # Optional: custom name for history
+    name = payload.get("name", "").strip() if payload.get("name") else ""  # Required: custom name for history
     tag = payload.get("tag")  # Optional: tag for history
     notes = payload.get("notes")  # Optional: notes for history
     provided_history_id = payload.get("history_id")  # Optional: reuse existing history item
     history_id = None
+    
+    # Validate name is provided if auto-save is enabled (user_id is present)
+    if user_id_value and not provided_history_id and not name:
+        raise HTTPException(status_code=400, detail="name is required for auto-save")
     
     # Validate history_id if provided
     if provided_history_id:
@@ -715,38 +744,15 @@ async def market_research(
                     history_id = str(existing_history_item["_id"])
                     print(f"[AUTO-SAVE] Found existing history item with same input_data, reusing history_id: {history_id}")
                 else:
-                    # Generate default name if not provided
-                    display_name = name
-                    if not display_name:
-                        if input_type == "url":
-                            # Extract product name from URL
-                            from urllib.parse import unquote
-                            try:
-                                url_decoded = unquote(input_data_value)
-                                segments = url_decoded.split('/')
-                                for segment in reversed(segments):
-                                    segment = segment.split('?')[0].replace('-', ' ').replace('_', ' ')
-                                    if segment and len(segment) > 5 and len(segment) < 100:
-                                        if any(keyword in segment.lower() for keyword in ['cleanser', 'serum', 'moisturizer', 'shampoo', 'conditioner']):
-                                            display_name = segment.title() + " Research"
-                                            break
-                            except:
-                                pass
-                        if not display_name:
-                            # Use first ingredient or default
-                            if ingredients and len(ingredients) > 0:
-                                display_name = ingredients[0] + " Research"
-                            else:
-                                display_name = "Market Research"
-                    
+                    # Name is required - already validated above
                     # Truncate if too long
-                    if len(display_name) > 100:
-                        display_name = display_name[:100]
+                    if len(name) > 100:
+                        name = name[:100]
                     
                     # Save initial state
                     history_doc = {
                         "user_id": user_id_value,
-                        "name": display_name,
+                        "name": name,
                         "tag": tag,
                         "input_type": input_type,
                         "input_data": input_data_value,
@@ -1615,7 +1621,7 @@ async def market_research_products(
         "url": "https://example.com/product/..." (required if input_type is "url"),
         "inci": "Water, Glycerin, ..." (required if input_type is "inci"),
         "input_type": "url" or "inci",
-        "name": "Product Name" (optional, for auto-saving),
+        "name": "Product Name" (required, for auto-saving),
         "tag": "optional-tag" (optional),
         "notes": "User notes" (optional)
     }
@@ -1641,14 +1647,14 @@ async def market_research_products(
     Note: This POST endpoint returns ALL products. For pagination, use GET /market-research-history/{history_id}/details?page=1&page_size=10
     
     AUTO-SAVE: Results are automatically saved to market research history if user is authenticated.
-    Provide optional "name" and "tag" in payload to customize the saved history item.
+    Provide required "name" and optional "tag" in payload to customize the saved history item.
     """
     start = time.time()
     scraper = None
     
-    # 🔹 Auto-save: Extract user info and optional name/tag for history
+    # 🔹 Auto-save: Extract user info and required name/tag for history
     user_id_value = current_user.get("user_id") or current_user.get("_id")
-    name = payload.get("name")  # Optional: custom name for history
+    name = payload.get("name", "").strip() if payload.get("name") else ""  # Required: custom name for history
     tag = payload.get("tag")  # Optional: tag for history
     notes = payload.get("notes")  # Optional: notes for history
     provided_history_id = payload.get("history_id")  # Optional: reuse existing history item
@@ -1771,38 +1777,15 @@ async def market_research_products(
                     history_id = str(existing_history_item["_id"])
                     print(f"[AUTO-SAVE] Found existing history item with same input_data, reusing history_id: {history_id}")
                 else:
-                    # Generate default name if not provided
-                    display_name = name
-                    if not display_name:
-                        if input_type == "url":
-                            # Extract product name from URL
-                            from urllib.parse import unquote
-                            try:
-                                url_decoded = unquote(input_data_value)
-                                segments = url_decoded.split('/')
-                                for segment in reversed(segments):
-                                    segment = segment.split('?')[0].replace('-', ' ').replace('_', ' ')
-                                    if segment and len(segment) > 5 and len(segment) < 100:
-                                        if any(keyword in segment.lower() for keyword in ['cleanser', 'serum', 'moisturizer', 'shampoo', 'conditioner']):
-                                            display_name = segment.title() + " Research"
-                                            break
-                            except:
-                                pass
-                        if not display_name:
-                            # Use first ingredient or default
-                            if ingredients and len(ingredients) > 0:
-                                display_name = ingredients[0] + " Research"
-                            else:
-                                display_name = "Market Research"
-                    
+                    # Name is required - already validated above
                     # Truncate if too long
-                    if len(display_name) > 100:
-                        display_name = display_name[:100]
+                    if len(name) > 100:
+                        name = name[:100]
                     
                     # Save initial state
                     history_doc = {
                         "user_id": user_id_value,
-                        "name": display_name,
+                        "name": name,
                         "tag": tag,
                         "input_type": input_type,
                         "input_data": input_data_value,

@@ -38,6 +38,17 @@ async def save_decode_history(
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
+    ⚠️ DEPRECATED: This endpoint is no longer needed!
+    
+    Auto-save functionality is now built into:
+    - /analyze-inci - automatically saves history
+    - /analyze-url - automatically saves history  
+    - /formulation-report-json - automatically saves history
+    - /analyze-inci-with-report - automatically saves history (NEW MERGED ENDPOINT - USE THIS!)
+    
+    This endpoint is kept for backward compatibility only. Please use the endpoints above
+    which handle history saving automatically - no need to call this endpoint separately.
+    
     Create a decode history item with "in_progress" status (for frontend to track pending analyses)
     
     This endpoint allows the frontend to create a history item upfront before analysis starts.
@@ -80,24 +91,10 @@ async def save_decode_history(
         if not user_id_value:
             raise HTTPException(status_code=400, detail="User ID not found in JWT token")
         
-        # Extract payload fields
+        # Extract payload fields - name is required
         name = payload.get("name", "").strip()
         if not name:
-            # Generate from input_data if available
-            input_data = payload.get("input_data", "")
-            if input_data:
-                # Try to extract first ingredient or product name
-                if payload.get("input_type") == "inci":
-                    ingredients = parse_inci_string(input_data)
-                    if ingredients:
-                        first_ing = ingredients[0]
-                        name = first_ing + "..." if len(first_ing) > 20 else first_ing
-                    else:
-                        name = "Untitled Analysis"
-                else:
-                    name = "Untitled Analysis"
-            else:
-                name = "Untitled Analysis"
+            raise HTTPException(status_code=400, detail="name is required")
         
         # Truncate name if too long
         if len(name) > 100:
@@ -157,7 +154,7 @@ async def save_decode_history(
         )
 
 
-@router.get("/decode-history")
+@router.get("/decode-history", response_model=GetDecodeHistoryResponse)
 async def get_decode_history(
     search: Optional[str] = Query(None),
     limit: int = Query(50),
@@ -243,7 +240,15 @@ async def get_decode_history(
                 status = "pending"  # Default to pending if status is missing (likely in progress)
             
             # Truncate input_data for preview (max 100 chars)
-            input_data = item.get("input_data", "")
+            # Handle both string and list formats (some old data might be stored as list)
+            input_data_raw = item.get("input_data", "")
+            if isinstance(input_data_raw, list):
+                input_data = ", ".join(str(x) for x in input_data_raw if x)
+            elif isinstance(input_data_raw, str):
+                input_data = input_data_raw
+            else:
+                input_data = str(input_data_raw) if input_data_raw else ""
+            
             if input_data and len(input_data) > 100:
                 input_data = input_data[:100] + "..."
             
@@ -344,6 +349,31 @@ async def get_decode_history_detail(
         if item.get("status") in ["pending", "failed"]:
             item["analysis_result"] = {}
             item["report_data"] = ""
+        
+        # Handle input_data - convert list to string if needed (for backward compatibility with old data)
+        input_data_raw = item.get("input_data", "")
+        if isinstance(input_data_raw, list):
+            item["input_data"] = ", ".join(str(x) for x in input_data_raw if x)
+        elif not isinstance(input_data_raw, str):
+            item["input_data"] = str(input_data_raw) if input_data_raw else ""
+        
+        # Normalize analysis_result to ensure all items have supplier_id field
+        # This ensures backward compatibility with old data that might not have supplier_id
+        if item.get("analysis_result") and isinstance(item["analysis_result"], dict):
+            analysis_result = item["analysis_result"]
+            if "detected" in analysis_result and isinstance(analysis_result["detected"], list):
+                for group in analysis_result["detected"]:
+                    if isinstance(group, dict) and "items" in group and isinstance(group["items"], list):
+                        for item_data in group["items"]:
+                            if isinstance(item_data, dict):
+                                # Ensure supplier_id is present (set to None if missing)
+                                if "supplier_id" not in item_data:
+                                    item_data["supplier_id"] = None
+                                # Also ensure ingredient_id and supplier_name are present for consistency
+                                if "ingredient_id" not in item_data:
+                                    item_data["ingredient_id"] = None
+                                if "supplier_name" not in item_data:
+                                    item_data["supplier_name"] = None
         
         return DecodeHistoryDetailResponse(
             item=DecodeHistoryItem(**item)
@@ -590,7 +620,7 @@ async def save_compare_history(
         }
 
 
-@router.get("/compare-history")
+@router.get("/compare-history", response_model=GetCompareHistoryResponse)
 async def get_compare_history(
     search: Optional[str] = Query(None),
     limit: int = Query(50),

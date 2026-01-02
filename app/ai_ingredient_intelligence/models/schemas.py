@@ -1,5 +1,5 @@
 from typing import List, Optional, Union, Dict, Any
-from pydantic import BaseModel, Field, ConfigDict, model_serializer
+from pydantic import BaseModel, Field, ConfigDict
 from fastapi import UploadFile
 
 class AnalyzeInciRequest(BaseModel):
@@ -56,9 +56,9 @@ class AnalyzeInciResponse(BaseModel):
     distributor_info: Optional[Dict[str, List[Dict]]] = Field(None, description="Distributor information for branded ingredients: { 'ingredient_name': [distributor1, distributor2, ...] }")
     history_id: Optional[str] = Field(None, description="History item ID (MongoDB ObjectId) - returned when history is auto-saved")
     
-    class Config:
-        # Exclude None values from JSON serialization to remove deprecated fields
-        exclude_none = True
+    # Pydantic v2: Use model_config - exclude_none=True for top-level, but nested models use their own settings
+    model_config = ConfigDict(exclude_none=True)
+    
 
                         # how many branded ingredients matched
 
@@ -251,6 +251,18 @@ class FormulationReportResponse(BaseModel):
     recommended_ph_range: Optional[str] = Field(None, description="Recommended pH range text")
     expected_benefits_analysis: List[ReportTableRow] = Field(default_factory=list, description="Expected benefits analysis table (if provided)")
     raw_text: Optional[str] = Field(None, description="Raw report text for reference")
+
+
+class MergedAnalyzeAndReportResponse(BaseModel):
+    """Merged response schema combining analyze-inci and formulation-report results"""
+    # Analysis results from analyze-inci
+    analysis: AnalyzeInciResponse = Field(..., description="Ingredient analysis results")
+    # Report results from formulation-report
+    report: FormulationReportResponse = Field(..., description="Formulation report results")
+    # Combined processing time
+    total_processing_time: float = Field(..., description="Total time taken for both analysis and report generation (in seconds)")
+    # History ID (auto-saved)
+    history_id: Optional[str] = Field(None, description="History item ID (MongoDB ObjectId) - returned when history is auto-saved")
 
 class SaveDecodeHistoryRequest(BaseModel):
     """Request schema for saving decode history"""
