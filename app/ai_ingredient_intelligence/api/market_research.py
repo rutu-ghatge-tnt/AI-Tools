@@ -182,7 +182,15 @@ async def get_market_research_history(
             del item["_id"]
             
             # Truncate input_data for preview (max 100 chars)
-            input_data = item.get("input_data", "")
+            # Handle both string and list formats (some old data might be stored as list)
+            input_data_raw = item.get("input_data", "")
+            if isinstance(input_data_raw, list):
+                input_data = ", ".join(str(x) for x in input_data_raw if x)
+            elif isinstance(input_data_raw, str):
+                input_data = input_data_raw
+            else:
+                input_data = str(input_data_raw) if input_data_raw else ""
+            
             if input_data and len(input_data) > 100:
                 input_data = input_data[:100] + "..."
             
@@ -311,6 +319,14 @@ async def get_market_research_history_detail(
         if total_products == 0:
             item_meta["id"] = str(item_meta["_id"])
             del item_meta["_id"]
+            
+            # Handle input_data - convert list to string if needed (for backward compatibility with old data)
+            input_data_raw = item_meta.get("input_data", "")
+            if isinstance(input_data_raw, list):
+                item_meta["input_data"] = ", ".join(str(x) for x in input_data_raw if x)
+            elif not isinstance(input_data_raw, str):
+                item_meta["input_data"] = str(input_data_raw) if input_data_raw else ""
+            
             item_meta["research_result"] = {
                 **research_result,
                 "products": [],
@@ -351,6 +367,15 @@ async def get_market_research_history_detail(
         # Calculate pagination metadata
         total_pages = (total_products + page_size - 1) // page_size
         
+        # Handle input_data - convert list to string if needed (for backward compatibility with old data)
+        input_data_raw = item_meta.get("input_data", "")
+        if isinstance(input_data_raw, list):
+            input_data = ", ".join(str(x) for x in input_data_raw if x)
+        elif isinstance(input_data_raw, str):
+            input_data = input_data_raw
+        else:
+            input_data = str(input_data_raw) if input_data_raw else ""
+        
         # Build complete item
         item = {
             "id": str(item_meta["_id"]),
@@ -358,7 +383,7 @@ async def get_market_research_history_detail(
             "name": item_meta.get("name"),
             "tag": item_meta.get("tag"),
             "input_type": item_meta.get("input_type"),
-            "input_data": item_meta.get("input_data"),
+            "input_data": input_data,
             "ai_analysis": item_meta.get("ai_analysis"),
             "ai_reasoning": item_meta.get("ai_reasoning"),
             "ai_interpretation": item_meta.get("ai_interpretation"),

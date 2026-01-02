@@ -722,10 +722,13 @@ async def generate_report_text(
         # Note: This categorization is for internal reference only - do not add "BRANDED per database" to Functions/Notes
     
     # Clean and reformat BIS cautions using Claude to make them proper sentences
+    # Skip cleaning if all BIS cautions are already empty (no point cleaning empty data)
     cleaned_bis_cautions = {}
-    if bis_cautions and len(bis_cautions) > 0:
+    non_empty_bis_count = sum(1 for c in bis_cautions.values() if c and len(c) > 0) if bis_cautions else 0
+    
+    if bis_cautions and len(bis_cautions) > 0 and non_empty_bis_count > 0:
         print(f"[DEBUG] 🧹 Cleaning and reformatting BIS cautions with Claude...")
-        print(f"[DEBUG]    Input BIS cautions: {len(bis_cautions)} ingredients with cautions")
+        print(f"[DEBUG]    Input BIS cautions: {non_empty_bis_count} ingredients with non-empty cautions out of {len(bis_cautions)} total")
         total_input_cautions = sum(len(c) for c in bis_cautions.values() if c)
         print(f"[DEBUG]    Total input cautions: {total_input_cautions}")
         
@@ -1000,9 +1003,18 @@ async def generate_report_json(
             non_empty = sum(1 for c in payload.bisCautions.values() if c and len(c) > 0)
             print(f"[DEBUG] BIS cautions dict: {bis_count} ingredients, {non_empty} with non-empty lists, {total_cautions} total cautions")
             if bis_count > 0:
-                sample_ing = list(payload.bisCautions.keys())[0]
-                sample_cautions = payload.bisCautions[sample_ing]
-                print(f"[DEBUG] Sample BIS caution - {sample_ing}: {len(sample_cautions) if sample_cautions else 0} caution(s)")
+                # Show first few ingredients and their caution counts
+                for i, (ing, cautions) in enumerate(list(payload.bisCautions.items())[:3]):
+                    print(f"[DEBUG] BIS caution [{i+1}] - {ing}: {len(cautions) if cautions else 0} caution(s)")
+                if bis_count > 3:
+                    print(f"[DEBUG] ... and {bis_count - 3} more ingredients")
+            
+            # ⚠️ WARNING if all BIS cautions are empty
+            if non_empty == 0 and bis_count > 0:
+                print(f"[DEBUG] ⚠️ WARNING: All {bis_count} BIS caution lists are empty! This may indicate:")
+                print(f"[DEBUG]   1. BIS cautions were not retrieved properly in analyze-inci")
+                print(f"[DEBUG]   2. Ingredients don't have BIS cautions in the database")
+                print(f"[DEBUG]   3. There's a mismatch in ingredient names between analyze-inci and formulation-report")
         else:
             print(f"[DEBUG] BIS cautions: None or empty")
         
@@ -1045,6 +1057,7 @@ async def generate_report_json(
         print(f"[DEBUG] ⏱️ Total processing time: {processing_time}s")
         
         # Handle history_id and auto-save
+        # NOTE: Auto-save is handled here - frontend should NOT call PATCH /decode-history/{history_id} separately
         history_id = body.get("history_id")
         name = body.get("name", "").strip()
         

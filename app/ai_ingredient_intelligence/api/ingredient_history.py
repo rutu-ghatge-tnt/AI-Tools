@@ -143,7 +143,7 @@ async def save_decode_history(
         )
 
 
-@router.get("/decode-history")
+@router.get("/decode-history", response_model=GetDecodeHistoryResponse)
 async def get_decode_history(
     search: Optional[str] = Query(None),
     limit: int = Query(50),
@@ -229,7 +229,15 @@ async def get_decode_history(
                 status = "pending"  # Default to pending if status is missing (likely in progress)
             
             # Truncate input_data for preview (max 100 chars)
-            input_data = item.get("input_data", "")
+            # Handle both string and list formats (some old data might be stored as list)
+            input_data_raw = item.get("input_data", "")
+            if isinstance(input_data_raw, list):
+                input_data = ", ".join(str(x) for x in input_data_raw if x)
+            elif isinstance(input_data_raw, str):
+                input_data = input_data_raw
+            else:
+                input_data = str(input_data_raw) if input_data_raw else ""
+            
             if input_data and len(input_data) > 100:
                 input_data = input_data[:100] + "..."
             
@@ -330,6 +338,31 @@ async def get_decode_history_detail(
         if item.get("status") in ["pending", "failed"]:
             item["analysis_result"] = {}
             item["report_data"] = ""
+        
+        # Handle input_data - convert list to string if needed (for backward compatibility with old data)
+        input_data_raw = item.get("input_data", "")
+        if isinstance(input_data_raw, list):
+            item["input_data"] = ", ".join(str(x) for x in input_data_raw if x)
+        elif not isinstance(input_data_raw, str):
+            item["input_data"] = str(input_data_raw) if input_data_raw else ""
+        
+        # Normalize analysis_result to ensure all items have supplier_id field
+        # This ensures backward compatibility with old data that might not have supplier_id
+        if item.get("analysis_result") and isinstance(item["analysis_result"], dict):
+            analysis_result = item["analysis_result"]
+            if "detected" in analysis_result and isinstance(analysis_result["detected"], list):
+                for group in analysis_result["detected"]:
+                    if isinstance(group, dict) and "items" in group and isinstance(group["items"], list):
+                        for item_data in group["items"]:
+                            if isinstance(item_data, dict):
+                                # Ensure supplier_id is present (set to None if missing)
+                                if "supplier_id" not in item_data:
+                                    item_data["supplier_id"] = None
+                                # Also ensure ingredient_id and supplier_name are present for consistency
+                                if "ingredient_id" not in item_data:
+                                    item_data["ingredient_id"] = None
+                                if "supplier_name" not in item_data:
+                                    item_data["supplier_name"] = None
         
         return DecodeHistoryDetailResponse(
             item=DecodeHistoryItem(**item)
@@ -576,7 +609,7 @@ async def save_compare_history(
         }
 
 
-@router.get("/compare-history")
+@router.get("/compare-history", response_model=GetCompareHistoryResponse)
 async def get_compare_history(
     search: Optional[str] = Query(None),
     limit: int = Query(50),

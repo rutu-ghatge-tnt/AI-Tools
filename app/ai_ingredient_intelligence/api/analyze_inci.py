@@ -52,6 +52,7 @@ from app.ai_ingredient_intelligence.models.schemas import (
     SaveCompareHistoryRequest,  # ⬅️ new schema for saving compare history
     GetCompareHistoryResponse,  # ⬅️ new schema for getting compare history
     CompareHistoryDetailResponse,  # ⬅️ new schema for getting compare history detail
+    MergedAnalyzeAndReportResponse,  # ⬅️ merged response schema
 )
 from app.ai_ingredient_intelligence.db.mongodb import db
 from app.ai_ingredient_intelligence.db.collections import distributor_col, decode_history_col, compare_history_col, branded_ingredients_col, inci_col
@@ -2892,6 +2893,17 @@ async def save_decode_history(
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
+    ⚠️ DEPRECATED: This endpoint is no longer needed!
+    
+    Auto-save functionality is now built into:
+    - /analyze-inci - automatically saves history
+    - /analyze-url - automatically saves history  
+    - /formulation-report-json - automatically saves history
+    - /analyze-inci-with-report - automatically saves history (NEW MERGED ENDPOINT - USE THIS!)
+    
+    This endpoint is kept for backward compatibility only. Please use the endpoints above
+    which handle history saving automatically - no need to call this endpoint separately.
+    
     Create a decode history item with "in_progress" status (for frontend to track pending analyses)
     """
     print(f"\n{'='*80}")
@@ -3005,7 +3017,7 @@ async def save_decode_history(
         )
 
 
-@router.get("/decode-history")
+@router.get("/decode-history", response_model=GetDecodeHistoryResponse)
 async def get_decode_history(
     search: Optional[str] = None,
     limit: int = 50,
@@ -3221,6 +3233,24 @@ async def get_decode_history_detail(
         elif not isinstance(input_data_raw, str):
             item["input_data"] = str(input_data_raw) if input_data_raw else ""
         
+        # Normalize analysis_result to ensure all items have supplier_id field
+        # This ensures backward compatibility with old data that might not have supplier_id
+        if item.get("analysis_result") and isinstance(item["analysis_result"], dict):
+            analysis_result = item["analysis_result"]
+            if "detected" in analysis_result and isinstance(analysis_result["detected"], list):
+                for group in analysis_result["detected"]:
+                    if isinstance(group, dict) and "items" in group and isinstance(group["items"], list):
+                        for item_data in group["items"]:
+                            if isinstance(item_data, dict):
+                                # Ensure supplier_id is present (set to None if missing)
+                                if "supplier_id" not in item_data:
+                                    item_data["supplier_id"] = None
+                                # Also ensure ingredient_id and supplier_name are present for consistency
+                                if "ingredient_id" not in item_data:
+                                    item_data["ingredient_id"] = None
+                                if "supplier_name" not in item_data:
+                                    item_data["supplier_name"] = None
+        
         return DecodeHistoryDetailResponse(
             item=DecodeHistoryItem(**item)
         )
@@ -3253,6 +3283,10 @@ async def update_decode_history(
     print(f"{'='*80}\n")
     """
     Update a decode history item - all fields are optional and can be updated
+    
+    ⚠️ NOTE: This endpoint is typically NOT needed if you're using auto-save functionality.
+    Both /analyze-inci and /formulation-report-json endpoints automatically save to history.
+    Only use this endpoint if you need to manually update history items outside of the auto-save flow.
     
     HISTORY FUNCTIONALITY:
     - All fields can be edited to support regeneration scenarios
@@ -3488,7 +3522,7 @@ async def save_compare_history(
 # OPTIONS handler removed - CORS middleware handles this automatically
 
 
-@router.get("/compare-history")
+@router.get("/compare-history", response_model=GetCompareHistoryResponse)
 async def get_compare_history(
     search: Optional[str] = None,
     limit: int = 50,
@@ -3866,5 +3900,225 @@ async def delete_compare_history(
 
 # Note: AI analysis functions have been moved to logic/ai_analysis.py
 # They are imported at the top of this file.
+
+
+@router.post("/analyze-inci-with-report", response_model=MergedAnalyzeAndReportResponse)
+async def analyze_and_report(
+    payload: dict,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
+    """
+    🚀 MERGED ENDPOINT: Analyze INCI ingredients AND generate formulation report in one call.
+    
+    This endpoint combines /analyze-inci and /formulation-report-json into a single, faster API call.
+    It performs both operations sequentially and returns combined results.
+    
+    Auto-saving behavior:
+    - If name is provided, automatically saves to decode history
+    - Saves with "in_progress" status before analysis
+    - Updates with "completed" status and combined results after both operations complete
+    - Saving errors don't fail the operations (graceful degradation)
+    - If history_id is provided, updates existing history item instead of creating new one
+    
+    Request body:
+    {
+        "inci_names": ["ingredient1", "ingredient2", ...] or "ingredient1, ingredient2",
+        "name": "Product Name" (optional, for auto-saving),
+        "tag": "optional-tag" (optional),
+        "notes": "User notes" (optional),
+        "expected_benefits": "Expected benefits" (optional),
+        "history_id": "existing_history_id" (optional, for regenerate)
+    }
+    
+    Returns:
+    {
+        "analysis": { ... AnalyzeInciResponse ... },
+        "report": { ... FormulationReportResponse ... },
+        "total_processing_time": 45.5,
+        "history_id": "..." (if auto-saved)
+    }
+    
+    Authentication:
+    - Requires JWT token in Authorization header
+    - User ID is automatically extracted from the JWT token
+    
+    ⚠️ NOTE: This endpoint replaces the need for separate calls to /analyze-inci and /formulation-report-json.
+    Use this endpoint for better performance and fewer API calls.
+    
+    """
+    import time
+    from datetime import datetime, timezone, timedelta
+    from bson import ObjectId
+    
+    # Import formulation report functions (avoid circular import by importing here)
+    from app.ai_ingredient_intelligence.api.formulation_report import (
+        generate_report_text,
+        parse_report_to_json
+    )
+    
+    start_time = time.time()
+    
+    print(f"\n{'='*80}")
+    print(f"[DEBUG] 🚀 API CALL: /api/analyze-inci-with-report (MERGED ENDPOINT)")
+    print(f"[DEBUG] Request received at: {datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()}")
+    print(f"[DEBUG] Payload keys: {list(payload.keys())}")
+    if "inci_names" in payload:
+        inci_preview = str(payload["inci_names"])[:200] + "..." if len(str(payload["inci_names"])) > 200 else str(payload["inci_names"])
+        print(f"[DEBUG] INCI names preview: {inci_preview}")
+    print(f"{'='*80}\n")
+    
+    # Extract user_id from JWT token
+    user_id_value = current_user.get("user_id") or current_user.get("_id")
+    if not user_id_value:
+        raise HTTPException(status_code=400, detail="User ID not found in JWT token")
+    
+    print(f"[DEBUG] User ID extracted: {user_id_value}")
+    
+    # Validate and parse input
+    if "inci_names" not in payload:
+        raise HTTPException(status_code=400, detail="Missing required field: inci_names")
+    
+    # Parse INCI names
+    inci_input = payload["inci_names"]
+    if isinstance(inci_input, str):
+        ingredients = parse_inci_string(inci_input)
+    elif isinstance(inci_input, list):
+        ingredients = inci_input
+    else:
+        raise HTTPException(status_code=400, detail="inci_names must be a string or list")
+    
+    if not ingredients:
+        raise HTTPException(status_code=400, detail="No ingredients found in inci_names")
+    
+    print(f"[DEBUG] Parsed {len(ingredients)} ingredients")
+    
+    # Extract optional fields
+    name = payload.get("name", "").strip()
+    tag = payload.get("tag")
+    notes = payload.get("notes", "")
+    expected_benefits = payload.get("expected_benefits")
+    history_id = payload.get("history_id")
+    
+    # 🔹 STEP 1: Auto-save initial state (if name provided)
+    if user_id_value and not history_id and name:
+        try:
+            # Truncate name if too long
+            if len(name) > 100:
+                name = name[:97] + "..."
+            
+            # Create history document with "in_progress" status
+            history_doc = {
+                "user_id": user_id_value,
+                "name": name,
+                "tag": tag,
+                "notes": notes,
+                "expected_benefits": expected_benefits,
+                "input_type": "inci",
+                "input_data": ", ".join(ingredients),
+                "status": "in_progress",
+                "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
+            }
+            
+            result = await decode_history_col.insert_one(history_doc)
+            history_id = str(result.inserted_id)
+            print(f"[AUTO-SAVE] Created history item with history_id: {history_id}")
+        except Exception as e:
+            print(f"[AUTO-SAVE] Warning: Failed to create history: {e}")
+            # Continue without history_id
+    
+    # 🔹 STEP 2: Run ingredient analysis
+    print(f"[DEBUG] 🔍 Step 1/2: Running ingredient analysis...")
+    analysis_start = time.time()
+    
+    try:
+        analysis_response = await analyze_ingredients_core(ingredients)
+        analysis_time = round(time.time() - analysis_start, 3)
+        print(f"[DEBUG] ✅ Analysis completed in {analysis_time}s")
+    except Exception as e:
+        print(f"[DEBUG] ❌ Analysis failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+    
+    # 🔹 STEP 3: Extract data for report generation
+    branded_ingredients = []
+    not_branded_ingredients = []
+    
+    for group in analysis_response.detected:
+        for item in group.items:
+            if item.tag == "B":  # Branded
+                branded_ingredients.append(item.ingredient_name)
+            elif item.tag == "G":  # General INCI
+                not_branded_ingredients.append(item.ingredient_name)
+    
+    # Get BIS cautions from analysis
+    bis_cautions = analysis_response.bis_cautions if analysis_response.bis_cautions else None
+    
+    print(f"[DEBUG] 📊 Extracted for report: {len(branded_ingredients)} branded, {len(not_branded_ingredients)} not branded")
+    if bis_cautions:
+        total_bis = sum(len(c) for c in bis_cautions.values() if c)
+        print(f"[DEBUG] 📊 BIS cautions: {len(bis_cautions)} ingredients, {total_bis} total cautions")
+    
+    # 🔹 STEP 4: Generate formulation report
+    print(f"[DEBUG] 📄 Step 2/2: Generating formulation report...")
+    report_start = time.time()
+    
+    try:
+        inci_str = ", ".join(ingredients)
+        report_text = await generate_report_text(
+            inci_str,
+            branded_ingredients=branded_ingredients if branded_ingredients else None,
+            not_branded_ingredients=not_branded_ingredients if not_branded_ingredients else None,
+            bis_cautions=bis_cautions,
+            expected_benefits=expected_benefits
+        )
+        
+        if not report_text or not report_text.strip():
+            raise HTTPException(status_code=500, detail="Report text generation returned empty result")
+        
+        # Parse report to JSON
+        report_response = parse_report_to_json(report_text)
+        report_time = round(time.time() - report_start, 3)
+        print(f"[DEBUG] ✅ Report generated in {report_time}s")
+    except Exception as e:
+        print(f"[DEBUG] ❌ Report generation failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
+    
+    # 🔹 STEP 5: Auto-save combined results
+    total_time = round(time.time() - start_time, 3)
+    
+    if history_id and user_id_value:
+        try:
+            # Combine both results for storage
+            combined_result = {
+                "analysis_result": analysis_response.model_dump(exclude_none=True) if hasattr(analysis_response, "model_dump") else analysis_response.dict(exclude_none=True),
+                "report_result": report_response.dict(exclude_none=True) if hasattr(report_response, "dict") else report_response
+            }
+            
+            update_doc = {
+                "status": "completed",
+                "analysis_result": combined_result,
+                "report_data": report_text,  # Store raw report text
+                "processing_time": total_time
+            }
+            
+            await decode_history_col.update_one(
+                {"_id": ObjectId(history_id), "user_id": user_id_value},
+                {"$set": update_doc}
+            )
+            print(f"[AUTO-SAVE] Updated history {history_id} with completed status")
+        except Exception as e:
+            print(f"[AUTO-SAVE] Warning: Failed to update history: {e}")
+            # Don't fail the response if saving fails
+    
+    # 🔹 STEP 6: Return merged response
+    return MergedAnalyzeAndReportResponse(
+        analysis=analysis_response,
+        report=report_response,
+        total_processing_time=total_time,
+        history_id=history_id
+    )
 
 

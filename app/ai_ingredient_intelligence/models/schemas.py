@@ -252,6 +252,18 @@ class FormulationReportResponse(BaseModel):
     expected_benefits_analysis: List[ReportTableRow] = Field(default_factory=list, description="Expected benefits analysis table (if provided)")
     raw_text: Optional[str] = Field(None, description="Raw report text for reference")
 
+
+class MergedAnalyzeAndReportResponse(BaseModel):
+    """Merged response schema combining analyze-inci and formulation-report results"""
+    # Analysis results from analyze-inci
+    analysis: AnalyzeInciResponse = Field(..., description="Ingredient analysis results")
+    # Report results from formulation-report
+    report: FormulationReportResponse = Field(..., description="Formulation report results")
+    # Combined processing time
+    total_processing_time: float = Field(..., description="Total time taken for both analysis and report generation (in seconds)")
+    # History ID (auto-saved)
+    history_id: Optional[str] = Field(None, description="History item ID (MongoDB ObjectId) - returned when history is auto-saved")
+
 class SaveDecodeHistoryRequest(BaseModel):
     """Request schema for saving decode history"""
     name: str = Field(..., description="Name for this decode")
