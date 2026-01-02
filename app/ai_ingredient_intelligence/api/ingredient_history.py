@@ -38,6 +38,17 @@ async def save_decode_history(
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
+    ⚠️ DEPRECATED: This endpoint is no longer needed!
+    
+    Auto-save functionality is now built into:
+    - /analyze-inci - automatically saves history
+    - /analyze-url - automatically saves history  
+    - /formulation-report-json - automatically saves history
+    - /analyze-inci-with-report - automatically saves history (NEW MERGED ENDPOINT - USE THIS!)
+    
+    This endpoint is kept for backward compatibility only. Please use the endpoints above
+    which handle history saving automatically - no need to call this endpoint separately.
+    
     Create a decode history item with "in_progress" status (for frontend to track pending analyses)
     
     This endpoint allows the frontend to create a history item upfront before analysis starts.

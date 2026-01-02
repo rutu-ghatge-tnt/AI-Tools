@@ -1132,6 +1132,7 @@ async def generate_report_json(
                 update_doc = {
                     "status": "completed",
                     "analysis_result": analysis_result_dict,  # Use analysis_result for consistency
+                    "report_data": report_text,  # Store raw report text for detail API
                     "processing_time": processing_time
                 }
                 
@@ -1139,7 +1140,7 @@ async def generate_report_json(
                     {"_id": ObjectId(history_id), "user_id": user_id_value},
                     {"$set": update_doc}
                 )
-                print(f"[AUTO-SAVE] Updated history {history_id} with completed status")
+                print(f"[AUTO-SAVE] Updated history {history_id} with completed status and report_data")
             except Exception as e:
                 print(f"[AUTO-SAVE] Warning: Failed to update history: {e}")
                 import traceback

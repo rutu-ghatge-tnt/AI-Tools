@@ -397,8 +397,102 @@ async def get_ingredients_by_supplier_id(
             }
         )
         
+        # Collect all ingredient documents first
+        all_docs = await cursor.to_list(length=None)
+        
+        if not all_docs:
+            return {
+                "supplier_id": str(supplier_object_id),
+                "supplier": supplier_doc.get("supplierName", ""),
+                "ingredients": [],
+                "count": 0
+            }
+        
+        # Batch fetch: Collect all INCI IDs and ingredient IDs for batch queries
+        all_inci_ids = []
+        all_ingredient_ids = []
+        doc_inci_map = {}  # Map ingredient_id -> list of inci_ids
+        
+        for doc in all_docs:
+            ing_id = str(doc["_id"])
+            all_ingredient_ids.append(ing_id)
+            
+            # Collect INCI IDs for batch lookup
+            if doc.get("inci_ids"):
+                # Filter valid ObjectIds
+                valid_inci_ids = []
+                for inci_id in doc["inci_ids"]:
+                    try:
+                        if isinstance(inci_id, str):
+                            valid_inci_ids.append(ObjectId(inci_id))
+                        else:
+                            valid_inci_ids.append(inci_id)
+                    except:
+                        pass
+                if valid_inci_ids:
+                    doc_inci_map[ing_id] = valid_inci_ids
+                    all_inci_ids.extend(valid_inci_ids)
+        
+        # Batch fetch all INCI documents
+        inci_map = {}  # Map inci_id (ObjectId) -> {inciName, category}
+        if all_inci_ids:
+            # Remove duplicates by converting to string set, then back to ObjectId list
+            unique_inci_ids = []
+            seen = set()
+            for inci_id in all_inci_ids:
+                inci_id_str = str(inci_id)
+                if inci_id_str not in seen:
+                    seen.add(inci_id_str)
+                    unique_inci_ids.append(inci_id)
+            
+            inci_cursor = inci_col.find(
+                {"_id": {"$in": unique_inci_ids}},
+                {"inciName": 1, "category": 1}
+            )
+            async for inci_doc in inci_cursor:
+                inci_id_obj = inci_doc["_id"]
+                inci_map[inci_id_obj] = {
+                    "inciName": inci_doc.get("inciName", ""),
+                    "category": inci_doc.get("category", "")
+                }
+        
+        # Batch fetch distributor costs by supplierId (one query for all)
+        supplier_distributor = None
+        supplier_distributor_doc = await distributor_col.find_one(
+            {"supplierId": str(supplier_object_id)},
+            sort=[("createdAt", -1)]
+        )
+        if supplier_distributor_doc:
+            try:
+                price = supplier_distributor_doc.get("pricePerKg")
+                if price is not None:
+                    supplier_distributor = float(price)
+            except (ValueError, TypeError):
+                pass
+        
+        # Batch fetch distributor costs by ingredientIds
+        ingredient_distributors = {}  # Map ingredient_id -> cost_per_kg
+        if all_ingredient_ids:
+            distributor_cursor = distributor_col.find(
+                {"ingredientIds": {"$in": all_ingredient_ids}},
+                {"ingredientIds": 1, "pricePerKg": 1, "createdAt": 1}
+            ).sort("createdAt", -1)
+            
+            async for dist_doc in distributor_cursor:
+                price = dist_doc.get("pricePerKg")
+                if price is not None:
+                    try:
+                        cost = float(price)
+                        # Map each ingredientId to this cost (latest wins due to sort)
+                        for ing_id in dist_doc.get("ingredientIds", []):
+                            if ing_id not in ingredient_distributors:
+                                ingredient_distributors[ing_id] = cost
+                    except (ValueError, TypeError):
+                        pass
+        
+        # Build results
         results = []
-        async for doc in cursor:
+        for doc in all_docs:
             ing_id = str(doc["_id"])
             ing_name = doc.get("ingredient_name", "")
             
@@ -407,47 +501,35 @@ async def get_ingredients_by_supplier_id(
             inci_names = []
             category = doc.get("category_decided", "")
             
-            # If no original_inci_name, get from inci_ids
-            if not inci_name and doc.get("inci_ids"):
-                inci_cursor = inci_col.find(
-                    {"_id": {"$in": doc["inci_ids"]}},
-                    {"inciName": 1, "category": 1}
-                )
-                async for inci_doc in inci_cursor:
-                    inci_name_from_db = inci_doc.get("inciName", "")
-                    if inci_name_from_db:
-                        inci_names.append(inci_name_from_db)
-                        if not inci_name:
-                            inci_name = inci_name_from_db
-                    if not category:
-                        category = inci_doc.get("category", "")
+            # If no original_inci_name, get from inci_ids (using batch-fetched data)
+            if not inci_name and ing_id in doc_inci_map:
+                for inci_id_obj in doc_inci_map[ing_id]:
+                    if inci_id_obj in inci_map:
+                        inci_data = inci_map[inci_id_obj]
+                        inci_name_from_db = inci_data.get("inciName", "")
+                        if inci_name_from_db:
+                            inci_names.append(inci_name_from_db)
+                            if not inci_name:
+                                inci_name = inci_name_from_db
+                        if not category:
+                            category = inci_data.get("category", "")
             
             if inci_name and inci_name not in inci_names:
                 inci_names.insert(0, inci_name)
             
-            # Get cost from distributor using supplier_id or ingredientIds
+            # Get cost from distributor - try supplier-level first, then ingredient-level
             cost_per_kg = None
             
-            # Try supplier_id first
-            if supplier_object_id:
-                distributor_doc = await distributor_col.find_one(
-                    {"supplierId": str(supplier_object_id)},
-                    sort=[("createdAt", -1)]
-                )
-                if distributor_doc and distributor_doc.get("pricePerKg"):
-                    cost_per_kg = float(distributor_doc.get("pricePerKg", 0))
+            # Try supplier-level distributor first
+            if supplier_distributor is not None:
+                cost_per_kg = supplier_distributor
             
-            # If not found, try ingredientIds
-            if not cost_per_kg:
-                distributor_doc = await distributor_col.find_one(
-                    {"ingredientIds": ing_id},
-                    sort=[("createdAt", -1)]
-                )
-                if distributor_doc and distributor_doc.get("pricePerKg"):
-                    cost_per_kg = float(distributor_doc.get("pricePerKg", 0))
+            # If not found, try ingredient-level distributor
+            if cost_per_kg is None and ing_id in ingredient_distributors:
+                cost_per_kg = ingredient_distributors[ing_id]
             
             # Default cost based on category
-            if not cost_per_kg:
+            if cost_per_kg is None:
                 if category == "Active":
                     cost_per_kg = 5000
                 else:
