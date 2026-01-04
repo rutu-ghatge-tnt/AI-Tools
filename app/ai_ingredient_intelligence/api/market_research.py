@@ -26,6 +26,7 @@ from app.ai_ingredient_intelligence.logic.ai_analysis import (
     analyze_product_categories_with_ai,
     generate_market_research_overview_with_ai,
     enhance_product_ranking_with_ai,
+    extract_structured_product_info_with_ai,
     claude_client  # Import claude_client directly
 )
 import os  # For claude_api_key check
@@ -49,6 +50,15 @@ from app.ai_ingredient_intelligence.models.schemas import (
     MarketResearchHistoryDetailResponse,
     MarketResearchHistoryItem,
     MarketResearchHistoryItemSummary,
+    ProductAnalysisRequest,
+    ProductAnalysisResponse,
+    ProductStructuredAnalysis,
+    ProductKeywords,
+    UpdateKeywordsRequest,
+    UpdateKeywordsResponse,
+    MarketResearchWithKeywordsRequest,
+    MarketResearchPaginatedResponse,
+    ActiveIngredient,
 )
 
 router = APIRouter(tags=["Market Research"])
@@ -58,69 +68,9 @@ router = APIRouter(tags=["Market Research"])
 # MARKET RESEARCH HISTORY ENDPOINTS
 # ============================================================================
 
-@router.post("/save-market-research-history")
-async def save_market_research_history(
-    payload: dict,
-    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
-):
-    """
-    [DISABLED] Save market research history (user-specific)
-    
-    ⚠️ THIS ENDPOINT IS CURRENTLY DISABLED ⚠️
-    Market research results are now automatically saved by the market research endpoints.
-    This endpoint returns success but does not save to prevent duplicates.
-    
-    AUTO-SAVE: Market research endpoints (/market-research, /market-research/products) 
-    automatically save results to history when user is authenticated.
-    
-    Request body:
-    {
-        "name": "Product Name",
-        "tag": "optional-tag",
-        "input_type": "inci" or "url",
-        "input_data": "ingredient list or URL",
-        "research_result": {...} (optional),
-        "ai_analysis": "AI analysis message",
-        "ai_reasoning": "AI reasoning",
-        "notes": "User notes"
-    }
-    
-    Authentication:
-    - Requires JWT token in Authorization header
-    - User ID is automatically extracted from the JWT token
-    """
-    try:
-        # ⚠️ ENDPOINT DISABLED - Return success without saving to prevent duplicates
-        # Extract user_id and name for logging (do minimal validation to prevent crashes)
-        user_id_value = current_user.get("user_id") or current_user.get("_id") or payload.get("user_id")
-        name = payload.get("name", "Unknown")
-        
-        # Log that this endpoint was called but is disabled
-        print(f"⚠️ [DISABLED] /save-market-research-history called for user {user_id_value}, name: {name}")
-        print(f"   This endpoint is disabled to prevent duplicate saves.")
-        
-        # Return success response without actually saving
-        # Generate a dummy ID for frontend compatibility
-        import uuid
-        dummy_id = str(uuid.uuid4())
-        
-        return {
-            "success": True,
-            "id": dummy_id,
-            "message": "Market research history save endpoint disabled"
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Error in disabled save-market-research-history endpoint: {e}")
-        # Still return success to prevent frontend crashes
-        import uuid
-        return {
-            "success": True,
-            "id": str(uuid.uuid4()),
-            "message": "Market research history save endpoint disabled"
-        }
+# REMOVED: POST /save-market-research-history endpoint
+# This endpoint was disabled and has been removed.
+# Market research endpoints now auto-save results to history.
 
 
 @router.get("/market-research-history", response_model=GetMarketResearchHistoryResponse)
@@ -545,6 +495,626 @@ async def delete_market_research_history(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to delete market research history: {str(e)}"
+        )
+
+
+# ============================================================================
+# NEW MARKET RESEARCH ENDPOINTS (Enhanced Flow)
+# ============================================================================
+
+def build_mongo_query_from_keywords(
+    selected_keywords: Optional[ProductKeywords],
+    structured_analysis: Optional[Dict],
+    additional_filters: Optional[Dict] = None,
+    collection_sample: Optional[Dict] = None
+) -> Dict:
+    """
+    Build MongoDB query from selected keywords and structured analysis.
+    
+    Args:
+        selected_keywords: Selected keywords organized by category
+        structured_analysis: Structured analysis data
+        additional_filters: Additional filters (price_range, brand, etc.)
+        collection_sample: Sample product to check field existence
+    
+    Returns:
+        MongoDB query dictionary
+    """
+    query = {}
+    
+    # Always use category/subcategory (we know these exist)
+    if structured_analysis:
+        main_category = structured_analysis.get("main_category")
+        subcategory = structured_analysis.get("subcategory")
+        
+        if main_category:
+            query["category"] = {"$regex": main_category, "$options": "i"}
+        
+        if subcategory:
+            query["subcategory"] = {"$regex": subcategory, "$options": "i"}
+    
+    # Process selected keywords
+    if selected_keywords:
+        # Product formulation keywords → form field
+        if selected_keywords.product_formulation:
+            form_keywords = selected_keywords.product_formulation
+            # Check if form field exists in collection
+            if collection_sample and "form" in collection_sample:
+                query["form"] = {"$in": form_keywords}
+            else:
+                # Fallback: search in name/description
+                or_conditions = query.get("$or", [])
+                for form_kw in form_keywords:
+                    or_conditions.extend([
+                        {"name": {"$regex": form_kw, "$options": "i"}},
+                        {"productName": {"$regex": form_kw, "$options": "i"}},
+                        {"description": {"$regex": form_kw, "$options": "i"}}
+                    ])
+                if or_conditions:
+                    query["$or"] = or_conditions
+        
+        # Application keywords → application field
+        if selected_keywords.application:
+            app_keywords = selected_keywords.application
+            if collection_sample and "application" in collection_sample:
+                query["application"] = {"$in": app_keywords}
+            else:
+                # Fallback: search in name/description
+                or_conditions = query.get("$or", [])
+                for app_kw in app_keywords:
+                    or_conditions.extend([
+                        {"name": {"$regex": app_kw, "$options": "i"}},
+                        {"productName": {"$regex": app_kw, "$options": "i"}},
+                        {"description": {"$regex": app_kw, "$options": "i"}}
+                    ])
+                if or_conditions:
+                    query["$or"] = or_conditions
+        
+        # Functionality keywords → functional_categories field
+        if selected_keywords.functionality:
+            func_keywords = selected_keywords.functionality
+            if collection_sample and "functional_categories" in collection_sample:
+                query["functional_categories"] = {"$in": func_keywords}
+            else:
+                # Fallback: search in name/description
+                or_conditions = query.get("$or", [])
+                for func_kw in func_keywords:
+                    or_conditions.extend([
+                        {"name": {"$regex": func_kw, "$options": "i"}},
+                        {"productName": {"$regex": func_kw, "$options": "i"}},
+                        {"description": {"$regex": func_kw, "$options": "i"}}
+                    ])
+                if or_conditions:
+                    query["$or"] = or_conditions
+        
+        # MRP keywords → price range filter
+        if selected_keywords.mrp and structured_analysis:
+            mrp_keywords = selected_keywords.mrp
+            mrp_value = structured_analysis.get("mrp")
+            
+            if mrp_value:
+                # Convert keywords to price ranges
+                price_min = mrp_value * 0.8  # 20% below
+                price_max = mrp_value * 1.2  # 20% above
+                
+                # Adjust based on keywords
+                if "premium" in mrp_keywords or "luxury" in mrp_keywords:
+                    price_min = max(price_min, 2000)
+                elif "budget" in mrp_keywords or "affordable" in mrp_keywords:
+                    price_max = min(price_max, 500)
+                elif "mid_range" in mrp_keywords:
+                    price_min = max(price_min, 500)
+                    price_max = min(price_max, 2000)
+                
+                query["price"] = {"$gte": price_min, "$lte": price_max}
+    
+    # Additional filters
+    if additional_filters:
+        if "price_range" in additional_filters:
+            price_range = additional_filters["price_range"]
+            if "min" in price_range and "max" in price_range:
+                if "price" in query:
+                    # Merge with existing price filter
+                    existing = query["price"]
+                    query["price"] = {
+                        "$gte": max(existing.get("$gte", 0), price_range["min"]),
+                        "$lte": min(existing.get("$lte", float("inf")), price_range["max"])
+                    }
+                else:
+                    query["price"] = {"$gte": price_range["min"], "$lte": price_range["max"]}
+        
+        if "brand" in additional_filters:
+            query["brand"] = {"$regex": additional_filters["brand"], "$options": "i"}
+        
+        if "category" in additional_filters:
+            query["category"] = {"$regex": additional_filters["category"], "$options": "i"}
+        
+        if "subcategory" in additional_filters:
+            query["subcategory"] = {"$regex": additional_filters["subcategory"], "$options": "i"}
+    
+    return query
+
+
+def sort_products(products: List[Dict], sort_by: str) -> List[Dict]:
+    """Sort products based on sort_by parameter"""
+    if sort_by == "price_low":
+        return sorted(products, key=lambda x: x.get("price", 0) or 0)
+    elif sort_by == "price_high":
+        return sorted(products, key=lambda x: x.get("price", 0) or 0, reverse=True)
+    elif sort_by == "match_score":
+        return sorted(products, key=lambda x: x.get("match_score", 0), reverse=True)
+    else:
+        return products  # Default: no sort
+
+
+@router.post("/market-research/analyze", response_model=ProductAnalysisResponse)
+async def market_research_analyze(
+    payload: dict,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
+    """
+    AI Analysis: Extract structured product information from URL or INCI.
+    
+    This endpoint performs AI analysis to extract:
+    - Active ingredients with percentages
+    - MRP (scraped or AI-estimated)
+    - Product form, categories, application
+    - Keywords organized by feature category
+    
+    Request body:
+    {
+        "input_type": "url" | "inci",
+        "url": "https://..." (required if input_type is "url"),
+        "inci": "Water, Glycerin, ..." (required if input_type is "inci"),
+        "name": "Product Name" (optional, for auto-saving),
+        "tag": "optional-tag" (optional)
+    }
+    
+    Returns structured analysis with keywords organized by:
+    - product_formulation: Form-related keywords
+    - mrp: Price range keywords
+    - application: Use case keywords
+    - functionality: Functional benefit keywords
+    """
+    start = time.time()
+    scraper = None
+    history_id = None
+    
+    try:
+        # Extract user_id from JWT token
+        user_id = current_user.get("user_id") or current_user.get("_id")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
+        
+        # Validate payload
+        input_type = payload.get("input_type", "").lower()
+        if input_type not in ["url", "inci"]:
+            raise HTTPException(status_code=400, detail="input_type must be 'url' or 'inci'")
+        
+        ingredients = []
+        extracted_text = ""
+        product_name = ""
+        scraped_price = None
+        
+        if input_type == "url":
+            url = payload.get("url", "").strip()
+            if not url:
+                raise HTTPException(status_code=400, detail="url is required when input_type is 'url'")
+            
+            if not url.startswith(("http://", "https://")):
+                raise HTTPException(status_code=400, detail="Invalid URL format")
+            
+            # Scrape URL
+            scraper = URLScraper()
+            extraction_result = await scraper.extract_ingredients_from_url(url)
+            
+            ingredients_raw = extraction_result.get("ingredients", [])
+            extracted_text = extraction_result.get("extracted_text", "")
+            product_name = extraction_result.get("product_name", "")
+            
+            # Try to extract price from scraped text
+            if extracted_text:
+                import re
+                price_patterns = [
+                    r'₹\s*(\d+(?:,\d+)*(?:\.\d+)?)',
+                    r'Rs\.?\s*(\d+(?:,\d+)*(?:\.\d+)?)',
+                    r'INR\s*(\d+(?:,\d+)*(?:\.\d+)?)',
+                ]
+                for pattern in price_patterns:
+                    matches = re.findall(pattern, extracted_text)
+                    if matches:
+                        try:
+                            scraped_price = float(matches[0].replace(',', ''))
+                            break
+                        except:
+                            pass
+            
+            # Parse ingredients
+            if isinstance(ingredients_raw, str):
+                ingredients = parse_inci_string(ingredients_raw)
+            elif isinstance(ingredients_raw, list):
+                ingredients = ingredients_raw
+            else:
+                ingredients = []
+            
+            if not ingredients:
+                raise HTTPException(
+                    status_code=404,
+                    detail="No ingredients found on the product page"
+                )
+            
+            input_data_value = url
+        else:
+            inci = payload.get("inci", "").strip()
+            if not inci:
+                raise HTTPException(status_code=400, detail="inci is required when input_type is 'inci'")
+            
+            ingredients = parse_inci_string(inci)
+            if not ingredients:
+                raise HTTPException(status_code=400, detail="No valid ingredients found in INCI string")
+            
+            input_data_value = inci
+        
+        # Perform AI structured analysis
+        structured_data = await extract_structured_product_info_with_ai(
+            ingredients=ingredients,
+            extracted_text=extracted_text,
+            product_name=product_name,
+            url=input_data_value if input_type == "url" else "",
+            input_type=input_type,
+            scraped_price=scraped_price
+        )
+        
+        # Convert to schema format
+        active_ingredients = [
+            ActiveIngredient(name=ai.get("name", ""), percentage=ai.get("percentage"))
+            for ai in structured_data.get("active_ingredients", [])
+        ]
+        
+        keywords_dict = structured_data.get("keywords", {})
+        keywords = ProductKeywords(
+            product_formulation=keywords_dict.get("product_formulation", []),
+            mrp=keywords_dict.get("mrp", []),
+            application=keywords_dict.get("application", []),
+            functionality=keywords_dict.get("functionality", [])
+        )
+        
+        structured_analysis = ProductStructuredAnalysis(
+            active_ingredients=active_ingredients,
+            mrp=structured_data.get("mrp"),
+            mrp_per_ml=structured_data.get("mrp_per_ml"),
+            mrp_source=structured_data.get("mrp_source"),
+            form=structured_data.get("form"),
+            functional_categories=structured_data.get("functional_categories", []),
+            main_category=structured_data.get("main_category"),
+            subcategory=structured_data.get("subcategory"),
+            application=structured_data.get("application", []),
+            keywords=keywords
+        )
+        
+        # Auto-save to history if name provided
+        if payload.get("name"):
+            try:
+                history_doc = {
+                    "user_id": user_id,
+                    "name": payload.get("name", ""),
+                    "tag": payload.get("tag"),
+                    "input_type": input_type,
+                    "input_data": input_data_value,
+                    "structured_analysis": structured_analysis.model_dump(),
+                    "available_keywords": keywords.model_dump(),
+                    "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
+                }
+                
+                result = await market_research_history_col.insert_one(history_doc)
+                history_id = str(result.inserted_id)
+                print(f"✅ Auto-saved analysis to history: {history_id}")
+            except Exception as e:
+                print(f"⚠️  Error auto-saving to history: {e}")
+        
+        processing_time = round(time.time() - start, 2)
+        
+        return ProductAnalysisResponse(
+            structured_analysis=structured_analysis,
+            available_keywords=keywords,
+            extracted_ingredients=ingredients,
+            processing_time=processing_time,
+            history_id=history_id
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in market research analyze: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to analyze product: {str(e)}"
+        )
+
+
+@router.put("/market-research/update-keywords", response_model=UpdateKeywordsResponse)
+async def update_market_research_keywords(
+    payload: dict,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
+    """
+    Update selected keywords for a market research history item.
+    
+    Request body:
+    {
+        "history_id": "abc123",
+        "selected_keywords": {
+            "product_formulation": ["serum"],
+            "mrp": ["premium"],
+            "application": ["night_cream", "brightening"],
+            "functionality": ["brightening", "moisturizing"]
+        }
+    }
+    """
+    try:
+        # Extract user_id from JWT token
+        user_id = current_user.get("user_id") or current_user.get("_id")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
+        
+        # Validate payload
+        history_id = payload.get("history_id")
+        if not history_id:
+            raise HTTPException(status_code=400, detail="history_id is required")
+        
+        if not ObjectId.is_valid(history_id):
+            raise HTTPException(status_code=400, detail="Invalid history_id")
+        
+        selected_keywords_dict = payload.get("selected_keywords")
+        if not selected_keywords_dict:
+            raise HTTPException(status_code=400, detail="selected_keywords is required")
+        
+        # Convert to schema
+        selected_keywords = ProductKeywords(**selected_keywords_dict)
+        
+        # Update history item
+        result = await market_research_history_col.update_one(
+            {"_id": ObjectId(history_id), "user_id": user_id},
+            {"$set": {"selected_keywords": selected_keywords.model_dump()}}
+        )
+        
+        if result.matched_count == 0:
+            raise HTTPException(
+                status_code=404,
+                detail="History item not found or you don't have permission to update it"
+            )
+        
+        return UpdateKeywordsResponse(
+            success=True,
+            message="Keywords updated successfully",
+            selected_keywords=selected_keywords,
+            history_id=history_id
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error updating keywords: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to update keywords: {str(e)}"
+        )
+
+
+@router.get("/market-research/products/paginated", response_model=MarketResearchPaginatedResponse)
+async def market_research_products_paginated(
+    history_id: str = Query(..., description="History item ID"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(10, ge=1, le=100, description="Items per page"),
+    sort_by: str = Query("match_score", description="Sort by: price_low, price_high, match_score"),
+    filters: Optional[str] = Query(None, description="JSON string of additional filters"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
+    """
+    Get paginated products from existing analysis (fast, no re-analysis).
+    
+    Uses stored selected_keywords and structured_analysis from history to filter products.
+    
+    Query Parameters:
+    - history_id: History item ID (required)
+    - page: Page number (default: 1)
+    - page_size: Items per page (default: 10, max: 100)
+    - sort_by: Sort method - "price_low", "price_high", or "match_score" (default: "match_score")
+    - filters: JSON string of additional filters (optional)
+    
+    Example:
+    GET /api/market-research/products/paginated?history_id=abc123&page=1&page_size=20&sort_by=price_low
+    """
+    start = time.time()
+    
+    try:
+        # Extract user_id from JWT token
+        user_id = current_user.get("user_id") or current_user.get("_id")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
+        
+        # Validate history_id
+        if not ObjectId.is_valid(history_id):
+            raise HTTPException(status_code=400, detail="Invalid history_id")
+        
+        # Get history item
+        history_item = await market_research_history_col.find_one({
+            "_id": ObjectId(history_id),
+            "user_id": user_id
+        })
+        
+        if not history_item:
+            raise HTTPException(status_code=404, detail="History item not found")
+        
+        # Get stored data
+        structured_analysis_dict = history_item.get("structured_analysis")
+        selected_keywords_dict = history_item.get("selected_keywords")
+        research_result = history_item.get("research_result", {})
+        
+        if not structured_analysis_dict:
+            raise HTTPException(
+                status_code=400,
+                detail="History item does not contain structured_analysis. Please run /market-research/analyze first."
+            )
+        
+        # Convert to schemas
+        structured_analysis = ProductStructuredAnalysis(**structured_analysis_dict)
+        selected_keywords = ProductKeywords(**selected_keywords_dict) if selected_keywords_dict else None
+        
+        # Parse additional filters
+        additional_filters = {}
+        if filters:
+            try:
+                additional_filters = json.loads(filters)
+            except:
+                pass
+        
+        # Get sample product to check field existence
+        external_products_col = db["externalproducts"]
+        sample_product = await external_products_col.find_one({})
+        
+        # Build MongoDB query
+        mongo_query = build_mongo_query_from_keywords(
+            selected_keywords=selected_keywords,
+            structured_analysis=structured_analysis.model_dump(),
+            additional_filters=additional_filters,
+            collection_sample=sample_product
+        )
+        
+        # Add ingredients filter if we have extracted ingredients
+        extracted_ingredients = research_result.get("extracted_ingredients", [])
+        if extracted_ingredients:
+            # Normalize ingredients for matching
+            normalized_ingredients = [ing.strip().lower() for ing in extracted_ingredients]
+            # Add ingredient matching to query (products must have at least one matching ingredient)
+            mongo_query["ingredients"] = {
+                "$exists": True,
+                "$ne": None,
+                "$ne": ""
+            }
+        
+        # Fetch products
+        all_products_cursor = external_products_col.find(mongo_query)
+        all_products = await all_products_cursor.to_list(length=None)
+        
+        # Match products by ingredients (if we have extracted ingredients)
+        matched_products = []
+        if extracted_ingredients:
+            normalized_ingredients = [ing.strip().lower() for ing in extracted_ingredients]
+            
+            for product in all_products:
+                product_ingredients = product.get("ingredients", [])
+                if isinstance(product_ingredients, str):
+                    product_ingredients = parse_inci_string(product_ingredients)
+                elif not isinstance(product_ingredients, list):
+                    product_ingredients = []
+                
+                # Normalize product ingredients
+                normalized_product_ingredients = [ing.strip().lower() for ing in product_ingredients]
+                
+                # Check for matches
+                matches = []
+                for input_ing in normalized_ingredients:
+                    for prod_ing in normalized_product_ingredients:
+                        if input_ing in prod_ing or prod_ing in input_ing:
+                            if prod_ing not in matches:
+                                matches.append(prod_ing)
+                            break
+                
+                if matches:
+                    # Build product data
+                    product_data = {
+                        "id": str(product.get("_id", "")),
+                        "productName": product.get("name") or product.get("productName", ""),
+                        "brand": product.get("brand", ""),
+                        "ingredients": product_ingredients,
+                        "image": product.get("image") or product.get("s3Image", ""),
+                        "images": product.get("images") or product.get("s3Images", []),
+                        "price": product.get("price"),
+                        "salePrice": product.get("salePrice"),
+                        "description": product.get("description", ""),
+                        "matched_ingredients": matches,
+                        "match_count": len(matches),
+                        "total_ingredients": len(product_ingredients),
+                        "match_percentage": (len(matches) / len(normalized_ingredients) * 100) if normalized_ingredients else 0,
+                        "match_score": (len(matches) / len(normalized_ingredients) * 100) if normalized_ingredients else 0,
+                        "active_match_count": len(matches),
+                        "active_ingredients": matches
+                    }
+                    matched_products.append(product_data)
+        else:
+            # No ingredient matching, just return all products matching the query
+            for product in all_products:
+                product_data = {
+                    "id": str(product.get("_id", "")),
+                    "productName": product.get("name") or product.get("productName", ""),
+                    "brand": product.get("brand", ""),
+                    "ingredients": product.get("ingredients", []),
+                    "image": product.get("image") or product.get("s3Image", ""),
+                    "images": product.get("images") or product.get("s3Images", []),
+                    "price": product.get("price"),
+                    "salePrice": product.get("salePrice"),
+                    "description": product.get("description", ""),
+                    "matched_ingredients": [],
+                    "match_count": 0,
+                    "total_ingredients": len(product.get("ingredients", [])),
+                    "match_percentage": 0,
+                    "match_score": 0,
+                    "active_match_count": 0,
+                    "active_ingredients": []
+                }
+                matched_products.append(product_data)
+        
+        # Sort products
+        matched_products = sort_products(matched_products, sort_by)
+        
+        # Paginate
+        total_matched = len(matched_products)
+        total_pages = (total_matched + page_size - 1) // page_size if total_matched > 0 else 0
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        paginated_products = matched_products[start_idx:end_idx]
+        
+        # Build filters_applied
+        filters_applied = {}
+        if selected_keywords:
+            filters_applied["keywords"] = selected_keywords.model_dump()
+        if additional_filters:
+            filters_applied.update(additional_filters)
+        
+        processing_time = round(time.time() - start, 2)
+        
+        return MarketResearchPaginatedResponse(
+            products=paginated_products,
+            total_matched=total_matched,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages,
+            sort_by=sort_by,
+            filters_applied=filters_applied,
+            processing_time=processing_time,
+            extracted_ingredients=extracted_ingredients,
+            input_type=history_item.get("input_type", "inci"),
+            ai_interpretation=history_item.get("ai_interpretation"),
+            primary_category=structured_analysis.main_category,
+            subcategory=structured_analysis.subcategory,
+            category_confidence=history_item.get("category_confidence"),
+            history_id=history_id
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in market research products paginated: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get paginated products: {str(e)}"
         )
 
 
@@ -1609,45 +2179,54 @@ async def market_research_products(
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
-    Market Research Products: Fast endpoint that returns matched products and category info.
+    Market Research Products: Fast endpoint that returns matched products with optional keyword filtering.
     
-    This is the optimized split API endpoint that returns products quickly without generating
-    the comprehensive overview. Use this for fast product listing and pagination.
-    
-    For detailed market research overview, call /market-research/overview separately.
+    ENHANCED: Now supports keyword-based filtering, sorting, and pagination.
     
     Request body:
     {
-        "url": "https://example.com/product/..." (required if input_type is "url"),
+        "input_type": "url" | "inci",
+        "url": "https://..." (required if input_type is "url"),
         "inci": "Water, Glycerin, ..." (required if input_type is "inci"),
-        "input_type": "url" or "inci",
-        "name": "Product Name" (required, for auto-saving),
+        "selected_keywords": {  // NEW: Optional keyword filtering
+            "product_formulation": ["serum"],
+            "mrp": ["premium"],
+            "application": ["night_cream", "brightening"],
+            "functionality": ["brightening", "moisturizing"]
+        },
+        "filters": {  // NEW: Additional filters
+            "price_range": {"min": 500, "max": 2000},
+            "brand": "Brand Name"
+        },
+        "page": 1,  // NEW: Page number (default: 1)
+        "page_size": 10,  // NEW: Items per page (default: 10, max: 100)
+        "sort_by": "price_low" | "price_high" | "match_score",  // NEW: Sorting (default: "match_score")
+        "name": "Product Name" (optional, for auto-saving),
         "tag": "optional-tag" (optional),
         "notes": "User notes" (optional)
     }
     
     Returns:
     {
-        "products": [ALL matched products],
+        "products": [paginated matched products],
         "extracted_ingredients": [list of ingredients],
         "total_matched": total number of matched products,
-        "processing_time": time taken (typically 10-15s, no overview generation),
-        "input_type": "url" or "inci",
-        "ai_interpretation": "AI interpretation of category determination",
-        "primary_category": "haircare" | "skincare" | etc.,
-        "subcategory": "serum" | "cleanser" | etc.,
-        "category_confidence": "high" | "medium" | "low",
-        "ai_analysis": "AI analysis (only when no actives found)",
-        "ai_reasoning": "AI reasoning (only when no actives found)"
+        "page": 1,
+        "page_size": 10,
+        "total_pages": 15,
+        "sort_by": "price_low",
+        "filters_applied": {...},
+        "processing_time": time taken,
+        "input_type": "url" | "inci",
+        "ai_interpretation": "AI interpretation",
+        "primary_category": "skincare" | etc.,
+        "subcategory": "serum" | etc.,
+        "category_confidence": "high" | "medium" | "low"
     }
     
-    Note: This endpoint does NOT include market_research_overview. 
-    Call /market-research/overview separately if you need the comprehensive overview.
-    
-    Note: This POST endpoint returns ALL products. For pagination, use GET /market-research-history/{history_id}/details?page=1&page_size=10
+    BACKWARD COMPATIBLE: If selected_keywords not provided, uses existing ingredient-based matching.
     
     AUTO-SAVE: Results are automatically saved to market research history if user is authenticated.
-    Provide required "name" and optional "tag" in payload to customize the saved history item.
     """
     start = time.time()
     scraper = None
@@ -2125,22 +2704,122 @@ async def market_research_products(
             reverse=True
         )
         
-        # Return ALL matched products (no pagination in POST API - pagination is handled by GET detail endpoint)
+        # ENHANCED: Check for keyword filtering, sorting, and pagination
+        selected_keywords_dict = payload.get("selected_keywords")
+        additional_filters = payload.get("filters", {})
+        sort_by = payload.get("sort_by", "match_score")
+        page = payload.get("page", 1)
+        page_size = payload.get("page_size", 10)
+        
+        # Apply keyword filtering if provided
+        if selected_keywords_dict:
+            try:
+                selected_keywords = ProductKeywords(**selected_keywords_dict)
+                
+                # Get structured analysis if available from history or perform analysis
+                structured_analysis_dict = None
+                if history_id:
+                    history_item = await market_research_history_col.find_one({
+                        "_id": ObjectId(history_id),
+                        "user_id": user_id_value
+                    })
+                    if history_item:
+                        structured_analysis_dict = history_item.get("structured_analysis")
+                
+                # If no structured analysis, create one from category info
+                if not structured_analysis_dict:
+                    structured_analysis_dict = {
+                        "main_category": primary_category,
+                        "subcategory": subcategory,
+                        "form": None,
+                        "functional_categories": [],
+                        "application": [],
+                        "mrp": None
+                    }
+                
+                # Get sample product to check field existence
+                external_products_col = db["externalproducts"]
+                sample_product = await external_products_col.find_one({})
+                
+                # Build MongoDB query for keyword filtering
+                keyword_query = build_mongo_query_from_keywords(
+                    selected_keywords=selected_keywords,
+                    structured_analysis=structured_analysis_dict,
+                    additional_filters=additional_filters,
+                    collection_sample=sample_product
+                )
+                
+                # Filter matched_products by keyword query
+                # This is a simplified filter - in production, you'd want to query MongoDB directly
+                # For now, we filter the already matched products
+                if keyword_query:
+                    filtered_products = []
+                    for product in matched_products:
+                        # Check if product matches keyword filters
+                        matches = True
+                        
+                        # Check category
+                        if "category" in keyword_query:
+                            product_category = product.get("category", "").lower()
+                            if keyword_query["category"].get("$regex", "").lower() not in product_category:
+                                matches = False
+                        
+                        # Check subcategory
+                        if matches and "subcategory" in keyword_query:
+                            product_subcategory = product.get("subcategory", "").lower()
+                            if keyword_query["subcategory"].get("$regex", "").lower() not in product_subcategory:
+                                matches = False
+                        
+                        # Check price range
+                        if matches and "price" in keyword_query:
+                            product_price = product.get("price", 0) or 0
+                            price_filter = keyword_query["price"]
+                            if "$gte" in price_filter and product_price < price_filter["$gte"]:
+                                matches = False
+                            if "$lte" in price_filter and product_price > price_filter["$lte"]:
+                                matches = False
+                        
+                        # Check brand
+                        if matches and "brand" in keyword_query:
+                            product_brand = product.get("brand", "").lower()
+                            if keyword_query["brand"].get("$regex", "").lower() not in product_brand:
+                                matches = False
+                        
+                        if matches:
+                            filtered_products.append(product)
+                    
+                    matched_products = filtered_products
+                    print(f"  ✅ Keyword filtering applied: {len(matched_products)} products after filtering")
+            except Exception as e:
+                print(f"  ⚠️  Error applying keyword filtering: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        # Apply sorting
+        matched_products = sort_products(matched_products, sort_by)
+        
+        # Apply pagination
         total_matched_count = len(matched_products)
+        total_pages = (total_matched_count + page_size - 1) // page_size if total_matched_count > 0 else 0
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        paginated_products = matched_products[start_idx:end_idx]
         
         processing_time = time.time() - start
         
         print(f"\n{'='*60}")
         print(f"Market Research Products Summary:")
         print(f"  Total products matched: {total_matched_count}")
-        print(f"  Returning all {total_matched_count} products (pagination handled by GET detail endpoint)")
+        print(f"  Page: {page}/{total_pages}")
+        print(f"  Showing: {len(paginated_products)} products")
+        print(f"  Sort by: {sort_by}")
         print(f"  Category: {primary_category}/{subcategory}")
         print(f"  Processing time: {processing_time:.2f}s")
         print(f"{'='*60}\n")
         
-        # Return response with ALL products (no pagination in POST API)
+        # Return response with paginated products
         response = MarketResearchProductsResponse(
-            products=matched_products,  # Return ALL products (no pagination in POST API)
+            products=paginated_products,
             extracted_ingredients=ingredients,
             total_matched=total_matched_count,
             processing_time=round(processing_time, 2),
@@ -2151,10 +2830,9 @@ async def market_research_products(
             primary_category=primary_category,
             subcategory=subcategory,
             category_confidence=category_confidence,
-            # Pagination fields (deprecated - kept for backward compatibility, but not used)
-            page=1,
-            page_size=total_matched_count,
-            total_pages=1
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages
         )
         
         # 🔹 Auto-save: Update history with completed status and research_result
