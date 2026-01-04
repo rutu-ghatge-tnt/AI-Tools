@@ -455,6 +455,10 @@ class MarketResearchHistoryItem(BaseModel):
     category_confidence: Optional[str] = Field(None, description="Confidence level of category determination (high, medium, low)")
     notes: Optional[str] = Field(None, description="User notes for this research")
     created_at: Optional[str] = Field(None, description="Creation timestamp")
+    # New fields for enhanced flow
+    structured_analysis: Optional[Dict] = Field(None, description="Structured analysis data (ProductStructuredAnalysis as dict)")
+    selected_keywords: Optional[Dict] = Field(None, description="Selected keywords (ProductKeywords as dict)")
+    available_keywords: Optional[Dict] = Field(None, description="Available keywords (ProductKeywords as dict)")
 
 
 class SaveMarketResearchHistoryRequest(BaseModel):
@@ -482,6 +486,103 @@ class GetMarketResearchHistoryResponse(BaseModel):
 class MarketResearchHistoryDetailResponse(BaseModel):
     """Response schema for getting market research history detail (returns full data)"""
     item: MarketResearchHistoryItem = Field(..., description="Full history item with all data")
+
+
+# ============================================================================
+# NEW MARKET RESEARCH SCHEMAS (Enhanced Flow)
+# ============================================================================
+
+class ActiveIngredient(BaseModel):
+    """Schema for active ingredient with percentage"""
+    name: str = Field(..., description="Active ingredient name")
+    percentage: Optional[str] = Field(None, description="Percentage if available (e.g., '5%', '2-3%')")
+
+
+class ProductKeywords(BaseModel):
+    """Schema for keywords organized by feature category"""
+    product_formulation: List[str] = Field(default_factory=list, description="Product form/type keywords (e.g., 'serum', 'cream', 'water_based')")
+    mrp: List[str] = Field(default_factory=list, description="Price range keywords (e.g., 'premium', 'mid_range', 'budget')")
+    application: List[str] = Field(default_factory=list, description="Use case keywords (e.g., 'night_cream', 'brightening', 'sun_protection')")
+    functionality: List[str] = Field(default_factory=list, description="Functional benefit keywords (e.g., 'brightening', 'moisturizing', 'acne_treatment')")
+
+
+class ProductStructuredAnalysis(BaseModel):
+    """Schema for structured product analysis"""
+    active_ingredients: List[ActiveIngredient] = Field(default_factory=list, description="Active ingredients with percentages")
+    mrp: Optional[float] = Field(None, description="MRP of the product")
+    mrp_per_ml: Optional[float] = Field(None, description="MRP per ml")
+    mrp_source: Optional[str] = Field(None, description="Source of MRP: 'scraped' or 'ai_estimated'")
+    form: Optional[str] = Field(None, description="Product form: cream, lotion, serum, etc.")
+    functional_categories: List[str] = Field(default_factory=list, description="Functional categories as keywords")
+    main_category: Optional[str] = Field(None, description="Main category: skincare, haircare, lipcare, bodycare")
+    subcategory: Optional[str] = Field(None, description="Subcategory/product type")
+    application: List[str] = Field(default_factory=list, description="Application types as keywords")
+    keywords: ProductKeywords = Field(..., description="Keywords organized by feature category")
+
+
+class ProductAnalysisRequest(BaseModel):
+    """Request schema for product analysis endpoint"""
+    input_type: str = Field(..., description="Type of input: 'url' or 'inci'")
+    url: Optional[str] = Field(None, description="Product URL (required if input_type is 'url')")
+    inci: Optional[str] = Field(None, description="INCI ingredient list (required if input_type is 'inci')")
+    name: Optional[str] = Field(None, description="Name for history (optional)")
+    tag: Optional[str] = Field(None, description="Tag for categorization (optional)")
+
+
+class ProductAnalysisResponse(BaseModel):
+    """Response schema for product analysis endpoint"""
+    structured_analysis: ProductStructuredAnalysis = Field(..., description="Structured analysis data")
+    available_keywords: ProductKeywords = Field(..., description="All available keywords organized by feature category")
+    extracted_ingredients: List[str] = Field(default_factory=list, description="Extracted ingredients list")
+    processing_time: float = Field(..., description="Time taken for processing")
+    history_id: Optional[str] = Field(None, description="History item ID if saved")
+
+
+class UpdateKeywordsRequest(BaseModel):
+    """Request schema for updating selected keywords"""
+    history_id: str = Field(..., description="History item ID")
+    selected_keywords: ProductKeywords = Field(..., description="Selected keywords organized by feature category")
+
+
+class UpdateKeywordsResponse(BaseModel):
+    """Response schema for updating keywords"""
+    success: bool = Field(..., description="Success status")
+    message: str = Field(..., description="Response message")
+    selected_keywords: ProductKeywords = Field(..., description="Updated selected keywords")
+    history_id: str = Field(..., description="History item ID")
+
+
+class MarketResearchWithKeywordsRequest(BaseModel):
+    """Request schema for market research with keywords"""
+    input_type: str = Field(..., description="Type of input: 'url' or 'inci'")
+    url: Optional[str] = Field(None, description="Product URL (required if input_type is 'url')")
+    inci: Optional[str] = Field(None, description="INCI ingredient list (required if input_type is 'inci')")
+    selected_keywords: Optional[ProductKeywords] = Field(None, description="Selected keywords for filtering")
+    filters: Optional[Dict[str, Any]] = Field(None, description="Additional filters (price_range, brand, etc.)")
+    page: int = Field(1, ge=1, description="Page number")
+    page_size: int = Field(10, ge=1, le=100, description="Items per page")
+    sort_by: str = Field("match_score", description="Sort by: 'price_low', 'price_high', 'match_score'")
+    name: Optional[str] = Field(None, description="Name for auto-saving to history")
+    tag: Optional[str] = Field(None, description="Tag for categorization")
+
+
+class MarketResearchPaginatedResponse(BaseModel):
+    """Response schema for paginated market research"""
+    products: List[MarketResearchProduct] = Field(default_factory=list, description="List of matched products")
+    total_matched: int = Field(0, description="Total number of matched products")
+    page: int = Field(1, description="Current page number")
+    page_size: int = Field(10, description="Items per page")
+    total_pages: int = Field(0, description="Total number of pages")
+    sort_by: str = Field(..., description="Current sort method")
+    filters_applied: Dict[str, Any] = Field(default_factory=dict, description="Applied filters")
+    processing_time: float = Field(..., description="Time taken for processing")
+    extracted_ingredients: List[str] = Field(default_factory=list, description="Extracted ingredients list")
+    input_type: str = Field(..., description="Type of input processed")
+    ai_interpretation: Optional[str] = Field(None, description="AI interpretation")
+    primary_category: Optional[str] = Field(None, description="Primary category")
+    subcategory: Optional[str] = Field(None, description="Subcategory")
+    category_confidence: Optional[str] = Field(None, description="Category confidence")
+    history_id: Optional[str] = Field(None, description="History item ID if saved")
 
 
 # ============================================================================

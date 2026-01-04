@@ -9,7 +9,7 @@ Extracted from analyze_inci.py for better modularity.
 import os
 import json
 import re
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 # Claude AI setup
 try:
@@ -621,3 +621,245 @@ Return your ranking as JSON with the structure specified in the system prompt.""
         print(f"    ⚠️  Error in AI ranking: {e}")
         return products
 
+
+async def extract_structured_product_info_with_ai(
+    ingredients: List[str],
+    extracted_text: str = "",
+    product_name: str = "",
+    url: str = "",
+    input_type: str = "inci",
+    scraped_price: Optional[float] = None
+) -> Dict[str, any]:
+    """
+    Extract structured product information using AI analysis.
+    
+    Args:
+        ingredients: List of INCI ingredient names
+        extracted_text: Full scraped text from URL (if URL input)
+        product_name: Product name if available
+        url: Product URL if available
+        input_type: "url" or "inci"
+        scraped_price: Price extracted from scraping (if URL input)
+    
+    Returns dict with:
+    - active_ingredients: List of {name, percentage}
+    - mrp: MRP value
+    - mrp_per_ml: MRP per ml
+    - mrp_source: "scraped" or "ai_estimated"
+    - form: Product form (serum, cream, etc.)
+    - functional_categories: List of functional categories
+    - main_category: Main category (skincare, haircare, etc.)
+    - subcategory: Subcategory
+    - application: List of application types
+    - keywords: Dict with product_formulation, mrp, application, functionality
+    """
+    if not claude_client:
+        return {
+            "active_ingredients": [],
+            "mrp": None,
+            "mrp_per_ml": None,
+            "mrp_source": None,
+            "form": None,
+            "functional_categories": [],
+            "main_category": None,
+            "subcategory": None,
+            "application": [],
+            "keywords": {
+                "product_formulation": [],
+                "mrp": [],
+                "application": [],
+                "functionality": []
+            }
+        }
+    
+    print(f"    [AI Structured Analysis] Analyzing product information...")
+    
+    # Build ingredients text
+    ingredients_text = "\n".join(f"- {ing}" for ing in ingredients[:50])
+    
+    # Build context text
+    context_parts = []
+    if url:
+        context_parts.append(f"**PRODUCT URL: {url}**")
+    if product_name:
+        context_parts.append(f"**PRODUCT NAME: {product_name}**")
+    if scraped_price:
+        context_parts.append(f"**SCRAPED PRICE: ₹{scraped_price}**")
+    if extracted_text:
+        context_parts.append(f"**EXTRACTED TEXT (first 1000 chars):\n{extracted_text[:1000]}**")
+    
+    context = "\n\n".join(context_parts) if context_parts else ""
+    
+    system_prompt = """You are an expert cosmetic product analyst. Extract structured product information from the provided data.
+
+Your task is to analyze the product and return ONLY a valid JSON object with the following structure:
+{
+  "active_ingredients": [
+    {"name": "Niacinamide", "percentage": "10%"},
+    {"name": "Hyaluronic Acid", "percentage": "2%"}
+  ],
+  "mrp": 1299.00,
+  "mrp_per_ml": 12.99,
+  "mrp_source": "scraped" | "ai_estimated",
+  "form": "serum",
+  "functional_categories": ["brightening", "moisturizing", "anti_aging"],
+  "main_category": "skincare",
+  "subcategory": "face_serum",
+  "application": ["night_cream", "brightening", "daily_use"],
+  "keywords": {
+    "product_formulation": ["serum", "water_based", "lightweight"],
+    "mrp": ["premium", "mid_range"],
+    "application": ["night_cream", "brightening", "daily_use"],
+    "functionality": ["brightening", "moisturizing", "acne_treatment"]
+  }
+}
+
+RULES:
+1. **active_ingredients**: Extract active ingredients with percentages if mentioned. If percentage not available, set to null.
+   - Look for patterns like "Niacinamide 10%", "Vitamin C 20%", "Retinol 0.5%"
+   - Only include ingredients with therapeutic/active properties (not excipients)
+
+2. **mrp**: 
+   - If scraped_price is provided, use it as mrp
+   - If not, estimate based on product type, brand, and market standards
+   - For serums: typically ₹500-3000
+   - For creams: typically ₹300-2000
+   - For cleansers: typically ₹200-1500
+   - Set mrp_source to "scraped" if scraped_price provided, else "ai_estimated"
+
+3. **mrp_per_ml**: Calculate mrp / volume (if volume can be inferred from product name/description)
+   - Common sizes: 30ml, 50ml, 100ml, 200ml
+   - If volume unknown, estimate based on product type (serums usually 30ml, creams 50ml)
+
+4. **form**: Single value from: "cream", "lotion", "serum", "gel", "toner", "cleanser", "shampoo", "conditioner", "mask", "scrub", "oil", "balm", "foam", "mist", "essence", "emulsion"
+   - Determine from product name, description, or subcategory
+
+5. **functional_categories**: Array of functional benefits from: "moisturizing", "brightening", "anti_aging", "acne_treatment", "soothing", "exfoliating", "cleansing", "sunscreen", "hair_repair", "volumizing", "color_protection", "dandruff_control", "lip_care", "body_care"
+   - Extract from ingredients (e.g., Niacinamide → brightening, Hyaluronic Acid → moisturizing)
+   - Extract from product claims/description
+
+6. **main_category**: "skincare", "haircare", "lipcare", "bodycare"
+   - Determine from product name, URL, or ingredient profile
+
+7. **subcategory**: Specific product type (e.g., "face_serum", "cleanser", "shampoo")
+   - Be specific and use lowercase with underscores
+
+8. **application**: Array from: "night_cream", "day_cream", "sun_protection", "brightening", "anti_aging", "moisturizing", "cleansing", "exfoliating", "repair", "volumizing", "smoothing", "color_protection", "damage_repair", "hair_growth", "dandruff_control", "lip_balm", "lip_tint", "body_moisturizer", "body_scrub"
+   - Extract from product name, description, or claims
+
+9. **keywords**: Organize keywords by category:
+   - **product_formulation**: Form-related keywords (e.g., "serum", "water_based", "oil_free", "gel_texture", "lightweight")
+   - **mrp**: Price range keywords (e.g., "premium" for >2000, "mid_range" for 500-2000, "budget" for <500, "luxury", "affordable")
+   - **application**: Use case keywords (same as application field)
+   - **functionality**: Functional benefit keywords (same as functional_categories)
+
+Return ONLY valid JSON, no markdown code blocks, no explanations."""
+
+    user_prompt = f"""Extract structured product information from this data:
+
+{context}
+
+INGREDIENTS:
+{ingredients_text}
+
+Extract all fields as specified in the system prompt. Return ONLY the JSON object."""
+
+    try:
+        max_tokens = 4096 if "claude-3-opus-20240229" in claude_model else 8192
+        
+        response = claude_client.messages.create(
+            model=claude_model,
+            max_tokens=max_tokens,
+            temperature=0.2,
+            system=system_prompt,
+            messages=[
+                {"role": "user", "content": user_prompt}
+            ]
+        )
+        
+        if not response.content or len(response.content) == 0:
+            raise ValueError("Empty response from AI")
+        
+        content = response.content[0].text.strip()
+        
+        # Remove markdown code blocks if present
+        if "```json" in content:
+            content = content.split("```json")[1].split("```")[0].strip()
+        elif "```" in content:
+            content = content.split("```")[1].split("```")[0].strip()
+        
+        result = json.loads(content)
+        
+        # Ensure keywords structure exists
+        if "keywords" not in result:
+            result["keywords"] = {
+                "product_formulation": [],
+                "mrp": [],
+                "application": [],
+                "functionality": []
+            }
+        
+        # Ensure all keyword categories exist
+        keywords = result.get("keywords", {})
+        if "product_formulation" not in keywords:
+            keywords["product_formulation"] = []
+        if "mrp" not in keywords:
+            keywords["mrp"] = []
+        if "application" not in keywords:
+            keywords["application"] = []
+        if "functionality" not in keywords:
+            keywords["functionality"] = []
+        
+        # Populate mrp_source if not set
+        if "mrp_source" not in result:
+            result["mrp_source"] = "scraped" if scraped_price else "ai_estimated"
+        
+        # Ensure arrays are lists
+        for field in ["active_ingredients", "functional_categories", "application"]:
+            if field in result and not isinstance(result[field], list):
+                result[field] = []
+        
+        print(f"    ✅ AI Structured Analysis completed")
+        return result
+        
+    except json.JSONDecodeError as e:
+        print(f"    ⚠️  Error parsing AI response as JSON: {e}")
+        print(f"    Response was: {content[:200] if 'content' in locals() else 'N/A'}")
+        return {
+            "active_ingredients": [],
+            "mrp": None,
+            "mrp_per_ml": None,
+            "mrp_source": None,
+            "form": None,
+            "functional_categories": [],
+            "main_category": None,
+            "subcategory": None,
+            "application": [],
+            "keywords": {
+                "product_formulation": [],
+                "mrp": [],
+                "application": [],
+                "functionality": []
+            }
+        }
+    except Exception as e:
+        print(f"    ⚠️  Error calling Claude AI: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "active_ingredients": [],
+            "mrp": None,
+            "mrp_per_ml": None,
+            "mrp_source": None,
+            "form": None,
+            "functional_categories": [],
+            "main_category": None,
+            "subcategory": None,
+            "application": [],
+            "keywords": {
+                "product_formulation": [],
+                "mrp": [],
+                "application": [],
+                "functionality": []
+            }
+        }
