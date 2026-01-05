@@ -517,7 +517,7 @@ class ProductStructuredAnalysis(BaseModel):
     main_category: Optional[str] = Field(None, description="Main category: skincare, haircare, lipcare, bodycare")
     subcategory: Optional[str] = Field(None, description="Subcategory/product type")
     application: List[str] = Field(default_factory=list, description="Application types as keywords")
-    keywords: ProductKeywords = Field(..., description="Keywords organized by feature category")
+    # Note: keywords removed from here to avoid redundancy - use available_keywords in response instead
 
 
 class ProductAnalysisRequest(BaseModel):
