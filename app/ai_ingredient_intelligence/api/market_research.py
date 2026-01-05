@@ -788,8 +788,7 @@ async def market_research_analyze(
             functional_categories=structured_data.get("functional_categories", []),
             main_category=structured_data.get("main_category"),
             subcategory=structured_data.get("subcategory"),
-            application=structured_data.get("application", []),
-            keywords=keywords
+            application=structured_data.get("application", [])
         )
         
         # Auto-save to history if name provided
@@ -962,6 +961,10 @@ async def market_research_products_paginated(
             )
         
         # Convert to schemas
+        # Remove 'keywords' from structured_analysis_dict if present (for backward compatibility with old records)
+        if isinstance(structured_analysis_dict, dict) and "keywords" in structured_analysis_dict:
+            structured_analysis_dict = {k: v for k, v in structured_analysis_dict.items() if k != "keywords"}
+        
         structured_analysis = ProductStructuredAnalysis(**structured_analysis_dict)
         selected_keywords = ProductKeywords(**selected_keywords_dict) if selected_keywords_dict else None
         
@@ -2046,12 +2049,39 @@ async def market_research(
         print(f"\n{'='*60}")
         print("Generating Market Research Overview...")
         print(f"{'='*60}")
+        
+        # Get selected_keywords and structured_analysis for overview if available
+        selected_keywords_for_overview = None
+        structured_analysis_for_overview = None
+        
+        # Check if selected_keywords provided in payload
+        selected_keywords_payload = payload.get("selected_keywords")
+        if selected_keywords_payload:
+            selected_keywords_for_overview = selected_keywords_payload
+        
+        # Get structured_analysis from history if available
+        if history_id and user_id_value:
+            try:
+                existing_item = await market_research_history_col.find_one({
+                    "_id": ObjectId(history_id),
+                    "user_id": user_id_value
+                })
+                if existing_item:
+                    structured_analysis_for_overview = existing_item.get("structured_analysis")
+                    # Remove 'keywords' if present (backward compatibility)
+                    if isinstance(structured_analysis_for_overview, dict) and "keywords" in structured_analysis_for_overview:
+                        structured_analysis_for_overview = {k: v for k, v in structured_analysis_for_overview.items() if k != "keywords"}
+            except:
+                pass
+        
         try:
             market_research_overview = await generate_market_research_overview_with_ai(
                 ingredients,
                 matched_products[:50],  # Use top 50 for overview generation
                 category_info,
-                total_matched_count
+                total_matched_count,
+                selected_keywords=selected_keywords_for_overview,
+                structured_analysis=structured_analysis_for_overview
             )
             # Ensure overview is never None (function should always return a string)
             if not market_research_overview:
@@ -2123,14 +2153,32 @@ async def market_research(
             total_pages=1
         )
         
-        # 🔹 Auto-save: Update history with completed status and research_result
-        if history_id and user_id_value:
+        # 🔹 Auto-save: Create or update history with completed status and research_result
+        if user_id_value:
             try:
                 # Convert response to dict for storage
                 research_result_dict = response.dict()
                 # ⚠️ IMPORTANT: Save ALL products, not just paginated ones for proper pagination later
                 research_result_dict["products"] = matched_products  # Save all products, not paginated_products
                 
+                # Get structured_analysis and available_keywords from history if history_id provided
+                structured_analysis_dict = None
+                available_keywords_dict = None
+                
+                if history_id:
+                    existing_item = await market_research_history_col.find_one({
+                        "_id": ObjectId(history_id),
+                        "user_id": user_id_value
+                    })
+                    if existing_item:
+                        structured_analysis_dict = existing_item.get("structured_analysis")
+                        available_keywords_dict = existing_item.get("available_keywords")
+                        
+                        # Remove 'keywords' from structured_analysis_dict if present (for backward compatibility)
+                        if isinstance(structured_analysis_dict, dict) and "keywords" in structured_analysis_dict:
+                            structured_analysis_dict = {k: v for k, v in structured_analysis_dict.items() if k != "keywords"}
+                
+                # Build update/create document
                 update_doc = {
                     "research_result": research_result_dict,
                     "ai_analysis": ai_analysis_message,
@@ -2141,16 +2189,54 @@ async def market_research(
                     "category_confidence": category_confidence
                 }
                 
-                await market_research_history_col.update_one(
-                    {"_id": ObjectId(history_id), "user_id": user_id_value},
-                    {"$set": update_doc}
-                )
-                print(f"[AUTO-SAVE] Updated history {history_id} with research results (saved {len(matched_products)} total products)")
+                # Add structured_analysis and keywords if available from history
+                if structured_analysis_dict:
+                    update_doc["structured_analysis"] = structured_analysis_dict
+                if available_keywords_dict:
+                    update_doc["available_keywords"] = available_keywords_dict
+                
+                # Save selected_keywords if provided in payload
+                selected_keywords_payload = payload.get("selected_keywords")
+                if selected_keywords_payload:
+                    try:
+                        selected_keywords_obj = ProductKeywords(**selected_keywords_payload)
+                        update_doc["selected_keywords"] = selected_keywords_obj.model_dump()
+                    except Exception as e:
+                        print(f"[AUTO-SAVE] Warning: Could not parse selected_keywords: {e}")
+                
+                if history_id:
+                    # Update existing history
+                    await market_research_history_col.update_one(
+                        {"_id": ObjectId(history_id), "user_id": user_id_value},
+                        {"$set": update_doc}
+                    )
+                    print(f"[AUTO-SAVE] Updated history {history_id} with research results (saved {len(matched_products)} total products)")
+                elif name:
+                    # Create new history item
+                    history_doc = {
+                        "user_id": user_id_value,
+                        "name": name,
+                        "tag": tag,
+                        "input_type": input_type,
+                        "input_data": input_data_value,
+                        "notes": notes,
+                        "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat(),
+                        **update_doc
+                    }
+                    result = await market_research_history_col.insert_one(history_doc)
+                    history_id = str(result.inserted_id)
+                    print(f"[AUTO-SAVE] Created new history {history_id} with research results (saved {len(matched_products)} total products)")
             except Exception as e:
-                print(f"[AUTO-SAVE] Warning: Failed to update history: {e}")
+                print(f"[AUTO-SAVE] Warning: Failed to save/update history: {e}")
                 import traceback
                 traceback.print_exc()
                 # Don't fail the response if saving fails
+        
+        # Add history_id to response if available (convert to dict to add extra field)
+        if history_id:
+            response_dict = response.dict()
+            response_dict["history_id"] = history_id
+            return response_dict
         
         return response
         
@@ -2835,14 +2921,32 @@ async def market_research_products(
             total_pages=total_pages
         )
         
-        # 🔹 Auto-save: Update history with completed status and research_result
-        if history_id and user_id_value:
+        # 🔹 Auto-save: Create or update history with completed status and research_result
+        if user_id_value:
             try:
                 # Convert response to dict for storage
                 research_result_dict = response.dict()
                 # ⚠️ IMPORTANT: Save ALL products, not just paginated ones for proper pagination later
                 research_result_dict["products"] = matched_products  # Save all products, not paginated_products
                 
+                # Get structured_analysis and available_keywords from history if history_id provided
+                structured_analysis_dict = None
+                available_keywords_dict = None
+                
+                if history_id:
+                    existing_item = await market_research_history_col.find_one({
+                        "_id": ObjectId(history_id),
+                        "user_id": user_id_value
+                    })
+                    if existing_item:
+                        structured_analysis_dict = existing_item.get("structured_analysis")
+                        available_keywords_dict = existing_item.get("available_keywords")
+                        
+                        # Remove 'keywords' from structured_analysis_dict if present (for backward compatibility)
+                        if isinstance(structured_analysis_dict, dict) and "keywords" in structured_analysis_dict:
+                            structured_analysis_dict = {k: v for k, v in structured_analysis_dict.items() if k != "keywords"}
+                
+                # Build update/create document
                 update_doc = {
                     "research_result": research_result_dict,
                     "ai_analysis": ai_analysis_message,
@@ -2853,16 +2957,54 @@ async def market_research_products(
                     "category_confidence": category_confidence
                 }
                 
-                await market_research_history_col.update_one(
-                    {"_id": ObjectId(history_id), "user_id": user_id_value},
-                    {"$set": update_doc}
-                )
-                print(f"[AUTO-SAVE] Updated history {history_id} with research results (saved {len(matched_products)} total products)")
+                # Add structured_analysis and keywords if available from history
+                if structured_analysis_dict:
+                    update_doc["structured_analysis"] = structured_analysis_dict
+                if available_keywords_dict:
+                    update_doc["available_keywords"] = available_keywords_dict
+                
+                # Save selected_keywords if provided in payload
+                selected_keywords_payload = payload.get("selected_keywords")
+                if selected_keywords_payload:
+                    try:
+                        selected_keywords_obj = ProductKeywords(**selected_keywords_payload)
+                        update_doc["selected_keywords"] = selected_keywords_obj.model_dump()
+                    except Exception as e:
+                        print(f"[AUTO-SAVE] Warning: Could not parse selected_keywords: {e}")
+                
+                if history_id:
+                    # Update existing history
+                    await market_research_history_col.update_one(
+                        {"_id": ObjectId(history_id), "user_id": user_id_value},
+                        {"$set": update_doc}
+                    )
+                    print(f"[AUTO-SAVE] Updated history {history_id} with research results (saved {len(matched_products)} total products)")
+                elif name:
+                    # Create new history item
+                    history_doc = {
+                        "user_id": user_id_value,
+                        "name": name,
+                        "tag": tag,
+                        "input_type": input_type,
+                        "input_data": input_data_value,
+                        "notes": notes,
+                        "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat(),
+                        **update_doc
+                    }
+                    result = await market_research_history_col.insert_one(history_doc)
+                    history_id = str(result.inserted_id)
+                    print(f"[AUTO-SAVE] Created new history {history_id} with research results (saved {len(matched_products)} total products)")
             except Exception as e:
-                print(f"[AUTO-SAVE] Warning: Failed to update history: {e}")
+                print(f"[AUTO-SAVE] Warning: Failed to save/update history: {e}")
                 import traceback
                 traceback.print_exc()
                 # Don't fail the response if saving fails
+        
+        # Add history_id to response if available (convert to dict to add extra field)
+        if history_id:
+            response_dict = response.dict()
+            response_dict["history_id"] = history_id
+            return response_dict
         
         return response
         
@@ -3150,12 +3292,35 @@ async def market_research_overview(
         print("Generating Market Research Overview...")
         print(f"{'='*60}")
         
+        # Get selected_keywords and structured_analysis from history if available
+        selected_keywords_for_overview = None
+        structured_analysis_for_overview = None
+        history_id_for_overview = payload.get("history_id")
+        user_id_for_overview = current_user.get("user_id") or current_user.get("_id")
+        
+        if history_id_for_overview and user_id_for_overview:
+            try:
+                existing_item = await market_research_history_col.find_one({
+                    "_id": ObjectId(history_id_for_overview),
+                    "user_id": user_id_for_overview
+                })
+                if existing_item:
+                    selected_keywords_for_overview = existing_item.get("selected_keywords")
+                    structured_analysis_for_overview = existing_item.get("structured_analysis")
+                    # Remove 'keywords' if present (backward compatibility)
+                    if isinstance(structured_analysis_for_overview, dict) and "keywords" in structured_analysis_for_overview:
+                        structured_analysis_for_overview = {k: v for k, v in structured_analysis_for_overview.items() if k != "keywords"}
+            except:
+                pass
+        
         try:
             market_research_overview = await generate_market_research_overview_with_ai(
                 ingredients,
                 matched_products,
                 category_info,
-                total_matched
+                total_matched,
+                selected_keywords=selected_keywords_for_overview,
+                structured_analysis=structured_analysis_for_overview
             )
             
             if not market_research_overview:

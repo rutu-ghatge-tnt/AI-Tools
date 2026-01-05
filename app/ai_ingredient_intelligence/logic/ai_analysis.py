@@ -32,6 +32,107 @@ else:
     claude_client = None
 
 
+# ============================================================================
+# KEYWORD CLEANING AND NORMALIZATION FUNCTIONS
+# ============================================================================
+
+def normalize_mrp_keyword(mrp: Optional[float]) -> str:
+    """
+    Normalize MRP to a single fixed keyword based on price ranges.
+    
+    Fixed MRP ranges:
+    - "budget": < 500
+    - "mid_range": 500 - 2000
+    - "premium": 2000 - 5000
+    - "luxury": > 5000
+    
+    Returns a single keyword string.
+    """
+    if mrp is None:
+        return "mid_range"  # Default
+    
+    if mrp < 500:
+        return "budget"
+    elif mrp < 2000:
+        return "mid_range"
+    elif mrp < 5000:
+        return "premium"
+    else:
+        return "luxury"
+
+
+def deduplicate_keywords(keywords_list: List[str]) -> List[str]:
+    """
+    Remove duplicate keywords that mean the same thing.
+    Handles synonyms and case-insensitive duplicates.
+    """
+    if not keywords_list:
+        return []
+    
+    # Normalize keywords (lowercase, strip)
+    normalized_map = {}
+    seen_normalized = set()
+    result = []
+    
+    # Common synonym mappings (add more as needed)
+    synonym_map = {
+        "affordable": "budget",
+        "cheap": "budget",
+        "economy": "budget",
+        "expensive": "premium",
+        "high_end": "premium",
+        "luxurious": "luxury",
+        "high_end": "luxury",
+        "mid_price": "mid_range",
+        "moderate": "mid_range",
+        "medium": "mid_range",
+    }
+    
+    for keyword in keywords_list:
+        if not keyword or not isinstance(keyword, str):
+            continue
+        
+        # Normalize
+        normalized = keyword.strip().lower()
+        if not normalized:
+            continue
+        
+        # Check if it's a synonym
+        canonical = synonym_map.get(normalized, normalized)
+        
+        # Only add if we haven't seen this canonical form
+        if canonical not in seen_normalized:
+            seen_normalized.add(canonical)
+            # Keep original casing from first occurrence
+            normalized_map[canonical] = keyword.strip()
+            result.append(keyword.strip())
+    
+    return result
+
+
+def clean_keywords(keywords_dict: Dict[str, List[str]], mrp: Optional[float] = None) -> Dict[str, List[str]]:
+    """
+    Clean and normalize keywords:
+    1. Deduplicate keywords in each category
+    2. Normalize MRP to a single fixed keyword
+    
+    Args:
+        keywords_dict: Dictionary with keyword categories
+        mrp: MRP value for normalization
+    
+    Returns:
+        Cleaned keywords dictionary
+    """
+    cleaned = {
+        "product_formulation": deduplicate_keywords(keywords_dict.get("product_formulation", [])),
+        "mrp": [normalize_mrp_keyword(mrp)],  # Always single keyword
+        "application": deduplicate_keywords(keywords_dict.get("application", [])),
+        "functionality": deduplicate_keywords(keywords_dict.get("functionality", []))
+    }
+    
+    return cleaned
+
+
 async def analyze_formulation_and_suggest_matching_with_ai(
     original_ingredients: List[str],
     normalized_ingredients: List[str],
@@ -381,10 +482,20 @@ async def generate_market_research_overview_with_ai(
     input_ingredients: List[str],
     matched_products: List[Dict],
     category_info: Dict[str, any],
-    total_matched: int
+    total_matched: int,
+    selected_keywords: Optional[Dict[str, List[str]]] = None,
+    structured_analysis: Optional[Dict[str, any]] = None
 ) -> str:
     """
     Use Claude AI to generate a concluding overview of the market research.
+    
+    Args:
+        input_ingredients: List of input ingredients
+        matched_products: List of matched products
+        category_info: Category information dict
+        total_matched: Total number of matched products
+        selected_keywords: Optional selected keywords used for filtering (ProductKeywords format)
+        structured_analysis: Optional structured analysis data
     
     Returns a comprehensive overview string summarizing the research findings.
     Always returns a string, never None.
@@ -437,6 +548,30 @@ TONE:
 OUTPUT FORMAT:
 Return a well-structured text overview (not JSON). Use clear sections and bullet points where appropriate."""
 
+    # Build selected keywords section if provided
+    selected_keywords_section = ""
+    if selected_keywords:
+        selected_keywords_section = f"""
+SELECTED KEYWORDS (used for filtering):
+- Product Formulation: {', '.join(selected_keywords.get('product_formulation', [])) or 'None'}
+- MRP Range: {', '.join(selected_keywords.get('mrp', [])) or 'None'}
+- Application: {', '.join(selected_keywords.get('application', [])) or 'None'}
+- Functionality: {', '.join(selected_keywords.get('functionality', [])) or 'None'}
+"""
+    
+    # Build structured analysis section if provided
+    structured_analysis_section = ""
+    if structured_analysis:
+        structured_analysis_section = f"""
+PRODUCT ANALYSIS:
+- Form: {structured_analysis.get('form', 'Unknown')}
+- Main Category: {structured_analysis.get('main_category', 'Unknown')}
+- Subcategory: {structured_analysis.get('subcategory', 'Unknown')}
+- MRP: ₹{structured_analysis.get('mrp', 'N/A')} ({structured_analysis.get('mrp_source', 'unknown')} source)
+- Functional Categories: {', '.join(structured_analysis.get('functional_categories', [])) or 'None'}
+- Application Types: {', '.join(structured_analysis.get('application', [])) or 'None'}
+"""
+    
     user_prompt = f"""Generate a comprehensive market research overview based on the following data:
 
 INPUT PRODUCT INGREDIENTS:
@@ -446,19 +581,19 @@ CATEGORY ANALYSIS:
 - Primary Category: {category_info.get('primary_category', 'Unknown')}
 - Subcategory: {category_info.get('subcategory', 'Unknown')}
 - Interpretation: {category_info.get('interpretation', 'N/A')}
-
+{structured_analysis_section}{selected_keywords_section}
 MATCHED PRODUCTS ({total_matched} total, showing top {len(product_summaries)}):
 {json.dumps(product_summaries, indent=2)}
 
 TASK:
 Generate a comprehensive market research overview that includes:
-1. Summary of the research
+1. Summary of the research (mention selected keywords if provided)
 2. Key findings about the market
-3. Product trends and patterns
-4. Market insights
-5. Recommendations
+3. Product trends and patterns (consider the selected keywords/filters applied)
+4. Market insights (relate to the filtering criteria if keywords were selected)
+5. Recommendations (based on the filtered results and selected criteria)
 
-Make it insightful, professional, and actionable."""
+Make it insightful, professional, and actionable. If keywords were selected for filtering, acknowledge how they influenced the results."""
 
     try:
         max_tokens = 4096 if "claude-3-opus-20240229" in claude_model else 8192
@@ -708,7 +843,7 @@ Your task is to analyze the product and return ONLY a valid JSON object with the
   "application": ["night_cream", "brightening", "daily_use"],
   "keywords": {
     "product_formulation": ["serum", "water_based", "lightweight"],
-    "mrp": ["premium", "mid_range"],
+    "mrp": ["premium"],
     "application": ["night_cream", "brightening", "daily_use"],
     "functionality": ["brightening", "moisturizing", "acne_treatment"]
   }
@@ -749,9 +884,14 @@ RULES:
 
 9. **keywords**: Organize keywords by category:
    - **product_formulation**: Form-related keywords (e.g., "serum", "water_based", "oil_free", "gel_texture", "lightweight")
-   - **mrp**: Price range keywords (e.g., "premium" for >2000, "mid_range" for 500-2000, "budget" for <500, "luxury", "affordable")
-   - **application**: Use case keywords (same as application field)
-   - **functionality**: Functional benefit keywords (same as functional_categories)
+   - **mrp**: MUST return EXACTLY ONE keyword from these fixed options based on MRP value:
+     * "budget" for MRP < 500
+     * "mid_range" for MRP 500-2000
+     * "premium" for MRP 2000-5000
+     * "luxury" for MRP > 5000
+     * Return ONLY ONE keyword, not multiple. Use the exact names above.
+   - **application**: Use case keywords (same as application field) - avoid duplicates
+   - **functionality**: Functional benefit keywords (same as functional_categories) - avoid duplicates
 
 Return ONLY valid JSON, no markdown code blocks, no explanations."""
 
@@ -818,6 +958,10 @@ Extract all fields as specified in the system prompt. Return ONLY the JSON objec
         for field in ["active_ingredients", "functional_categories", "application"]:
             if field in result and not isinstance(result[field], list):
                 result[field] = []
+        
+        # Clean and normalize keywords
+        mrp_value = result.get("mrp")
+        result["keywords"] = clean_keywords(result.get("keywords", {}), mrp_value)
         
         print(f"    ✅ AI Structured Analysis completed")
         return result
