@@ -111,6 +111,7 @@ class CompareProductsResponse(BaseModel):
     """Response schema for product comparison - supports multiple products"""
     products: List[ProductComparisonItem] = Field(..., description="List of compared products")
     processing_time: float = Field(..., description="Time taken for comparison (in seconds)")
+    id: Optional[str] = Field(None, description="History ID if the comparison was saved")
 
 
 # ============================================================================

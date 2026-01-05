@@ -2777,17 +2777,6 @@ CRITICAL: NEVER use null. Always provide a value (even if it's "Unknown" for tex
         # Calculate processing time
         processing_time = time.time() - start
         
-        # Convert to ProductComparisonItem objects
-        product_items = [ProductComparisonItem(**product_data) for product_data in final_products_data]
-        
-        # Build response
-        response_data = {
-            "products": product_items,
-            "processing_time": processing_time
-        }
-        
-        response = CompareProductsResponse(**response_data)
-        
         # 🔹 Auto-save: Save initial state with "in_progress" status if user_id provided and no existing history_id
         # Name is required for auto-save
         if user_id_value and not history_id:
@@ -2849,6 +2838,18 @@ CRITICAL: NEVER use null. Always provide a value (even if it's "Unknown" for tex
                 import traceback
                 traceback.print_exc()
                 # Continue without history_id
+        
+        # Convert to ProductComparisonItem objects
+        product_items = [ProductComparisonItem(**product_data) for product_data in final_products_data]
+        
+        # Build response with history_id included
+        response_data = {
+            "products": product_items,
+            "processing_time": processing_time,
+            "id": history_id if history_id else None
+        }
+        
+        response = CompareProductsResponse(**response_data)
         
         # 🔹 Auto-save: Update history with "completed" status and comparison_result
         if history_id and user_id_value:
