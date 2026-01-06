@@ -1,5 +1,5 @@
 from typing import List, Optional, Union, Dict, Any
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_serializer
 from fastapi import UploadFile
 
 class AnalyzeInciRequest(BaseModel):
@@ -133,6 +133,10 @@ class CreateWishRequest(BaseModel):
     fragrance: Optional[str] = Field(None, description="Fragrance preference: none, light, moderate, any")
     notes: Optional[str] = Field(None, description="Additional notes or requirements")
     preferences: Optional[Dict[str, Any]] = Field(default_factory=dict, description="User preferences including keyIngredients, avoidIngredients, claims")
+    # Auto-save fields (optional)
+    name: Optional[str] = Field(None, description="Name for saving to history (required for auto-save)")
+    tag: Optional[str] = Field(None, description="Tag for categorization")
+    history_id: Optional[str] = Field(None, description="Existing history ID to update (optional)")
 
 
 class FormulaIngredient(BaseModel):
@@ -187,6 +191,7 @@ class GenerateFormulaResponse(BaseModel):
     insights: List[FormulaInsight]
     warnings: List[FormulaWarning]
     compliance: FormulaCompliance
+    history_id: Optional[str] = Field(None, description="History item ID (MongoDB ObjectId) - returned when history is auto-saved")
 
 
 class DecodeHistoryItemSummary(BaseModel):
@@ -526,6 +531,25 @@ class ProductKeywords(BaseModel):
     functional_categories: List[str] = Field(default_factory=list, description="Functional categories as keywords (legacy)")
     main_category: Optional[str] = Field(None, description="Main category: skincare, haircare, lipcare, bodycare (legacy)")
     subcategory: Optional[str] = Field(None, description="Subcategory/product type (legacy)")
+    
+    @model_serializer
+    def serialize_model(self):
+        """Custom serializer that excludes empty arrays and None values"""
+        # Access fields directly to avoid recursion
+        result = {}
+        for field_name, field_value in self.__dict__.items():
+            # Skip None values
+            if field_value is None:
+                continue
+            # Skip empty lists
+            if isinstance(field_value, list) and len(field_value) == 0:
+                continue
+            result[field_name] = field_value
+        return result
+    
+    def model_dump_exclude_empty(self) -> dict:
+        """Return model dict with empty arrays and None values excluded"""
+        return self.serialize_model()
 
 
 class ProductStructuredAnalysis(BaseModel):
@@ -620,6 +644,11 @@ class MakeWishRequest(BaseModel):
     claims: List[str] = Field(default_factory=list, description="Product claims to support (e.g., Vegan, Dermatologist-tested)")
     targetAudience: List[str] = Field(default_factory=list, description="Target audience (e.g., oily-skin, young-adults)")
     additionalNotes: Optional[str] = Field(None, description="Additional notes or requirements")
+    # Auto-save fields (optional)
+    name: Optional[str] = Field(None, description="Name for saving to history (required for auto-save)")
+    tag: Optional[str] = Field(None, description="Tag for categorization")
+    notes: Optional[str] = Field(None, description="User notes for this wish")
+    history_id: Optional[str] = Field(None, description="Existing history ID to update (optional)")
 
 
 class MakeWishResponse(BaseModel):
@@ -631,6 +660,7 @@ class MakeWishResponse(BaseModel):
     cost_analysis: Dict[str, Any] = Field(..., description="Stage 4: Cost analysis and pricing recommendations")
     compliance: Dict[str, Any] = Field(..., description="Stage 5: Regulatory compliance check")
     metadata: Dict[str, Any] = Field(..., description="Metadata about the generation process")
+    history_id: Optional[str] = Field(None, description="History item ID (MongoDB ObjectId) - returned when history is auto-saved")
 
 
 # ============================================================================

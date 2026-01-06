@@ -22,6 +22,7 @@ STAGES:
 from fastapi import APIRouter, HTTPException, Header, Depends
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone, timedelta
+from bson import ObjectId
 import time
 
 # Import authentication - Using JWT tokens
@@ -38,6 +39,7 @@ from app.ai_ingredient_intelligence.models.schemas import (
     MakeWishRequest,
     MakeWishResponse
 )
+from app.ai_ingredient_intelligence.db.collections import wish_history_col
 
 router = APIRouter(prefix="/make-wish", tags=["Make a Wish"])
 
@@ -49,6 +51,9 @@ async def generate_make_wish_formula(
 ):
     """
     Generate a cosmetic formulation using the complete 5-stage "Make a Wish" AI pipeline.
+    
+    AUTO-SAVE: Results are automatically saved to wish history if user is authenticated.
+    Provide optional "name" and "tag" in request to customize the saved history item.
     
     REQUEST BODY:
     {
@@ -62,7 +67,11 @@ async def generate_make_wish_formula(
         "texture": "lightweight",
         "claims": ["Vegan", "Dermatologist-tested"],
         "targetAudience": ["oily-skin", "young-adults"],
-        "additionalNotes": "Additional requirements"
+        "additionalNotes": "Additional requirements",
+        "name": "Formula Name" (optional, for auto-saving),
+        "tag": "optional-tag" (optional),
+        "notes": "User notes" (optional),
+        "history_id": "existing_history_id" (optional, to update existing history)
     }
     
     RESPONSE:
@@ -72,12 +81,43 @@ async def generate_make_wish_formula(
     - Manufacturing process
     - Cost analysis
     - Compliance check
+    - history_id (if auto-saved)
     """
     start_time = time.time()
     
+    # 🔹 Auto-save: Extract user info and required name/tag for history
+    user_id_value = current_user.get("user_id") or current_user.get("_id")
+    name = request.name.strip() if request.name else ""
+    tag = request.tag
+    notes = request.notes  # This is the notes field from MakeWishRequest (for history)
+    provided_history_id = request.history_id
+    history_id = None
+    
+    # Validate name is provided if auto-save is enabled (user_id is present) and no existing history_id
+    if user_id_value and not provided_history_id and not name:
+        raise HTTPException(status_code=400, detail="name is required for auto-save")
+    
+    # Validate history_id if provided
+    if provided_history_id:
+        try:
+            if ObjectId.is_valid(provided_history_id):
+                existing_item = await wish_history_col.find_one({
+                    "_id": ObjectId(provided_history_id),
+                    "user_id": user_id_value
+                })
+                if existing_item:
+                    history_id = provided_history_id
+                    print(f"[AUTO-SAVE] Using existing history_id: {history_id}")
+                else:
+                    print(f"[AUTO-SAVE] Warning: Provided history_id {provided_history_id} not found or doesn't belong to user, creating new one")
+            else:
+                print(f"[AUTO-SAVE] Warning: Invalid history_id format: {provided_history_id}, creating new one")
+        except Exception as e:
+            print(f"[AUTO-SAVE] Warning: Error validating history_id: {e}, creating new one")
+    
     try:
-        # Convert Pydantic model to dict
-        wish_data = request.model_dump()
+        # Convert Pydantic model to dict (exclude autosave fields from wish_data)
+        wish_data = request.model_dump(exclude={"name", "tag", "notes", "history_id"})
         
         # Validate required fields
         if not wish_data.get("productType"):
@@ -148,6 +188,59 @@ async def generate_make_wish_formula(
         print(f"   Hero Ingredients: {', '.join(wish_data.get('heroIngredients', []))}")
         print(f"   Cost Range: ₹{wish_data['costMin']} - ₹{wish_data['costMax']}/100g")
         
+        # Create a unique identifier for the wish data to check for duplicates
+        # Use a combination of key fields to identify similar wishes
+        import json
+        wish_data_for_comparison = {
+            "category": wish_data.get("category"),
+            "productType": wish_data.get("productType"),
+            "benefits": sorted(wish_data.get("benefits", [])),
+            "exclusions": sorted(wish_data.get("exclusions", [])),
+            "heroIngredients": sorted(wish_data.get("heroIngredients", [])),
+            "costMin": wish_data.get("costMin"),
+            "costMax": wish_data.get("costMax"),
+            "texture": wish_data.get("texture")
+        }
+        wish_data_hash = json.dumps(wish_data_for_comparison, sort_keys=True)
+        
+        # 🔹 Auto-save: Save initial state with "in_progress" status if user_id provided and no existing history_id
+        if user_id_value and not history_id:
+            try:
+                # Check if a history item with the same wish data already exists for this user
+                existing_history_item = await wish_history_col.find_one({
+                    "user_id": user_id_value,
+                    "wish_data_hash": wish_data_hash
+                }, sort=[("created_at", -1)])  # Get the most recent one
+                
+                if existing_history_item:
+                    history_id = str(existing_history_item["_id"])
+                    print(f"[AUTO-SAVE] Found existing history item with same wish data, reusing history_id: {history_id}")
+                else:
+                    # Name is required - already validated above
+                    # Truncate if too long
+                    if len(name) > 100:
+                        name = name[:100]
+                    
+                    # Save initial state
+                    history_doc = {
+                        "user_id": user_id_value,
+                        "name": name,
+                        "tag": tag,
+                        "notes": notes,
+                        "wish_data": wish_data,
+                        "wish_data_hash": wish_data_hash,
+                        "status": "in_progress",
+                        "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
+                    }
+                    result = await wish_history_col.insert_one(history_doc)
+                    history_id = str(result.inserted_id)
+                    print(f"[AUTO-SAVE] Saved initial state with history_id: {history_id}")
+            except Exception as e:
+                print(f"[AUTO-SAVE] Warning: Failed to save initial state: {e}")
+                import traceback
+                traceback.print_exc()
+                # Continue with generation even if saving fails
+        
         # Generate formula using 5-stage pipeline
         try:
             result = await generate_formula_from_wish(wish_data)
@@ -183,6 +276,55 @@ async def generate_make_wish_formula(
         print(f"   Formula Cost: ₹{cost_analysis.get('raw_material_cost', {}).get('total_per_100g', 0)}/100g")
         print(f"   Compliance: {compliance.get('overall_status', 'UNKNOWN')}")
         print(f"   Ingredients: {len(optimized.get('ingredients', []))}")
+        
+        # 🔹 Auto-save: Update history with "completed" status and formula_result
+        if user_id_value and history_id:
+            try:
+                update_doc = {
+                    "formula_result": result,
+                    "status": "completed",
+                    "updated_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
+                }
+                
+                await wish_history_col.update_one(
+                    {"_id": ObjectId(history_id), "user_id": user_id_value},
+                    {"$set": update_doc}
+                )
+                print(f"[AUTO-SAVE] Updated history {history_id} with completed status and formula result")
+            except Exception as e:
+                print(f"[AUTO-SAVE] Warning: Failed to update history: {e}")
+                import traceback
+                traceback.print_exc()
+                # Don't fail the response if saving fails
+        elif user_id_value and name:
+            # Create new history item if we didn't have history_id but have name
+            try:
+                if len(name) > 100:
+                    name = name[:100]
+                
+                history_doc = {
+                    "user_id": user_id_value,
+                    "name": name,
+                    "tag": tag,
+                    "notes": notes,
+                    "wish_data": wish_data,
+                    "wish_data_hash": wish_data_hash,
+                    "formula_result": result,
+                    "status": "completed",
+                    "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
+                }
+                result_insert = await wish_history_col.insert_one(history_doc)
+                history_id = str(result_insert.inserted_id)
+                print(f"[AUTO-SAVE] Created new history {history_id} with completed status and formula result")
+            except Exception as e:
+                print(f"[AUTO-SAVE] Warning: Failed to create history: {e}")
+                import traceback
+                traceback.print_exc()
+                # Don't fail the response if saving fails
+        
+        # Add history_id to result if available
+        if history_id:
+            result["history_id"] = history_id
         
         # Return response
         return MakeWishResponse(**result)

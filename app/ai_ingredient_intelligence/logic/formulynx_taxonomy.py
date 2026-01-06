@@ -10,7 +10,7 @@ Key Distinction:
 - PRODUCT TYPE = Functional category (cleanser, moisturizer, sunscreen, etc.)
 """
 
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 FORMULYNX_CANONICAL_TAXONOMY = {
     # ═══════════════════════════════════════════════════════════════════════════
@@ -574,3 +574,203 @@ def get_all_market_positioning() -> List[dict]:
     """Get all market positioning options"""
     return FORMULYNX_CANONICAL_TAXONOMY["market_positioning"]
 
+
+def get_all_valid_form_ids() -> List[str]:
+    """Get all valid form IDs from taxonomy"""
+    return list(FORMULYNX_CANONICAL_TAXONOMY["forms"].keys())
+
+
+def get_all_valid_target_area_ids() -> List[str]:
+    """Get all valid target area IDs from taxonomy"""
+    return list(FORMULYNX_CANONICAL_TAXONOMY["target_areas"].keys())
+
+
+def get_all_valid_product_type_ids(target_area_id: Optional[str] = None) -> List[str]:
+    """Get all valid product type IDs from taxonomy"""
+    if target_area_id:
+        product_types = get_product_types_for_target_area(target_area_id)
+        return [pt.get("id") for pt in product_types if pt.get("id")]
+    else:
+        # Get all product types across all target areas
+        all_product_types = []
+        for target_area in FORMULYNX_CANONICAL_TAXONOMY["target_areas"].values():
+            for pt in target_area.get("product_types", []):
+                if pt.get("id") and pt.get("id") not in all_product_types:
+                    all_product_types.append(pt.get("id"))
+        return all_product_types
+
+
+def get_all_valid_concern_ids(target_area_id: Optional[str] = None) -> List[str]:
+    """Get all valid concern IDs from taxonomy"""
+    if target_area_id:
+        concerns = get_concerns_for_target_area(target_area_id)
+        return [c.get("id") for c in concerns if c.get("id")]
+    else:
+        # Get all concerns across all target areas
+        all_concerns = []
+        for target_area in FORMULYNX_CANONICAL_TAXONOMY["target_areas"].values():
+            for concern in target_area.get("concerns", []):
+                if concern.get("id") and concern.get("id") not in all_concerns:
+                    all_concerns.append(concern.get("id"))
+        return all_concerns
+
+
+def get_all_valid_benefit_ids(target_area_id: Optional[str] = None) -> List[str]:
+    """Get all valid benefit IDs from taxonomy"""
+    if target_area_id:
+        benefits = get_benefits_for_target_area(target_area_id)
+        return [b.get("id") for b in benefits if b.get("id")]
+    else:
+        # Get all benefits across all target areas
+        all_benefits = []
+        for target_area in FORMULYNX_CANONICAL_TAXONOMY["target_areas"].values():
+            for benefit in target_area.get("benefits", []):
+                if benefit.get("id") and benefit.get("id") not in all_benefits:
+                    all_benefits.append(benefit.get("id"))
+        return all_benefits
+
+
+def get_all_valid_market_positioning_ids() -> List[str]:
+    """Get all valid market positioning IDs from taxonomy"""
+    return [mp.get("id") for mp in FORMULYNX_CANONICAL_TAXONOMY["market_positioning"] if mp.get("id")]
+
+
+def get_all_valid_price_tier_ids() -> List[str]:
+    """Get all valid price tier IDs from taxonomy"""
+    return [pt.get("id") for pt in FORMULYNX_CANONICAL_TAXONOMY["price_tiers"] if pt.get("id")]
+
+
+def validate_and_filter_keywords(keywords_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Validate and filter keyword values against Formulynx taxonomy.
+    Removes invalid values and keeps only taxonomy-compliant ones.
+    
+    Args:
+        keywords_dict: Dictionary with keyword values
+        
+    Returns:
+        Validated and filtered keywords dictionary
+    """
+    validated = {}
+    
+    # Get target_area first (needed for validating other fields)
+    target_area = keywords_dict.get("target_area")
+    
+    # Validate form
+    form = keywords_dict.get("form")
+    valid_forms = get_all_valid_form_ids()
+    if form and form in valid_forms:
+        validated["form"] = form
+    elif form:
+        print(f"    ⚠️  Invalid form ID: {form}, skipping")
+    
+    # Validate product_formulation (array of form IDs)
+    # Remove form from product_formulation to avoid redundancy
+    product_formulation = keywords_dict.get("product_formulation", [])
+    if isinstance(product_formulation, list):
+        validated["product_formulation"] = [f for f in product_formulation if f in valid_forms and f != validated.get("form")]
+        if len(validated["product_formulation"]) < len(product_formulation):
+            invalid = set(product_formulation) - set(validated["product_formulation"])
+            if invalid:
+                print(f"    ⚠️  Invalid/filtered product_formulation IDs: {invalid}, filtered out")
+    else:
+        validated["product_formulation"] = []
+    
+    # Validate target_area
+    valid_target_areas = get_all_valid_target_area_ids()
+    if target_area and target_area in valid_target_areas:
+        validated["target_area"] = target_area
+    elif target_area:
+        print(f"    ⚠️  Invalid target_area ID: {target_area}, skipping")
+    
+    # Validate product_type_id
+    product_type_id = keywords_dict.get("product_type_id")
+    if target_area:
+        valid_product_types = get_all_valid_product_type_ids(target_area)
+    else:
+        valid_product_types = get_all_valid_product_type_ids()
+    
+    if product_type_id and product_type_id in valid_product_types:
+        validated["product_type_id"] = product_type_id
+    elif product_type_id:
+        print(f"    ⚠️  Invalid product_type_id: {product_type_id}, skipping")
+    
+    # Validate concerns (array)
+    concerns = keywords_dict.get("concerns", [])
+    if isinstance(concerns, list):
+        if target_area:
+            valid_concerns = get_all_valid_concern_ids(target_area)
+        else:
+            valid_concerns = get_all_valid_concern_ids()
+        validated["concerns"] = [c for c in concerns if c in valid_concerns]
+        if len(validated["concerns"]) < len(concerns):
+            invalid = set(concerns) - set(validated["concerns"])
+            print(f"    ⚠️  Invalid concern IDs: {invalid}, filtered out")
+    else:
+        validated["concerns"] = []
+    
+    # Validate benefits (array)
+    benefits = keywords_dict.get("benefits", [])
+    if isinstance(benefits, list):
+        if target_area:
+            valid_benefits = get_all_valid_benefit_ids(target_area)
+        else:
+            valid_benefits = get_all_valid_benefit_ids()
+        validated["benefits"] = [b for b in benefits if b in valid_benefits]
+        if len(validated["benefits"]) < len(benefits):
+            invalid = set(benefits) - set(validated["benefits"])
+            print(f"    ⚠️  Invalid benefit IDs: {invalid}, filtered out")
+    else:
+        validated["benefits"] = []
+    
+    # Validate functionality (should match benefits)
+    functionality = keywords_dict.get("functionality", [])
+    if isinstance(functionality, list):
+        # Use same validation as benefits
+        if target_area:
+            valid_benefits = get_all_valid_benefit_ids(target_area)
+        else:
+            valid_benefits = get_all_valid_benefit_ids()
+        validated["functionality"] = [f for f in functionality if f in valid_benefits]
+    else:
+        validated["functionality"] = []
+    
+    # Validate market_positioning (array)
+    market_positioning = keywords_dict.get("market_positioning", [])
+    if isinstance(market_positioning, list):
+        valid_market_positioning = get_all_valid_market_positioning_ids()
+        validated["market_positioning"] = [mp for mp in market_positioning if mp in valid_market_positioning]
+        if len(validated["market_positioning"]) < len(market_positioning):
+            invalid = set(market_positioning) - set(validated["market_positioning"])
+            print(f"    ⚠️  Invalid market_positioning IDs: {invalid}, filtered out")
+    else:
+        validated["market_positioning"] = []
+    
+    # Validate price_tier
+    price_tier = keywords_dict.get("price_tier")
+    valid_price_tiers = get_all_valid_price_tier_ids()
+    if price_tier and price_tier in valid_price_tiers:
+        validated["price_tier"] = price_tier
+    elif price_tier:
+        print(f"    ⚠️  Invalid price_tier ID: {price_tier}, skipping")
+    
+    # Validate mrp (array of price tier IDs)
+    # Remove price_tier from mrp to avoid redundancy
+    mrp = keywords_dict.get("mrp", [])
+    if isinstance(mrp, list):
+        validated["mrp"] = [p for p in mrp if p in valid_price_tiers and p != validated.get("price_tier")]
+        if len(validated["mrp"]) < len(mrp):
+            invalid = set(mrp) - set(validated["mrp"])
+            if invalid:
+                print(f"    ⚠️  Invalid/filtered mrp price tier IDs: {invalid}, filtered out")
+    else:
+        validated["mrp"] = []
+    
+    # Preserve other fields (application, functional_categories, main_category, subcategory) as-is
+    # These are legacy fields and don't need strict taxonomy validation
+    validated["application"] = keywords_dict.get("application", [])
+    validated["functional_categories"] = keywords_dict.get("functional_categories", [])
+    validated["main_category"] = keywords_dict.get("main_category")
+    validated["subcategory"] = keywords_dict.get("subcategory")
+    
+    return validated

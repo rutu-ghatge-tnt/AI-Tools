@@ -214,6 +214,7 @@ app.openapi = custom_openapi
 
 # ✅ CORS - Updated for production
 # Using both explicit origins and regex pattern for flexibility
+# This middleware handles all CORS preflight (OPTIONS) and actual requests
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -235,6 +236,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
     allow_headers=["*"],
     expose_headers=["*"],
+    max_age=3600,  # Cache preflight requests for 1 hour
 )
 
 # ✅ Existing chatbot API

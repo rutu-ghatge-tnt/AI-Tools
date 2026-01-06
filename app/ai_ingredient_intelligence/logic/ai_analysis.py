@@ -13,7 +13,8 @@ from typing import List, Dict, Optional
 from app.ai_ingredient_intelligence.logic.formulynx_taxonomy import (
     FORMULYNX_CANONICAL_TAXONOMY,
     get_price_tier_by_mrp,
-    map_category_to_target_area
+    map_category_to_target_area,
+    validate_and_filter_keywords
 )
 
 # Claude AI setup
@@ -115,24 +116,59 @@ def deduplicate_keywords(keywords_list: List[str]) -> List[str]:
     return result
 
 
-def clean_keywords(keywords_dict: Dict[str, List[str]], mrp: Optional[float] = None) -> Dict[str, List[str]]:
+def clean_keywords(keywords_dict: Dict[str, any], mrp: Optional[float] = None) -> Dict[str, any]:
     """
     Clean and normalize keywords:
     1. Deduplicate keywords in each category
     2. Normalize MRP to a single fixed keyword
+    3. Preserve all taxonomy fields (form, price_tier, target_area, etc.)
     
     Args:
         keywords_dict: Dictionary with keyword categories
         mrp: MRP value for normalization
     
     Returns:
-        Cleaned keywords dictionary
+        Cleaned keywords dictionary with all fields preserved
     """
+    # Normalize MRP to price tier
+    price_tier_value = normalize_mrp_keyword(mrp)
+    
+    # Get price_tier from keywords_dict if available, otherwise use normalized value
+    price_tier = keywords_dict.get("price_tier") or price_tier_value
+    
+    # Get form from keywords_dict
+    form_value = keywords_dict.get("form")
+    
+    # Handle redundancy: remove form from product_formulation if it exists there
+    # (form is the canonical single value, so we don't need it in the list)
+    product_formulation = deduplicate_keywords(keywords_dict.get("product_formulation", []))
+    if form_value and form_value in product_formulation:
+        product_formulation = [pf for pf in product_formulation if pf != form_value]
+    
+    # Handle redundancy: remove price_tier from mrp list if it exists there
+    # (price_tier is the canonical single value, so we don't need it in the list)
+    mrp_list = deduplicate_keywords(keywords_dict.get("mrp", []))
+    if price_tier and price_tier in mrp_list:
+        mrp_list = [m for m in mrp_list if m != price_tier]
+    
     cleaned = {
-        "product_formulation": deduplicate_keywords(keywords_dict.get("product_formulation", [])),
-        "mrp": [normalize_mrp_keyword(mrp)],  # Always single keyword
+        # List fields - deduplicate
+        "product_formulation": product_formulation,
+        "mrp": mrp_list,
         "application": deduplicate_keywords(keywords_dict.get("application", [])),
-        "functionality": deduplicate_keywords(keywords_dict.get("functionality", []))
+        "functionality": deduplicate_keywords(keywords_dict.get("functionality", [])),
+        "benefits": deduplicate_keywords(keywords_dict.get("benefits", [])),
+        "concerns": deduplicate_keywords(keywords_dict.get("concerns", [])),
+        "market_positioning": deduplicate_keywords(keywords_dict.get("market_positioning", [])),
+        "functional_categories": deduplicate_keywords(keywords_dict.get("functional_categories", [])),
+        
+        # Single value fields - preserve as-is
+        "form": form_value,
+        "price_tier": price_tier,
+        "target_area": keywords_dict.get("target_area"),
+        "product_type_id": keywords_dict.get("product_type_id"),
+        "main_category": keywords_dict.get("main_category"),
+        "subcategory": keywords_dict.get("subcategory")
     }
     
     return cleaned
@@ -912,23 +948,28 @@ RULES:
    - Common sizes: 30ml, 50ml, 100ml, 200ml
    - If volume unknown, estimate based on product type (serums usually 30ml, creams 50ml)
 
-4. **keywords**: ALL taxonomy fields MUST be inside the keywords object:
-    - **product_formulation**: Array of Formulynx form IDs (e.g., ["serum", "water_based"])
-    - **form**: Single primary Formulynx form ID (e.g., "serum", "cream", "gel")
-    - **mrp**: Array with EXACTLY ONE Formulynx price_tier ID: ["mass_market"], ["masstige"], ["premium"], or ["prestige"]
-    - **price_tier**: Single Formulynx price tier ID (same as mrp[0])
-    - **target_area**: Single Formulynx target area ID: "face", "hair", "body", "lips", "undereye", "neck", "hands", "feet", "scalp"
-    - **product_type_id**: Single Formulynx product type ID: "cleanser", "serum", "moisturizer", "shampoo", etc.
-    - **concerns**: Array of Formulynx concern IDs (e.g., ["acne", "dark_spots", "dryness"])
-    - **benefits**: Array of Formulynx benefit IDs (e.g., ["brightening", "hydrating", "anti_aging"])
-    - **functionality**: Array of Formulynx benefit IDs (same as benefits, for backward compatibility)
-    - **market_positioning**: Array of Formulynx market positioning IDs (e.g., ["natural", "clinical"])
-    - **application**: Array of application keywords (legacy)
-    - **functional_categories**: Array of functional categories (legacy)
-    - **main_category**: "skincare", "haircare", "lipcare", "bodycare" (legacy)
-    - **subcategory**: Product subcategory (legacy)
+4. **keywords**: ALL taxonomy fields MUST be inside the keywords object. YOU MUST INFER THESE VALUES from ingredients, product name, and context - do NOT leave them as null/empty unless absolutely impossible to determine:
+    - **product_formulation**: Array of Formulynx form IDs (e.g., ["serum", "water_based"]). Infer from product name, ingredients, or context.
+    - **form**: Single primary Formulynx form ID (e.g., "serum", "cream", "gel"). MUST be set - infer from product name or ingredients (e.g., if ingredients suggest a lightweight water-based formula, likely "serum" or "essence").
+    - **mrp**: Array with EXACTLY ONE Formulynx price_tier ID: ["mass_market"], ["masstige"], ["premium"], or ["prestige"]. Calculate from mrp value above.
+    - **price_tier**: Single Formulynx price tier ID (same as mrp[0]). Calculate from mrp value above.
+    - **target_area**: Single Formulynx target area ID: "face", "hair", "body", "lips", "undereye", "neck", "hands", "feet", "scalp". MUST be set - infer from product name, ingredients, or context (e.g., if it's a serum with ceramides and hyaluronic acid, likely "face").
+    - **product_type_id**: Single Formulynx product type ID: "cleanser", "serum", "moisturizer", "shampoo", etc. MUST be set - infer from form and ingredients (e.g., if form is "serum", product_type_id should be "serum").
+    - **concerns**: Array of Formulynx concern IDs (e.g., ["acne", "dark_spots", "dryness"]). Infer from active ingredients and their known benefits (e.g., Ceramides → ["dryness", "compromised_barrier"], Hyaluronic Acid → ["dehydration", "dryness"]).
+    - **benefits**: Array of Formulynx benefit IDs (e.g., ["brightening", "hydrating", "anti_aging"]). MUST NOT be empty - infer from active ingredients (e.g., Ceramides → ["barrier_repair", "moisturizing"], Hyaluronic Acid → ["hydrating", "plumping"]).
+    - **functionality**: Array of Formulynx benefit IDs (same as benefits, for backward compatibility). MUST match benefits array.
+    - **market_positioning**: Array of Formulynx market positioning IDs (e.g., ["natural", "clinical"]). Infer from ingredients (e.g., if contains natural extracts → ["natural"], if contains clinical actives → ["clinical"]).
+    - **application**: Array of application keywords (legacy). Infer from benefits and product type (e.g., hydrating serum → ["daily_use", "hydrating"]).
+    - **functional_categories**: Array of functional categories (legacy). Should match benefits array.
+    - **main_category**: "skincare", "haircare", "lipcare", "bodycare" (legacy). MUST be set - infer from target_area (e.g., "face" → "skincare", "hair" → "haircare").
+    - **subcategory**: Product subcategory (legacy). Infer from product_type_id and target_area (e.g., "face" + "serum" → "face_serum").
 
-CRITICAL: ALL taxonomy fields (form, target_area, product_type_id, concerns, benefits, price_tier, market_positioning) MUST be inside the keywords object, NOT at the top level of the response.
+CRITICAL RULES FOR KEYWORDS:
+- **NEVER leave target_area, product_type_id, main_category, or subcategory as null** - always infer from available information
+- **NEVER leave benefits or functionality as empty arrays** - always infer from active ingredients
+- **If concerns cannot be determined, use empty array [] (not null)**
+- **If market_positioning cannot be determined, use empty array [] (not null)**
+- **ALL taxonomy fields (form, target_area, product_type_id, concerns, benefits, price_tier, market_positioning) MUST be inside the keywords object, NOT at the top level of the response**
 
 Return ONLY valid JSON, no markdown code blocks, no explanations."""
 
@@ -1000,18 +1041,19 @@ Extract all fields as specified in the system prompt. Return ONLY the JSON objec
         mrp_value = result.get("mrp")
         keywords = result.get("keywords", {})
         
-        # Extract taxonomy fields from result (AI may return them at top level or in structured_analysis)
-        target_area = result.pop("target_area", None)
-        product_type_id = result.pop("product_type_id", None)
-        concerns = result.pop("concerns", [])
-        benefits = result.pop("benefits", [])
-        price_tier = result.pop("price_tier", None)
-        market_positioning = result.pop("market_positioning", [])
-        form = result.pop("form", None)
-        functional_categories = result.pop("functional_categories", [])
-        main_category = result.pop("main_category", None)
-        subcategory = result.pop("subcategory", None)
-        application = result.pop("application", [])
+        # Extract taxonomy fields from keywords dict (AI returns them in keywords object)
+        # Also check top-level result as fallback for legacy compatibility
+        target_area = keywords.get("target_area") or result.pop("target_area", None)
+        product_type_id = keywords.get("product_type_id") or result.pop("product_type_id", None)
+        concerns = keywords.get("concerns", []) or result.pop("concerns", [])
+        benefits = keywords.get("benefits", []) or result.pop("benefits", [])
+        price_tier = keywords.get("price_tier") or result.pop("price_tier", None)
+        market_positioning = keywords.get("market_positioning", []) or result.pop("market_positioning", [])
+        form = keywords.get("form") or result.pop("form", None)
+        functional_categories = keywords.get("functional_categories", []) or result.pop("functional_categories", [])
+        main_category = keywords.get("main_category") or result.pop("main_category", None)
+        subcategory = keywords.get("subcategory") or result.pop("subcategory", None)
+        application = keywords.get("application", []) or result.pop("application", [])
         
         # Map legacy fields if taxonomy fields not provided
         if not target_area and main_category:
@@ -1052,6 +1094,10 @@ Extract all fields as specified in the system prompt. Return ONLY the JSON objec
             application = []
         
         # Build keywords object with all taxonomy fields
+        # First, ensure form is extracted from keywords if not already set
+        if not form:
+            form = keywords.get("form")
+        
         keywords["form"] = form
         keywords["target_area"] = target_area
         keywords["product_type_id"] = product_type_id
@@ -1077,8 +1123,132 @@ Extract all fields as specified in the system prompt. Return ONLY the JSON objec
                 if benefit not in keywords["functionality"]:
                     keywords["functionality"].append(benefit)
         
+        # Additional fallback inference for missing values
+        # Infer target_area from form if not set
+        # Also check keywords dict for form if form variable is None
+        if not form:
+            form = keywords.get("form")
+        
+        if not target_area and form:
+            # Most forms are for face unless specified otherwise
+            if form in ["serum", "essence", "toner", "ampoule", "cleanser", "exfoliator", "moisturizer", "face_oil", "sunscreen", "mask", "face_mist", "spot_treatment"]:
+                target_area = "face"
+            elif form in ["shampoo", "conditioner", "hair_mask", "hair_serum", "hair_oil", "scalp_treatment", "hair_spray"]:
+                target_area = "hair"
+            elif form in ["lip_balm", "lip_scrub", "lip_mask"]:
+                target_area = "lips"
+            else:
+                target_area = "face"  # Default to face
+        
+        # Infer product_type_id from form if not set
+        if not product_type_id and form:
+            form_to_product_type = {
+                "serum": "serum",
+                "essence": "serum",
+                "toner": "toner",
+                "ampoule": "serum",
+                "cleanser": "cleanser",
+                "gel": "cleanser" if product_name and "cleanser" in product_name.lower() else "serum",
+                "cream": "moisturizer",
+                "lotion": "moisturizer",
+                "moisturizer": "moisturizer",
+                "sunscreen": "sunscreen",
+                "mask": "mask",
+                "shampoo": "shampoo",
+                "conditioner": "conditioner",
+                "hair_mask": "hair_mask",
+                "hair_serum": "hair_serum",
+                "hair_oil": "hair_oil"
+            }
+            product_type_id = form_to_product_type.get(form, form)
+        
+        # Infer main_category from target_area if not set
+        if not main_category and target_area:
+            if target_area == "face":
+                main_category = "skincare"
+            elif target_area == "hair":
+                main_category = "haircare"
+            elif target_area == "lips":
+                main_category = "lipcare"
+            elif target_area in ["body", "hands", "feet"]:
+                main_category = "bodycare"
+            else:
+                main_category = "skincare"  # Default
+        
+        # Infer subcategory from target_area and product_type_id if not set
+        if not subcategory and target_area and product_type_id:
+            subcategory = f"{target_area}_{product_type_id}"
+        
+        # Infer benefits from active ingredients if empty
+        active_ingredients_list = result.get("active_ingredients", [])
+        if not benefits and active_ingredients_list:
+            ingredient_benefits_map = {
+                "ceramide": ["barrier_repair", "moisturizing"],
+                "hyaluronic": ["hydrating", "plumping"],
+                "hyaluronate": ["hydrating", "plumping"],
+                "niacinamide": ["brightening", "oil_control", "pore_minimizing"],
+                "retinol": ["anti_aging", "anti_wrinkle", "cell_renewal"],
+                "vitamin c": ["brightening", "antioxidant"],
+                "peptide": ["anti_aging", "firming"],
+                "salicylic": ["anti_acne", "exfoliating", "pore_minimizing"],
+                "glycolic": ["exfoliating", "brightening"],
+                "azelaic": ["anti_acne", "brightening"],
+                "zinc": ["anti_acne", "soothing"],
+                "glycerin": ["hydrating", "moisturizing"],
+                "urea": ["moisturizing", "barrier_repair"],
+                "panthenol": ["soothing", "barrier_repair"],
+                "allantoin": ["soothing", "barrier_repair"]
+            }
+            inferred_benefits = set()
+            ingredients_lower = " ".join([ai.get("name", "").lower() for ai in active_ingredients_list])
+            for ingredient_key, benefit_list in ingredient_benefits_map.items():
+                if ingredient_key in ingredients_lower:
+                    inferred_benefits.update(benefit_list)
+            if inferred_benefits:
+                benefits = list(inferred_benefits)
+                # Update functionality too
+                if "functionality" not in keywords:
+                    keywords["functionality"] = []
+                for benefit in benefits:
+                    if benefit not in keywords["functionality"]:
+                        keywords["functionality"].append(benefit)
+        
+        # Infer concerns from benefits if empty
+        if not concerns and benefits:
+            benefit_to_concerns = {
+                "barrier_repair": ["compromised_barrier", "dryness"],
+                "moisturizing": ["dryness", "dehydration"],
+                "hydrating": ["dehydration", "dryness"],
+                "anti_acne": ["acne", "blackheads", "whiteheads"],
+                "pore_minimizing": ["large_pores"],
+                "brightening": ["dark_spots", "dullness", "uneven_tone"],
+                "anti_aging": ["fine_lines", "wrinkles"],
+                "anti_wrinkle": ["wrinkles", "fine_lines"],
+                "soothing": ["irritation", "redness"],
+                "oil_control": ["excess_sebum", "oiliness"]
+            }
+            inferred_concerns = set()
+            for benefit in benefits:
+                if benefit in benefit_to_concerns:
+                    inferred_concerns.update(benefit_to_concerns[benefit])
+            if inferred_concerns:
+                concerns = list(inferred_concerns)
+        
+        # Update keywords with inferred values
+        keywords["target_area"] = target_area
+        keywords["product_type_id"] = product_type_id
+        keywords["benefits"] = benefits
+        keywords["concerns"] = concerns
+        keywords["main_category"] = main_category
+        keywords["subcategory"] = subcategory
+        
         # Clean and normalize keywords (handles MRP normalization)
-        result["keywords"] = clean_keywords(keywords, mrp_value)
+        cleaned_keywords = clean_keywords(keywords, mrp_value)
+        
+        # Validate and filter keywords against Formulynx taxonomy
+        validated_keywords = validate_and_filter_keywords(cleaned_keywords)
+        
+        result["keywords"] = validated_keywords
         
         print(f"    ✅ AI Structured Analysis completed")
         return result

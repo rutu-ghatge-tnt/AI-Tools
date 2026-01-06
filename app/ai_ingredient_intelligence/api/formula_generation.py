@@ -359,6 +359,9 @@ async def generate_formula_endpoint(
     """
     Generate a cosmetic formulation based on user wish data
     
+    AUTO-SAVE: Results are automatically saved to wish history if user is authenticated.
+    Provide optional "name" and "tag" in request to customize the saved history item.
+    
     REQUEST BODY:
     {
         "productType": "serum",
@@ -369,7 +372,10 @@ async def generate_formula_endpoint(
         "costMax": 60,
         "texture": "gel",
         "fragrance": "none",
-        "notes": "Additional requirements"
+        "notes": "Additional requirements",
+        "name": "Formula Name" (optional, for auto-saving),
+        "tag": "optional-tag" (optional),
+        "history_id": "existing_history_id" (optional, to update existing history)
     }
     
     RESPONSE:
@@ -383,7 +389,8 @@ async def generate_formula_endpoint(
         "phases": [...],
         "insights": [...],
         "warnings": [...],
-        "compliance": {...}
+        "compliance": {...},
+        "history_id": "..." (if auto-saved)
     }
     """
     print(f"\n{'='*80}")
@@ -393,9 +400,39 @@ async def generate_formula_endpoint(
     
     start_time = time.time()
     
+    # 🔹 Auto-save: Extract user info and required name/tag for history
+    user_id_value = current_user.get("user_id") or current_user.get("_id")
+    name = request.name.strip() if request.name else ""
+    tag = request.tag
+    notes = request.notes  # Already exists in CreateWishRequest
+    provided_history_id = request.history_id
+    history_id = None
+    
+    # Validate name is provided if auto-save is enabled (user_id is present) and no existing history_id
+    if user_id_value and not provided_history_id and not name:
+        raise HTTPException(status_code=400, detail="name is required for auto-save")
+    
+    # Validate history_id if provided
+    if provided_history_id:
+        try:
+            if ObjectId.is_valid(provided_history_id):
+                existing_item = await wish_history_col.find_one({
+                    "_id": ObjectId(provided_history_id),
+                    "user_id": user_id_value
+                })
+                if existing_item:
+                    history_id = provided_history_id
+                    print(f"[AUTO-SAVE] Using existing history_id: {history_id}")
+                else:
+                    print(f"[AUTO-SAVE] Warning: Provided history_id {provided_history_id} not found or doesn't belong to user, creating new one")
+            else:
+                print(f"[AUTO-SAVE] Warning: Invalid history_id format: {provided_history_id}, creating new one")
+        except Exception as e:
+            print(f"[AUTO-SAVE] Warning: Error validating history_id: {e}, creating new one")
+    
     try:
-        # Convert Pydantic model to dict
-        wish_data = request.model_dump()
+        # Convert Pydantic model to dict (exclude autosave fields from wish_data)
+        wish_data = request.model_dump(exclude={"name", "tag", "history_id"})
         print(f"[DEBUG] Wish data keys: {list(wish_data.keys())}")
         print(f"[DEBUG] Product type: {wish_data.get('productType')}")
         print(f"[DEBUG] Benefits: {wish_data.get('benefits')}")
@@ -445,6 +482,58 @@ async def generate_formula_endpoint(
         print(f"   Benefits: {', '.join(wish_data['benefits'])}")
         print(f"   Exclusions: {', '.join(wish_data.get('exclusions', []))}")
         print(f"   Hero Ingredients: {', '.join(wish_data.get('heroIngredients', []))}")
+        
+        # Create a unique identifier for the wish data to check for duplicates
+        import json
+        wish_data_for_comparison = {
+            "category": wish_data.get("category", "skincare"),
+            "productType": wish_data.get("productType"),
+            "benefits": sorted(wish_data.get("benefits", [])),
+            "exclusions": sorted(wish_data.get("exclusions", [])),
+            "heroIngredients": sorted(wish_data.get("heroIngredients", [])),
+            "costMin": wish_data.get("costMin"),
+            "costMax": wish_data.get("costMax"),
+            "texture": wish_data.get("texture")
+        }
+        wish_data_hash = json.dumps(wish_data_for_comparison, sort_keys=True)
+        
+        # 🔹 Auto-save: Save initial state with "in_progress" status if user_id provided and no existing history_id
+        if user_id_value and not history_id:
+            try:
+                # Check if a history item with the same wish data already exists for this user
+                existing_history_item = await wish_history_col.find_one({
+                    "user_id": user_id_value,
+                    "wish_data_hash": wish_data_hash
+                }, sort=[("created_at", -1)])  # Get the most recent one
+                
+                if existing_history_item:
+                    history_id = str(existing_history_item["_id"])
+                    print(f"[AUTO-SAVE] Found existing history item with same wish data, reusing history_id: {history_id}")
+                else:
+                    # Name is required - already validated above
+                    # Truncate if too long
+                    if len(name) > 100:
+                        name = name[:100]
+                    
+                    # Save initial state
+                    history_doc = {
+                        "user_id": user_id_value,
+                        "name": name,
+                        "tag": tag,
+                        "notes": notes,
+                        "wish_data": wish_data,
+                        "wish_data_hash": wish_data_hash,
+                        "status": "in_progress",
+                        "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
+                    }
+                    result = await wish_history_col.insert_one(history_doc)
+                    history_id = str(result.inserted_id)
+                    print(f"[AUTO-SAVE] Saved initial state with history_id: {history_id}")
+            except Exception as e:
+                print(f"[AUTO-SAVE] Warning: Failed to save initial state: {e}")
+                import traceback
+                traceback.print_exc()
+                # Continue with generation even if saving fails
         
         # Generate formula using 5-stage Make a Wish pipeline
         formula = None
@@ -537,6 +626,55 @@ async def generate_formula_endpoint(
                 "vegan": "vegan" in [exc.lower() for exc in exclusions] if exclusions else False
             }
         
+        # 🔹 Auto-save: Update history with "completed" status and formula_result
+        if user_id_value and history_id:
+            try:
+                update_doc = {
+                    "formula_result": formula,
+                    "status": "completed",
+                    "updated_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
+                }
+                
+                await wish_history_col.update_one(
+                    {"_id": ObjectId(history_id), "user_id": user_id_value},
+                    {"$set": update_doc}
+                )
+                print(f"[AUTO-SAVE] Updated history {history_id} with completed status and formula result")
+            except Exception as e:
+                print(f"[AUTO-SAVE] Warning: Failed to update history: {e}")
+                import traceback
+                traceback.print_exc()
+                # Don't fail the response if saving fails
+        elif user_id_value and name:
+            # Create new history item if we didn't have history_id but have name
+            try:
+                if len(name) > 100:
+                    name = name[:100]
+                
+                history_doc = {
+                    "user_id": user_id_value,
+                    "name": name,
+                    "tag": tag,
+                    "notes": notes,
+                    "wish_data": wish_data,
+                    "wish_data_hash": wish_data_hash,
+                    "formula_result": formula,
+                    "status": "completed",
+                    "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
+                }
+                result_insert = await wish_history_col.insert_one(history_doc)
+                history_id = str(result_insert.inserted_id)
+                print(f"[AUTO-SAVE] Created new history {history_id} with completed status and formula result")
+            except Exception as e:
+                print(f"[AUTO-SAVE] Warning: Failed to create history: {e}")
+                import traceback
+                traceback.print_exc()
+                # Don't fail the response if saving fails
+        
+        # Add history_id to formula if available
+        if history_id:
+            formula["history_id"] = history_id
+        
         return GenerateFormulaResponse(**formula)
     
     except HTTPException:
@@ -563,91 +701,52 @@ async def save_wish_history(
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
-    Save wish history with formula data (user-specific)
+    ⚠️ DEPRECATED ENDPOINT - This endpoint is no longer needed.
     
-    HISTORY FUNCTIONALITY:
-    - All formula generation operations are automatically saved to user's history
-    - History is user-specific and isolated by user_id
-    - Stores both the original wish data and the generated formula result
-    - Name and notes can be used for organization and categorization
-    - History items can be searched by name or notes
-    - History persists across sessions and page refreshes
-    - Users can revisit previously generated formulas
+    Wish history is now automatically saved by the /generate endpoints:
+    - POST /api/formula/generate - Auto-saves when name is provided
+    - POST /api/make-wish/generate - Auto-saves when name is provided
     
-    Request body:
-    {
-        "name": "Formula Name",
-        "wish_data": {...},  # Original wish data
-        "formula_result": {...},  # Generated formula
-        "notes": "Optional notes"
-    }
+    The generate endpoints return a history_id in the response which can be used
+    to retrieve the saved history later.
     
-    Authentication:
-    - Requires JWT token in Authorization header
-    - User ID is automatically extracted from the JWT token
+    This endpoint is kept for backward compatibility but returns an error.
+    Please update your frontend to use the autosave feature instead.
     """
     print(f"\n{'='*80}")
-    print(f"[DEBUG] 🚀 API CALL: /api/formula/save-wish-history")
-    print(f"[DEBUG] Request received at: {datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()}")
-    print(f"[DEBUG] Payload keys: {list(payload.keys())}")
+    print(f"[DEPRECATED] 🚀 API CALL: /api/formula/save-wish-history")
+    print(f"[DEPRECATED] This endpoint is deprecated. Use autosave in /generate endpoints instead.")
     print(f"{'='*80}\n")
     
-    try:
-        print(f"[DEBUG] 📝 Save wish history request received")
-        print(f"[DEBUG]    Payload keys: {list(payload.keys())}")
-        
-        # Validate payload
-        if "name" not in payload:
-            print("❌ Missing required field: name")
-            raise HTTPException(status_code=400, detail="Missing required field: name")
-        if "wish_data" not in payload:
-            print("❌ Missing required field: wish_data")
-            raise HTTPException(status_code=400, detail="Missing required field: wish_data")
-        if "formula_result" not in payload:
-            print("❌ Missing required field: formula_result")
-            raise HTTPException(status_code=400, detail="Missing required field: formula_result")
-        
-        # Extract user_id from JWT token (already verified by verify_jwt_token)
-        user_id_value = current_user.get("user_id") or current_user.get("_id") or payload.get("user_id")
-        if not user_id_value:
-            print("❌ User ID not found in JWT token")
-            raise HTTPException(
-                status_code=400,
-                detail="User ID not found in JWT token"
-            )
-        
-        print(f"✅ Validating data for user: {user_id_value}")
-        
-        # ⚠️ ENDPOINT DISABLED - Return success without saving to prevent duplicates
-        # Log that this endpoint was called but is disabled
-        print(f"⚠️ [DISABLED] /save-wish-history called for user {user_id_value}, name: {payload['name']}")
-        print(f"   This endpoint is disabled to prevent duplicate saves.")
-        print(f"   Wish history should be auto-saved by the /generate endpoint.")
-        
-        # Return success response without actually saving
-        # Generate a dummy ID for frontend compatibility
-        import uuid
-        dummy_id = str(uuid.uuid4())
-        
-        print(f"✅ Wish history save endpoint disabled - returning dummy ID: {dummy_id}")
-        
-        return {
-            "success": True,
-            "id": dummy_id,
-            "message": "Wish history save endpoint disabled - history is automatically saved by generate endpoint"
+    user_id_value = current_user.get("user_id") or current_user.get("_id")
+    print(f"[DEPRECATED] Called by user: {user_id_value}")
+    
+    raise HTTPException(
+        status_code=410,  # 410 Gone - indicates the resource is no longer available
+        detail={
+            "error": "Endpoint deprecated",
+            "message": "The /save-wish-history endpoint is deprecated. Wish history is now automatically saved by the /generate endpoints.",
+            "migration_guide": {
+                "old_way": "Call /generate, then call /save-wish-history with the result",
+                "new_way": "Call /generate with 'name' field in request body. The endpoint will auto-save and return 'history_id' in the response.",
+                "endpoints": [
+                    "POST /api/formula/generate - Include 'name' field in CreateWishRequest",
+                    "POST /api/make-wish/generate - Include 'name' field in MakeWishRequest"
+                ],
+                "example": {
+                    "request": {
+                        "productType": "serum",
+                        "benefits": ["Brightening"],
+                        "name": "My Formula Name"  # Required for autosave
+                    },
+                    "response": {
+                        "...": "formula data",
+                        "history_id": "507f1f77bcf86cd799439011"  # MongoDB ObjectId
+                    }
+                }
+            }
         }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Error in disabled save-wish-history endpoint: {e}")
-        # Still return success to prevent frontend crashes
-        import uuid
-        return {
-            "success": True,
-            "id": str(uuid.uuid4()),
-            "message": "Wish history save endpoint disabled - history is automatically saved by generate endpoint"
-        }
+    )
 
 
 @router.get("/wish-history")
@@ -789,9 +888,23 @@ async def get_wish_history_detail(
                 detail="User ID not found in JWT token"
             )
         
-        # Validate ObjectId
+        # Validate ObjectId - check if it's a valid MongoDB ObjectId format
+        # MongoDB ObjectIds are 24-character hex strings (no dashes)
+        # UUIDs have dashes and are 36 characters, so we can detect them
+        import re
+        uuid_pattern = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
+        
+        if uuid_pattern.match(history_id):
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid history ID format: UUID detected. The save-wish-history endpoint is disabled and returns dummy UUIDs. Please use the history_id returned from the /generate endpoint (which auto-saves and returns a MongoDB ObjectId). Received UUID: {history_id}"
+            )
+        
         if not ObjectId.is_valid(history_id):
-            raise HTTPException(status_code=400, detail="Invalid history ID")
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid history ID format. Expected MongoDB ObjectId (24 hex characters), got: {history_id[:50]}"
+            )
         
         # Fetch full item (including large fields)
         doc = await wish_history_col.find_one({

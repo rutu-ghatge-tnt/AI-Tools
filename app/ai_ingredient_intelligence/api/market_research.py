@@ -511,6 +511,13 @@ def build_mongo_query_from_keywords(
     """
     Build MongoDB query from selected keywords and structured analysis.
     
+    Maps queries to externalproducts collection structure:
+    - Top-level fields: form, application, functional_categories, main_category, subcategory, price, brand, category
+    - Nested keywords object: keywords.form, keywords.target_area, keywords.product_type_id, 
+      keywords.concerns, keywords.benefits, keywords.functionality, keywords.application,
+      keywords.market_positioning, keywords.functional_categories, keywords.main_category,
+      keywords.subcategory, keywords.mrp, keywords.price_tier
+    
     Args:
         selected_keywords: Selected keywords organized by category
         structured_analysis: Structured analysis data
@@ -522,74 +529,81 @@ def build_mongo_query_from_keywords(
     """
     query = {}
     
-    # Always use category/subcategory (we know these exist)
+    # Build $or conditions for fields that exist in both top-level and keywords object
+    or_conditions = []
+    
+    # Always use category/subcategory (we know these exist at top-level)
     if structured_analysis:
         main_category = structured_analysis.get("main_category")
         subcategory = structured_analysis.get("subcategory")
         
         if main_category:
-            query["category"] = {"$regex": main_category, "$options": "i"}
+            # Query both top-level category and keywords.main_category
+            or_conditions.append({"category": {"$regex": main_category, "$options": "i"}})
+            or_conditions.append({"keywords.main_category": {"$regex": main_category, "$options": "i"}})
         
         if subcategory:
-            query["subcategory"] = {"$regex": subcategory, "$options": "i"}
+            # Query both top-level subcategory and keywords.subcategory
+            or_conditions.append({"subcategory": {"$regex": subcategory, "$options": "i"}})
+            or_conditions.append({"keywords.subcategory": {"$regex": subcategory, "$options": "i"}})
     
     # Process selected keywords
     if selected_keywords:
-        # Product formulation keywords → form field
+        # Product formulation keywords → form field (top-level and keywords.form)
         if selected_keywords.product_formulation:
             form_keywords = selected_keywords.product_formulation
-            # Check if form field exists in collection
-            if collection_sample and "form" in collection_sample:
-                query["form"] = {"$in": form_keywords}
-            else:
-                # Fallback: search in name/description
-                or_conditions = query.get("$or", [])
-                for form_kw in form_keywords:
-                    or_conditions.extend([
-                        {"name": {"$regex": form_kw, "$options": "i"}},
-                        {"productName": {"$regex": form_kw, "$options": "i"}},
-                        {"description": {"$regex": form_kw, "$options": "i"}}
-                    ])
-                if or_conditions:
-                    query["$or"] = or_conditions
+            or_conditions.append({"form": {"$in": form_keywords}})
+            or_conditions.append({"keywords.form": {"$in": form_keywords}})
         
-        # Application keywords → application field
+        # Primary form → form field (top-level and keywords.form)
+        if selected_keywords.form:
+            or_conditions.append({"form": selected_keywords.form})
+            or_conditions.append({"keywords.form": selected_keywords.form})
+        
+        # Application keywords → application field (top-level and keywords.application)
         if selected_keywords.application:
             app_keywords = selected_keywords.application
-            if collection_sample and "application" in collection_sample:
-                query["application"] = {"$in": app_keywords}
-            else:
-                # Fallback: search in name/description
-                or_conditions = query.get("$or", [])
-                for app_kw in app_keywords:
-                    or_conditions.extend([
-                        {"name": {"$regex": app_kw, "$options": "i"}},
-                        {"productName": {"$regex": app_kw, "$options": "i"}},
-                        {"description": {"$regex": app_kw, "$options": "i"}}
-                    ])
-                if or_conditions:
-                    query["$or"] = or_conditions
+            or_conditions.append({"application": {"$in": app_keywords}})
+            or_conditions.append({"keywords.application": {"$in": app_keywords}})
         
-        # Functionality keywords → functional_categories field
+        # Functionality keywords → functional_categories field (top-level and keywords.functional_categories)
+        # Also check keywords.functionality
         if selected_keywords.functionality:
             func_keywords = selected_keywords.functionality
-            if collection_sample and "functional_categories" in collection_sample:
-                query["functional_categories"] = {"$in": func_keywords}
-            else:
-                # Fallback: search in name/description
-                or_conditions = query.get("$or", [])
-                for func_kw in func_keywords:
-                    or_conditions.extend([
-                        {"name": {"$regex": func_kw, "$options": "i"}},
-                        {"productName": {"$regex": func_kw, "$options": "i"}},
-                        {"description": {"$regex": func_kw, "$options": "i"}}
-                    ])
-                if or_conditions:
-                    query["$or"] = or_conditions
+            or_conditions.append({"functional_categories": {"$in": func_keywords}})
+            or_conditions.append({"keywords.functional_categories": {"$in": func_keywords}})
+            or_conditions.append({"keywords.functionality": {"$in": func_keywords}})
         
-        # MRP keywords → price range filter
+        # Benefits → keywords.benefits
+        if selected_keywords.benefits:
+            or_conditions.append({"keywords.benefits": {"$in": selected_keywords.benefits}})
+        
+        # Target area → keywords.target_area
+        if selected_keywords.target_area:
+            or_conditions.append({"keywords.target_area": selected_keywords.target_area})
+        
+        # Product type ID → keywords.product_type_id
+        if selected_keywords.product_type_id:
+            or_conditions.append({"keywords.product_type_id": selected_keywords.product_type_id})
+        
+        # Concerns → keywords.concerns
+        if selected_keywords.concerns:
+            or_conditions.append({"keywords.concerns": {"$in": selected_keywords.concerns}})
+        
+        # Market positioning → keywords.market_positioning
+        if selected_keywords.market_positioning:
+            or_conditions.append({"keywords.market_positioning": {"$in": selected_keywords.market_positioning}})
+        
+        # Price tier → keywords.price_tier
+        if selected_keywords.price_tier:
+            or_conditions.append({"keywords.price_tier": selected_keywords.price_tier})
+        
+        # MRP keywords → keywords.mrp (array of price tier IDs)
+        if selected_keywords.mrp:
+            or_conditions.append({"keywords.mrp": {"$in": selected_keywords.mrp}})
+        
+        # MRP value → price range filter (using top-level price field)
         if selected_keywords.mrp and structured_analysis:
-            mrp_keywords = selected_keywords.mrp
             mrp_value = structured_analysis.get("mrp")
             
             if mrp_value:
@@ -597,16 +611,33 @@ def build_mongo_query_from_keywords(
                 price_min = mrp_value * 0.8  # 20% below
                 price_max = mrp_value * 1.2  # 20% above
                 
-                # Adjust based on keywords
-                if "premium" in mrp_keywords or "luxury" in mrp_keywords:
-                    price_min = max(price_min, 2000)
-                elif "budget" in mrp_keywords or "affordable" in mrp_keywords:
-                    price_max = min(price_max, 500)
-                elif "mid_range" in mrp_keywords:
-                    price_min = max(price_min, 500)
-                    price_max = min(price_max, 2000)
+                # Adjust based on keywords (Formulynx price tier IDs)
+                mrp_keywords = selected_keywords.mrp
+                if "prestige" in mrp_keywords:
+                    price_min = max(price_min, 1500)
+                elif "premium" in mrp_keywords:
+                    price_min = max(price_min, 700)
+                    price_max = min(price_max, 1500)
+                elif "masstige" in mrp_keywords:
+                    price_min = max(price_min, 300)
+                    price_max = min(price_max, 700)
+                elif "mass_market" in mrp_keywords:
+                    price_max = min(price_max, 300)
                 
-                query["price"] = {"$gte": price_min, "$lte": price_max}
+                # Add price filter (top-level price field)
+                if "price" not in query:
+                    query["price"] = {}
+                query["price"] = {
+                    "$gte": price_min,
+                    "$lte": price_max
+                }
+        
+        # Legacy fields: main_category and subcategory from keywords
+        if selected_keywords.main_category:
+            or_conditions.append({"keywords.main_category": {"$regex": selected_keywords.main_category, "$options": "i"}})
+        
+        if selected_keywords.subcategory:
+            or_conditions.append({"keywords.subcategory": {"$regex": selected_keywords.subcategory, "$options": "i"}})
     
     # Additional filters
     if additional_filters:
@@ -627,10 +658,19 @@ def build_mongo_query_from_keywords(
             query["brand"] = {"$regex": additional_filters["brand"], "$options": "i"}
         
         if "category" in additional_filters:
-            query["category"] = {"$regex": additional_filters["category"], "$options": "i"}
+            # Query both top-level and keywords
+            or_conditions.append({"category": {"$regex": additional_filters["category"], "$options": "i"}})
+            or_conditions.append({"keywords.main_category": {"$regex": additional_filters["category"], "$options": "i"}})
         
         if "subcategory" in additional_filters:
-            query["subcategory"] = {"$regex": additional_filters["subcategory"], "$options": "i"}
+            # Query both top-level and keywords
+            or_conditions.append({"subcategory": {"$regex": additional_filters["subcategory"], "$options": "i"}})
+            or_conditions.append({"keywords.subcategory": {"$regex": additional_filters["subcategory"], "$options": "i"}})
+    
+    # Combine all $or conditions if any exist
+    # MongoDB automatically ANDs top-level conditions with $or, so we can just add it
+    if or_conditions:
+        query["$or"] = or_conditions
     
     return query
 
@@ -781,42 +821,79 @@ async def market_research_analyze(
         ]
         
         keywords_dict = structured_data.get("keywords", {})
+        
+        # Handle redundancy: extract form from product_formulation[0] if form is not set
+        form_value = keywords_dict.get("form")
+        if not form_value and keywords_dict.get("product_formulation"):
+            form_value = keywords_dict.get("product_formulation", [])[0] if keywords_dict.get("product_formulation") else None
+        
+        # Handle redundancy: extract price_tier from mrp[0] if price_tier is not set
+        price_tier_value = keywords_dict.get("price_tier")
+        if not price_tier_value and keywords_dict.get("mrp"):
+            price_tier_value = keywords_dict.get("mrp", [])[0] if keywords_dict.get("mrp") else None
+        
         keywords = ProductKeywords(
             product_formulation=keywords_dict.get("product_formulation", []),
+            form=form_value,
             mrp=keywords_dict.get("mrp", []),
+            price_tier=price_tier_value,
             application=keywords_dict.get("application", []),
-            functionality=keywords_dict.get("functionality", [])
+            functionality=keywords_dict.get("functionality", []),
+            benefits=keywords_dict.get("benefits", []),
+            target_area=keywords_dict.get("target_area"),
+            product_type_id=keywords_dict.get("product_type_id"),
+            concerns=keywords_dict.get("concerns", []),
+            market_positioning=keywords_dict.get("market_positioning", []),
+            functional_categories=keywords_dict.get("functional_categories", []),
+            main_category=keywords_dict.get("main_category"),
+            subcategory=keywords_dict.get("subcategory")
         )
         
         structured_analysis = ProductStructuredAnalysis(
             active_ingredients=active_ingredients,
             mrp=structured_data.get("mrp"),
             mrp_per_ml=structured_data.get("mrp_per_ml"),
-            mrp_source=structured_data.get("mrp_source"),
-            form=structured_data.get("form"),
-            functional_categories=structured_data.get("functional_categories", []),
-            main_category=structured_data.get("main_category"),
-            subcategory=structured_data.get("subcategory"),
-            application=structured_data.get("application", [])
+            mrp_source=structured_data.get("mrp_source")
         )
         
         # Auto-save to history if name provided
         if payload.get("name"):
             try:
-                history_doc = {
+                # Check if a history item with the same input_data already exists for this user
+                existing_history_item = await market_research_history_col.find_one({
                     "user_id": user_id,
-                    "name": payload.get("name", ""),
-                    "tag": payload.get("tag"),
                     "input_type": input_type,
-                    "input_data": input_data_value,
-                    "structured_analysis": structured_analysis.model_dump(),
-                    "available_keywords": keywords.model_dump(),
-                    "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
-                }
+                    "input_data": input_data_value
+                }, sort=[("created_at", -1)])  # Get the most recent one
                 
-                result = await market_research_history_col.insert_one(history_doc)
-                history_id = str(result.inserted_id)
-                print(f"✅ Auto-saved analysis to history: {history_id}")
+                if existing_history_item:
+                    history_id = str(existing_history_item["_id"])
+                    # Update existing history with new analysis data
+                    await market_research_history_col.update_one(
+                        {"_id": existing_history_item["_id"]},
+                        {"$set": {
+                            "structured_analysis": structured_analysis.model_dump(),
+                            "available_keywords": keywords.model_dump_exclude_empty(),
+                            "name": payload.get("name", ""),  # Update name in case it changed
+                            "tag": payload.get("tag")  # Update tag in case it changed
+                        }}
+                    )
+                    print(f"✅ Updated existing history item: {history_id}")
+                else:
+                    history_doc = {
+                        "user_id": user_id,
+                        "name": payload.get("name", ""),
+                        "tag": payload.get("tag"),
+                        "input_type": input_type,
+                        "input_data": input_data_value,
+                        "structured_analysis": structured_analysis.model_dump(),
+                        "available_keywords": keywords.model_dump_exclude_empty(),
+                        "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
+                    }
+                    
+                    result = await market_research_history_col.insert_one(history_doc)
+                    history_id = str(result.inserted_id)
+                    print(f"✅ Auto-saved analysis to history: {history_id}")
             except Exception as e:
                 print(f"⚠️  Error auto-saving to history: {e}")
         
@@ -885,7 +962,7 @@ async def update_market_research_keywords(
         # Update history item
         result = await market_research_history_col.update_one(
             {"_id": ObjectId(history_id), "user_id": user_id},
-            {"$set": {"selected_keywords": selected_keywords.model_dump()}}
+            {"$set": {"selected_keywords": selected_keywords.model_dump_exclude_empty()}}
         )
         
         if result.matched_count == 0:
@@ -976,6 +1053,10 @@ async def market_research_products_paginated(
         
         structured_analysis = ProductStructuredAnalysis(**structured_analysis_dict)
         selected_keywords = ProductKeywords(**selected_keywords_dict) if selected_keywords_dict else None
+        
+        # Get available_keywords for main_category and subcategory
+        available_keywords_dict = history_item.get("available_keywords")
+        available_keywords = ProductKeywords(**available_keywords_dict) if available_keywords_dict else None
         
         # Parse additional filters
         additional_filters = {}
@@ -1094,7 +1175,7 @@ async def market_research_products_paginated(
         # Build filters_applied
         filters_applied = {}
         if selected_keywords:
-            filters_applied["keywords"] = selected_keywords.model_dump()
+            filters_applied["keywords"] = selected_keywords.model_dump_exclude_empty()
         if additional_filters:
             filters_applied.update(additional_filters)
         
@@ -1112,8 +1193,8 @@ async def market_research_products_paginated(
             extracted_ingredients=extracted_ingredients,
             input_type=history_item.get("input_type", "inci"),
             ai_interpretation=history_item.get("ai_interpretation"),
-            primary_category=structured_analysis.main_category,
-            subcategory=structured_analysis.subcategory,
+            primary_category=available_keywords.main_category if available_keywords else history_item.get("primary_category"),
+            subcategory=available_keywords.subcategory if available_keywords else history_item.get("subcategory"),
             category_confidence=history_item.get("category_confidence"),
             history_id=history_id
         )
@@ -2216,7 +2297,7 @@ async def market_research(
                 if selected_keywords_payload:
                     try:
                         selected_keywords_obj = ProductKeywords(**selected_keywords_payload)
-                        update_doc["selected_keywords"] = selected_keywords_obj.model_dump()
+                        update_doc["selected_keywords"] = selected_keywords_obj.model_dump_exclude_empty()
                     except Exception as e:
                         print(f"[AUTO-SAVE] Warning: Could not parse selected_keywords: {e}")
                 
@@ -2228,20 +2309,36 @@ async def market_research(
                     )
                     print(f"[AUTO-SAVE] Updated history {history_id} with research results (saved {len(matched_products)} total products)")
                 elif name:
-                    # Create new history item
-                    history_doc = {
+                    # Check if a history item with the same input_data already exists for this user
+                    existing_history_item = await market_research_history_col.find_one({
                         "user_id": user_id_value,
-                        "name": name,
-                        "tag": tag,
                         "input_type": input_type,
-                        "input_data": input_data_value,
-                        "notes": notes,
-                        "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat(),
-                        **update_doc
-                    }
-                    result = await market_research_history_col.insert_one(history_doc)
-                    history_id = str(result.inserted_id)
-                    print(f"[AUTO-SAVE] Created new history {history_id} with research results (saved {len(matched_products)} total products)")
+                        "input_data": input_data_value
+                    }, sort=[("created_at", -1)])  # Get the most recent one
+                    
+                    if existing_history_item:
+                        # Update existing history instead of creating new one
+                        history_id = str(existing_history_item["_id"])
+                        await market_research_history_col.update_one(
+                            {"_id": existing_history_item["_id"]},
+                            {"$set": update_doc}
+                        )
+                        print(f"[AUTO-SAVE] Updated existing history {history_id} with research results (saved {len(matched_products)} total products)")
+                    else:
+                        # Create new history item
+                        history_doc = {
+                            "user_id": user_id_value,
+                            "name": name,
+                            "tag": tag,
+                            "input_type": input_type,
+                            "input_data": input_data_value,
+                            "notes": notes,
+                            "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat(),
+                            **update_doc
+                        }
+                        result = await market_research_history_col.insert_one(history_doc)
+                        history_id = str(result.inserted_id)
+                        print(f"[AUTO-SAVE] Created new history {history_id} with research results (saved {len(matched_products)} total products)")
             except Exception as e:
                 print(f"[AUTO-SAVE] Warning: Failed to save/update history: {e}")
                 import traceback
@@ -2341,7 +2438,8 @@ async def market_research_products(
     provided_history_id = payload.get("history_id")  # Optional: reuse existing history item
     history_id = None
     
-    # Validate history_id if provided
+    # Validate history_id if provided and retrieve stored data
+    existing_item = None
     if provided_history_id:
         try:
             if ObjectId.is_valid(provided_history_id):
@@ -2360,73 +2458,120 @@ async def market_research_products(
             print(f"[AUTO-SAVE] Warning: Error validating history_id: {e}, creating new one")
     
     try:
-        # Validate payload
+        # Get input_type from payload or from history if history_id provided
         input_type = payload.get("input_type", "").lower()
+        if not input_type and existing_item:
+            # Retrieve input_type from history
+            input_type = existing_item.get("input_type", "").lower()
+            print(f"[AUTO-SAVE] Retrieved input_type '{input_type}' from history")
+        
+        # Validate input_type
         if input_type not in ["url", "inci"]:
-            raise HTTPException(status_code=400, detail="input_type must be 'url' or 'inci'")
+            raise HTTPException(status_code=400, detail="input_type must be 'url' or 'inci'. If using history_id, ensure the history item has a valid input_type.")
         
         ingredients = []
         extracted_text = ""
         input_data_value = ""  # For auto-save
         
-        if input_type == "url":
-            url = payload.get("url", "").strip()
-            if not url:
-                raise HTTPException(status_code=400, detail="url is required when input_type is 'url'")
-            
-            if not url.startswith(("http://", "https://")):
-                raise HTTPException(status_code=400, detail="Invalid URL format. Must start with http:// or https://")
-            
-            # Initialize URL scraper and extract ingredients
-            scraper = URLScraper()
-            print(f"Scraping URL for market research products: {url}")
-            extraction_result = await scraper.extract_ingredients_from_url(url)
-            
-            # Get ingredients - could be list or string, ensure it's a list
-            ingredients_raw = extraction_result.get("ingredients", [])
-            extracted_text = extraction_result.get("extracted_text", "")
-            scraper_extraction_result = extraction_result
-            
-            # If ingredients is a string, parse it
-            if isinstance(ingredients_raw, str):
-                ingredients = parse_inci_string(ingredients_raw)
-            elif isinstance(ingredients_raw, list):
-                ingredients = ingredients_raw
+        # If history_id provided, try to get ingredients from history first
+        if existing_item and not payload.get("url") and not payload.get("inci"):
+            # Try to get ingredients from research_result (if products were already fetched)
+            research_result = existing_item.get("research_result", {})
+            if research_result and research_result.get("extracted_ingredients"):
+                ingredients = research_result.get("extracted_ingredients", [])
+                input_data_value = existing_item.get("input_data", "")
+                print(f"[AUTO-SAVE] Retrieved {len(ingredients)} ingredients from research_result")
             else:
-                ingredients = []
-            
-            print(f"Extracted ingredients from URL: {ingredients}")
-            
-            if not ingredients:
-                raise HTTPException(
-                    status_code=404,
-                    detail="No ingredients found on the product page. Please ensure the page contains ingredient information."
-                )
-            
-            input_data_value = url  # Store URL for auto-save
-        elif input_type == "inci":
-            # INCI input
-            inci = payload.get("inci")
-            if not inci:
-                raise HTTPException(status_code=400, detail="inci is required when input_type is 'inci'")
-            
-            # Validate that inci is a list
-            if not isinstance(inci, list):
-                raise HTTPException(status_code=400, detail="inci must be an array of strings")
-            
-            if not inci:
-                raise HTTPException(status_code=400, detail="inci cannot be empty")
-            
-            # Parse INCI list (handles list of strings, each may contain separators)
-            ingredients = parse_inci_string(inci)
-            extracted_text = ", ".join(inci)  # Join for display
-            input_data_value = ", ".join(inci)  # Store as comma-separated string for auto-save
-            
-            if not ingredients:
-                raise HTTPException(
-                    status_code=400,
-                    detail="No valid ingredients found after parsing. Please check your input format."
-                )
+                # If no research_result, we'll need to extract from input_data based on input_type
+                # This will be handled in the URL/INCI processing below
+                input_data_value = existing_item.get("input_data", "")
+                print(f"[AUTO-SAVE] No research_result found, will extract from input_data if needed")
+        
+        # Only process URL/INCI if we don't already have ingredients from history
+        if not ingredients:
+            if input_type == "url":
+                url = payload.get("url", "").strip()
+                if not url and existing_item:
+                    # Try to get from history input_data
+                    url = existing_item.get("input_data", "").strip()
+                    if url:
+                        print(f"[AUTO-SAVE] Using URL from history input_data")
+                
+                if not url:
+                    raise HTTPException(status_code=400, detail="url is required when input_type is 'url'. Provide url in payload or ensure history has input_data.")
+                
+                if not url.startswith(("http://", "https://")):
+                    raise HTTPException(status_code=400, detail="Invalid URL format. Must start with http:// or https://")
+                
+                # Initialize URL scraper and extract ingredients
+                scraper = URLScraper()
+                print(f"Scraping URL for market research products: {url}")
+                extraction_result = await scraper.extract_ingredients_from_url(url)
+                
+                # Get ingredients - could be list or string, ensure it's a list
+                ingredients_raw = extraction_result.get("ingredients", [])
+                extracted_text = extraction_result.get("extracted_text", "")
+                scraper_extraction_result = extraction_result
+                
+                # If ingredients is a string, parse it
+                if isinstance(ingredients_raw, str):
+                    ingredients = parse_inci_string(ingredients_raw)
+                elif isinstance(ingredients_raw, list):
+                    ingredients = ingredients_raw
+                else:
+                    ingredients = []
+                
+                print(f"Extracted ingredients from URL: {ingredients}")
+                
+                if not ingredients:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="No ingredients found on the product page. Please ensure the page contains ingredient information."
+                    )
+                
+                input_data_value = url  # Store URL for auto-save
+            elif input_type == "inci":
+                # INCI input - can come from payload or from history input_data
+                inci = payload.get("inci")
+                if not inci and existing_item:
+                    # Try to get from history input_data
+                    input_data_from_history = existing_item.get("input_data", "")
+                    if input_data_from_history:
+                        # Parse input_data (could be comma-separated string)
+                        if isinstance(input_data_from_history, str):
+                            inci = [ing.strip() for ing in input_data_from_history.split(",") if ing.strip()]
+                        elif isinstance(input_data_from_history, list):
+                            inci = input_data_from_history
+                        print(f"[AUTO-SAVE] Using INCI from history input_data: {len(inci)} items")
+                
+                if not inci:
+                    raise HTTPException(status_code=400, detail="inci is required when input_type is 'inci'. Provide inci in payload or ensure history has input_data.")
+                
+                # Validate that inci is a list
+                if not isinstance(inci, list):
+                    raise HTTPException(status_code=400, detail="inci must be an array of strings")
+                
+                if not inci:
+                    raise HTTPException(status_code=400, detail="inci cannot be empty")
+                
+                # Parse INCI list (handles list of strings, each may contain separators)
+                ingredients = parse_inci_string(inci)
+                extracted_text = ", ".join(inci)  # Join for display
+                if not input_data_value:
+                    input_data_value = ", ".join(inci)  # Store as comma-separated string for auto-save
+                
+                if not ingredients:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="No valid ingredients found after parsing. Please check your input format."
+                    )
+        else:
+            # Ingredients already retrieved from history, use them
+            print(f"Using {len(ingredients)} ingredients retrieved from history")
+            if not extracted_text and input_data_value:
+                # Try to create extracted_text from input_data if available
+                if isinstance(input_data_value, str):
+                    extracted_text = input_data_value
         
         # Query externalproducts collection
         external_products_col = db["externalproducts"]
@@ -2991,7 +3136,7 @@ async def market_research_products(
                 if selected_keywords_payload:
                     try:
                         selected_keywords_obj = ProductKeywords(**selected_keywords_payload)
-                        update_doc["selected_keywords"] = selected_keywords_obj.model_dump()
+                        update_doc["selected_keywords"] = selected_keywords_obj.model_dump_exclude_empty()
                     except Exception as e:
                         print(f"[AUTO-SAVE] Warning: Could not parse selected_keywords: {e}")
                 
@@ -3003,20 +3148,36 @@ async def market_research_products(
                     )
                     print(f"[AUTO-SAVE] Updated history {history_id} with research results (saved {len(matched_products)} total products)")
                 elif name:
-                    # Create new history item
-                    history_doc = {
+                    # Check if a history item with the same input_data already exists for this user
+                    existing_history_item = await market_research_history_col.find_one({
                         "user_id": user_id_value,
-                        "name": name,
-                        "tag": tag,
                         "input_type": input_type,
-                        "input_data": input_data_value,
-                        "notes": notes,
-                        "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat(),
-                        **update_doc
-                    }
-                    result = await market_research_history_col.insert_one(history_doc)
-                    history_id = str(result.inserted_id)
-                    print(f"[AUTO-SAVE] Created new history {history_id} with research results (saved {len(matched_products)} total products)")
+                        "input_data": input_data_value
+                    }, sort=[("created_at", -1)])  # Get the most recent one
+                    
+                    if existing_history_item:
+                        # Update existing history instead of creating new one
+                        history_id = str(existing_history_item["_id"])
+                        await market_research_history_col.update_one(
+                            {"_id": existing_history_item["_id"]},
+                            {"$set": update_doc}
+                        )
+                        print(f"[AUTO-SAVE] Updated existing history {history_id} with research results (saved {len(matched_products)} total products)")
+                    else:
+                        # Create new history item
+                        history_doc = {
+                            "user_id": user_id_value,
+                            "name": name,
+                            "tag": tag,
+                            "input_type": input_type,
+                            "input_data": input_data_value,
+                            "notes": notes,
+                            "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat(),
+                            **update_doc
+                        }
+                        result = await market_research_history_col.insert_one(history_doc)
+                        history_id = str(result.inserted_id)
+                        print(f"[AUTO-SAVE] Created new history {history_id} with research results (saved {len(matched_products)} total products)")
             except Exception as e:
                 print(f"[AUTO-SAVE] Warning: Failed to save/update history: {e}")
                 import traceback
