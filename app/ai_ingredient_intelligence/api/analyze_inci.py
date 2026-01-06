@@ -2386,10 +2386,61 @@ async def compare_products(
         from app.config import CLAUDE_MODEL
         model_name = CLAUDE_MODEL if CLAUDE_MODEL else (os.getenv("CLAUDE_MODEL") or os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929")
         
+        # Helper function to extract MRP from text using regex
+        def extract_price_from_text(text: str) -> Optional[str]:
+            """Extract MRP (Maximum Retail Price) from text - exclude ranges and per ml pricing"""
+            import re
+            
+            # First, look specifically for MRP patterns
+            mrp_patterns = [
+                r'MRP[:\s]+([₹$]?\s*\d+(?:,\d+)*(?:\.\d+)?)',
+                r'Maximum\s+Retail\s+Price[:\s]+([₹$]?\s*\d+(?:,\d+)*(?:\.\d+)?)',
+                r'M\.R\.P\.?[:\s]+([₹$]?\s*\d+(?:,\d+)*(?:\.\d+)?)',
+            ]
+            
+            for pattern in mrp_patterns:
+                matches = re.finditer(pattern, text, re.IGNORECASE)
+                for match in matches:
+                    price_match = match.group(1).strip()
+                    
+                    # Get context around the match to check for ranges or per ml
+                    context_start = max(0, match.start() - 30)
+                    context_end = min(len(text), match.end() + 30)
+                    context = text[context_start:context_end].lower()
+                    
+                    # Skip if it's a range (e.g., "₹500-₹1000" or "₹500 to ₹1000")
+                    if re.search(r'\d+\s*[-–—]\s*\d+', context) or re.search(r'\d+\s+to\s+\d+', context):
+                        continue
+                    
+                    # Skip if it's per ml/per unit pricing (e.g., "₹100/ml" or "₹100 per ml")
+                    if re.search(r'per\s+(ml|gm|g|kg|unit|piece)', context) or re.search(r'/\s*(ml|gm|g|kg|unit|piece)', context):
+                        continue
+                    
+                    # Extract currency from the match or context
+                    if '₹' in price_match or 'INR' in context or 'rs' in context:
+                        currency = '₹'
+                    elif '$' in price_match or '$' in context:
+                        currency = '$'
+                    else:
+                        currency = '₹'  # Default to INR
+                    
+                    # Clean the price value - remove currency symbols, commas, spaces
+                    price_value = re.sub(r'[₹$,\s]', '', price_match)
+                    
+                    # Validate it's a proper number (at least 2 digits, no decimal for MRP typically)
+                    if price_value and price_value.isdigit() and len(price_value) >= 2:
+                        return f"{currency}{price_value}"
+            
+            # If no MRP found, return None (don't fall back to other price types)
+            return None
+        
         # Prepare full text for better extraction (use more context to capture price, ratings, etc.)
         for idx, product_data in enumerate(processed_products):
             product_data["text_full"] = product_data["text"][:10000] if len(product_data["text"]) > 10000 else product_data["text"]
+            # Extract price from scraped text
+            product_data["extracted_price"] = extract_price_from_text(product_data["text"])
             print(f"Product {idx+1} extracted text length: {len(product_data['text'])} chars")
+            print(f"Product {idx+1} extracted MRP: {product_data['extracted_price']}")
             print(f"Product {idx+1} text preview (first 500 chars): {product_data['text'][:500]}")
             if product_data["url_context"]:
                 print(f"Product {idx+1} URL: {product_data['url_context']}")
@@ -2399,10 +2450,12 @@ async def compare_products(
         for idx, product_data in enumerate(processed_products):
             product_num = idx + 1
             url_info = f"\n- Source URL: {product_data['url_context']}" if product_data["url_context"] else "\n- Source: INCI text input (no URL)"
+            price_info = f"\n- Extracted MRP from Page: {product_data['extracted_price']}" if product_data.get("extracted_price") else "\n- Extracted MRP from Page: Not found in scraped text"
+            # Show scraped ingredients clearly
+            inci_info = f"\n- Scraped INCI Ingredients (EXACT from page): {', '.join(product_data['inci']) if product_data['inci'] else 'None found - extract from text below'}"
             product_sections.append(f"""Product {product_num} Data:
-- Product Name (if known): {product_data['product_name'] or 'Not specified'}{url_info}
-- INCI Ingredients: {', '.join(product_data['inci']) if product_data['inci'] else 'Not available'}
-- Full Extracted Text:
+- Product Name (if known): {product_data['product_name'] or 'Not specified'}{url_info}{price_info}{inci_info}
+- Full Extracted Text from Page:
 {product_data['text_full']}""")
         
         products_section = "\n\n".join(product_sections)
@@ -2414,7 +2467,7 @@ async def compare_products(
     "inci": ["list", "of", "all", "ingredients"],
     "benefits": ["list", "of", "all", "benefits", "mentioned"],
     "claims": ["list", "of", "all", "claims", "mentioned"],
-    "price": "extract price in format like '₹999' or '$29.99' or 'INR 1,299', or null if not found",
+    "price": "extract MRP (Maximum Retail Price) only in format like '₹999' or '$29.99', exclude selling price, ranges, and per ml pricing, or null if not found",
     "cruelty_free": true/false/null,
     "sulphate_free": true/false/null,
     "paraben_free": true/false/null,
@@ -2427,50 +2480,61 @@ async def compare_products(
         
         comparison_prompt = f"""You are an expert cosmetic product analyst. Compare {len(processed_products)} cosmetic products and provide a structured comparison.
 
-IMPORTANT: If a URL is provided, use it as context to verify and extract information. The URL may contain additional product details like price, ratings, and specifications that might not be fully captured in the scraped text.
+🚨 CRITICAL VALIDATION RULES - READ CAREFULLY:
+1. **ONLY USE DATA FROM SCRAPED TEXT** - Do NOT make up, guess, or infer any information that is not explicitly present in the extracted text provided below.
+2. **PRESERVE SCRAPED INGREDIENTS** - If "Scraped INCI Ingredients" are provided above, you MUST use those EXACT ingredients. Do NOT change, add, or remove any ingredients from the scraped list.
+3. **USE EXTRACTED MRP** - If "Extracted MRP from Page" is shown above, you MUST use that exact MRP. Do NOT search for selling price, ranges, or per ml pricing. Only use MRP.
+4. **URL VALIDATION** - If a URL is provided, you can use it to understand the source (e.g., nykaa.com, amazon.in), but you MUST ONLY extract information that is actually present in the scraped text. The URL is for context only - do NOT assume information exists on the page that isn't in the scraped text.
+5. **NULL FOR MISSING DATA** - If information is not in the scraped text, you MUST return null. Do NOT guess or infer.
 
 {products_section}
 
-Please analyze all {len(processed_products)} products CAREFULLY and extract ALL available information from the extracted text. Return a JSON object with the following structure:
+Please analyze all {len(processed_products)} products CAREFULLY and extract ONLY the information that is explicitly present in the extracted text above. Return a JSON object with the following structure:
 {{
 {products_json_structure}
 }}
 
-CRITICAL INSTRUCTIONS:
-1. PRODUCT NAME: Look for product titles, headings, or product names in the extracted text. Extract the complete product name (e.g., "Vitamin C Brightening Serum" not just "Serum"). If URL is provided, the product name might be in the URL path or page title.
-2. BRAND NAME: Look for brand names, manufacturer names, or company names. This is usually mentioned before the product name or in the beginning of the text. Common patterns: "Bobbi Brown", "The Ordinary", "CeraVe", etc.
-3. PRICE: This is CRITICAL - Search EXTENSIVELY for price information in the extracted text. Look for:
-   - Formats: ₹999, $29.99, INR 1,299, Rs. 599, ₹7,500, etc.
-   - Keywords: "Price:", "₹", "$", "INR", "Rs.", "MRP", "Cost"
-   - Price sections, pricing tables, or highlighted price displays
-   - If URL is provided (especially e-commerce sites like Nykaa, Amazon, Flipkart), price is almost always visible on the page
-   - Extract the exact price with currency symbol as shown
-4. RATINGS: If available, extract ratings information (e.g., "4.5/5", "4.5 stars", "4322 ratings")
-5. INCI: Use the provided INCI list if available, otherwise extract from text. Ensure all ingredients are included. Look for ingredient lists, "Ingredients:" sections, or INCI declarations.
-6. BENEFITS: Extract all mentioned benefits (e.g., "brightens skin", "reduces wrinkles", "hydrates", "boosts glow")
-7. CLAIMS: Extract all marketing claims (e.g., "100% plant-based", "dermatologically tested", "suitable for sensitive skin", "primer & moisturizer")
-8. BOOLEAN ATTRIBUTES: This is CRITICAL - Determine these attributes carefully:
+DETAILED EXTRACTION INSTRUCTIONS:
+1. PRODUCT NAME: Extract ONLY from the "Full Extracted Text from Page" above. Look for product titles, headings, or product names. If not found, return null.
+2. BRAND NAME: Extract ONLY from the scraped text. Look for brand names, manufacturer names, or company names. If not found, return null.
+3. PRICE (MRP ONLY): 
+   - **FIRST**: Use the "Extracted MRP from Page" shown above if available - this is the exact MRP from the page
+   - **ONLY IF NOT PROVIDED ABOVE**: Search in the "Full Extracted Text from Page" for MRP (Maximum Retail Price) patterns
+   - **CRITICAL**: Extract ONLY MRP - do NOT extract selling price, discounted price, or any other price type
+   - **EXCLUDE**: Do NOT extract price ranges (e.g., "₹500-₹1000"), per ml pricing (e.g., "₹100/ml"), or per unit pricing
+   - Extract the EXACT MRP with currency symbol as shown in the text (e.g., "₹999" or "₹1,299")
+   - Look for keywords: "MRP", "Maximum Retail Price", "M.R.P."
+   - If MRP is not found in the text, return null - DO NOT make up a price or use selling price
+4. RATINGS: Extract ONLY if explicitly mentioned in the scraped text (e.g., "4.5/5", "4.5 stars", "4322 ratings"). If not found, return null.
+5. INCI INGREDIENTS: 
+   - **CRITICAL**: If "Scraped INCI Ingredients" are provided above, you MUST use those EXACT ingredients in the same order
+   - **ONLY IF NOT PROVIDED**: Extract from the "Full Extracted Text from Page" by looking for ingredient lists, "Ingredients:" sections, or INCI declarations
+   - Do NOT add ingredients that are not in the scraped list or text
+   - Do NOT remove ingredients that are in the scraped list
+6. BENEFITS: Extract ONLY benefits explicitly mentioned in the scraped text (e.g., "brightens skin", "reduces wrinkles", "hydrates", "boosts glow"). If not found, return empty array [].
+7. CLAIMS: Extract ONLY claims explicitly mentioned in the scraped text (e.g., "100% plant-based", "dermatologically tested", "suitable for sensitive skin"). If not found, return empty array [].
+8. BOOLEAN ATTRIBUTES: Determine ONLY from explicit information in the scraped text or INCI ingredients:
    - SULPHATE_FREE: 
-     * Set to FALSE if ingredients contain: Sodium Lauryl Sulfate, Sodium Laureth Sulfate, Ammonium Lauryl Sulfate, SLES, SLS, or any "sulfate"/"sulphate"
-     * Set to TRUE if text explicitly states "sulphate-free", "sulfate-free", or "sulphate free"
-     * Set to NULL only if you cannot determine from ingredients or text
+     * Set to FALSE if the INCI ingredients list contains: Sodium Lauryl Sulfate, Sodium Laureth Sulfate, Ammonium Lauryl Sulfate, SLES, SLS, or any "sulfate"/"sulphate"
+     * Set to TRUE ONLY if text explicitly states "sulphate-free", "sulfate-free", or "sulphate free"
+     * Set to NULL if you cannot determine from ingredients or text
    - PARABEN_FREE:
-     * Set to FALSE if ingredients contain: Methylparaben, Ethylparaben, Propylparaben, Butylparaben, Isobutylparaben, Benzylparaben, or any "paraben"
-     * Set to TRUE if text explicitly states "paraben-free" or "paraben free"
-     * Set to NULL only if you cannot determine from ingredients or text
+     * Set to FALSE if the INCI ingredients list contains: Methylparaben, Ethylparaben, Propylparaben, Butylparaben, Isobutylparaben, Benzylparaben, or any "paraben"
+     * Set to TRUE ONLY if text explicitly states "paraben-free" or "paraben free"
+     * Set to NULL if you cannot determine from ingredients or text
    - FRAGRANCE_FREE:
-     * Set to FALSE if ingredients contain: Parfum, Fragrance, Aroma, Perfume
-     * Set to TRUE if text explicitly states "fragrance-free", "fragrance free", or "unscented"
-     * Set to NULL only if you cannot determine from ingredients or text
+     * Set to FALSE if the INCI ingredients list contains: Parfum, Fragrance, Aroma, Perfume
+     * Set to TRUE ONLY if text explicitly states "fragrance-free", "fragrance free", or "unscented"
+     * Set to NULL if you cannot determine from ingredients or text
    - OTHER ATTRIBUTES (cruelty_free, vegan, organic, non_comedogenic, hypoallergenic):
-     * Determine from explicit claims in text (e.g., "cruelty-free", "vegan", "organic")
-     * Look for certifications, labels, or product descriptions
-     * Set to NULL only if truly not available
-   - IMPORTANT: Always check the INCI ingredients list provided above - if it contains the ingredient, set the corresponding attribute to FALSE
-   - IMPORTANT: If the text explicitly claims "X-free", set it to TRUE even if you don't see the ingredient
-9. URL CONTEXT: If a URL is provided, use it to understand the source (e.g., nykaa.com, amazon.in, flipkart.com) and extract information accordingly. E-commerce sites typically have price, ratings, and detailed product information prominently displayed.
-10. Use null ONLY if information is truly not available after thorough search
-11. Return ONLY valid JSON, no additional text or explanations
+     * Set to TRUE ONLY if explicitly stated in the scraped text (e.g., "cruelty-free", "vegan", "organic")
+     * Set to NULL if not explicitly mentioned - do NOT infer
+9. **VALIDATION CHECK**: Before returning, verify:
+   - Price (MRP) matches the "Extracted MRP from Page" if provided
+   - Price is MRP only, not selling price, not a range, not per ml
+   - INCI ingredients match the "Scraped INCI Ingredients" if provided
+   - All other data is present in the "Full Extracted Text from Page"
+10. Return ONLY valid JSON, no additional text or explanations
 
 Return the JSON comparison:"""
 
@@ -2580,9 +2644,25 @@ Return the JSON comparison:"""
         for idx, product_data in enumerate(processed_products):
             claude_product_data = all_products_data[idx] if idx < len(all_products_data) else {}
             
-            # Merge with actual INCI if we extracted it (prefer our extraction if available)
-            final_inci = claude_product_data.get("inci", []) if claude_product_data.get("inci") else product_data["inci"]
+            # CRITICAL: Prefer scraped INCI over AI-extracted INCI to ensure accuracy
+            # If we scraped ingredients from the URL, use those EXACT ingredients
+            if product_data.get("inci") and len(product_data["inci"]) > 0:
+                final_inci = product_data["inci"]
+                print(f"Product {idx+1}: Using scraped INCI ingredients ({len(final_inci)} ingredients) instead of AI-extracted")
+            elif claude_product_data.get("inci") and len(claude_product_data.get("inci", [])) > 0:
+                final_inci = claude_product_data.get("inci", [])
+                print(f"Product {idx+1}: Using AI-extracted INCI ingredients ({len(final_inci)} ingredients)")
+            else:
+                final_inci = []
+                print(f"Product {idx+1}: No INCI ingredients found")
             claude_product_data["inci"] = final_inci
+            
+            # CRITICAL: Prefer extracted MRP from scraping over AI-extracted price
+            if product_data.get("extracted_price"):
+                claude_product_data["price"] = product_data["extracted_price"]
+                print(f"Product {idx+1}: Using scraped MRP: {product_data['extracted_price']}")
+            elif not claude_product_data.get("price"):
+                print(f"Product {idx+1}: No MRP found in scraped text or AI extraction")
             
             # Add extracted text
             claude_product_data["extracted_text"] = product_data["text"]
