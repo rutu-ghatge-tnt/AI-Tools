@@ -10,6 +10,11 @@ import os
 import json
 import re
 from typing import List, Dict, Optional
+from app.ai_ingredient_intelligence.logic.formulynx_taxonomy import (
+    FORMULYNX_CANONICAL_TAXONOMY,
+    get_price_tier_by_mrp,
+    map_category_to_target_area
+)
 
 # Claude AI setup
 try:
@@ -38,27 +43,27 @@ else:
 
 def normalize_mrp_keyword(mrp: Optional[float]) -> str:
     """
-    Normalize MRP to a single fixed keyword based on price ranges.
+    Normalize MRP to a single fixed keyword based on Formulynx taxonomy price tiers.
     
-    Fixed MRP ranges:
-    - "budget": < 500
-    - "mid_range": 500 - 2000
-    - "premium": 2000 - 5000
-    - "luxury": > 5000
+    Formulynx Price Tiers:
+    - "mass_market": < ₹300
+    - "masstige": ₹300 - ₹700
+    - "premium": ₹700 - ₹1500
+    - "prestige": > ₹1500
     
-    Returns a single keyword string.
+    Returns a single keyword string (Formulynx taxonomy price_tier ID).
     """
     if mrp is None:
-        return "mid_range"  # Default
+        return "masstige"  # Default
     
-    if mrp < 500:
-        return "budget"
-    elif mrp < 2000:
-        return "mid_range"
-    elif mrp < 5000:
+    if mrp < 300:
+        return "mass_market"
+    elif mrp < 700:
+        return "masstige"
+    elif mrp < 1500:
         return "premium"
     else:
-        return "luxury"
+        return "prestige"
 
 
 def deduplicate_keywords(keywords_list: List[str]) -> List[str]:
@@ -781,12 +786,18 @@ async def extract_structured_product_info_with_ai(
     - mrp: MRP value
     - mrp_per_ml: MRP per ml
     - mrp_source: "scraped" or "ai_estimated"
-    - form: Product form (serum, cream, etc.)
+    - form: Product form (serum, cream, etc.) - Formulynx taxonomy form ID
     - functional_categories: List of functional categories
     - main_category: Main category (skincare, haircare, etc.)
     - subcategory: Subcategory
     - application: List of application types
     - keywords: Dict with product_formulation, mrp, application, functionality
+    - target_area: Formulynx target area ID
+    - product_type_id: Formulynx product type ID
+    - concerns: List of Formulynx concern IDs
+    - benefits: List of Formulynx benefit IDs
+    - price_tier: Formulynx price tier ID
+    - market_positioning: List of Formulynx market positioning IDs
     """
     if not claude_client:
         return {
@@ -804,7 +815,13 @@ async def extract_structured_product_info_with_ai(
                 "mrp": [],
                 "application": [],
                 "functionality": []
-            }
+            },
+            "target_area": None,
+            "product_type_id": None,
+            "concerns": [],
+            "benefits": [],
+            "price_tier": None,
+            "market_positioning": []
         }
     
     print(f"    [AI Structured Analysis] Analyzing product information...")
@@ -825,29 +842,58 @@ async def extract_structured_product_info_with_ai(
     
     context = "\n\n".join(context_parts) if context_parts else ""
     
+    # Build taxonomy keywords for AI prompt (hardcoded in prompt)
     system_prompt = """You are an expert cosmetic product analyst. Extract structured product information from the provided data.
 
+You MUST use Formulynx Canonical Taxonomy IDs for classification. This ensures consistency and enables proper categorization.
+
 Your task is to analyze the product and return ONLY a valid JSON object with the following structure:
-{
+{{
   "active_ingredients": [
-    {"name": "Niacinamide", "percentage": "10%"},
-    {"name": "Hyaluronic Acid", "percentage": "2%"}
+    {{"name": "Niacinamide", "percentage": "10%"}},
+    {{"name": "Hyaluronic Acid", "percentage": "2%"}}
   ],
   "mrp": 1299.00,
   "mrp_per_ml": 12.99,
   "mrp_source": "scraped" | "ai_estimated",
-  "form": "serum",
-  "functional_categories": ["brightening", "moisturizing", "anti_aging"],
-  "main_category": "skincare",
-  "subcategory": "face_serum",
-  "application": ["night_cream", "brightening", "daily_use"],
-  "keywords": {
-    "product_formulation": ["serum", "water_based", "lightweight"],
+  "keywords": {{
+    "product_formulation": ["serum", "water_based"],
+    "form": "serum",
     "mrp": ["premium"],
+    "price_tier": "premium",
+    "target_area": "face",
+    "product_type_id": "serum",
+    "concerns": ["dark_spots", "acne", "dryness"],
+    "benefits": ["brightening", "hydrating", "anti_aging"],
+    "functionality": ["brightening", "moisturizing", "anti_acne"],
+    "market_positioning": ["natural", "clinical"],
     "application": ["night_cream", "brightening", "daily_use"],
-    "functionality": ["brightening", "moisturizing", "acne_treatment"]
-  }
-}
+    "functional_categories": ["brightening", "moisturizing", "anti_aging"],
+    "main_category": "skincare",
+    "subcategory": "face_serum"
+  }}
+}}
+
+FORMULYNX TAXONOMY REFERENCE (use exact IDs):
+
+Available Forms: "cream", "lotion", "milk", "balm", "butter", "ointment", "pomade", "paste", "gel", "serum", "essence", "toner", "ampoule", "water", "emulsion", "fluid", "drops", "oil", "cleansing_balm", "spray", "mist", "aerosol", "stick", "bar", "powder", "wax", "foam", "mousse", "whip", "sheet", "patches", "pad", "scrub", "peel", "clay"
+
+Target Areas: "face", "undereye", "lips", "neck", "body", "hands", "feet", "scalp", "hair"
+
+Product Types for Face: "cleanser", "exfoliator", "toner", "serum", "spot_treatment", "moisturizer", "face_oil", "sunscreen", "mask", "face_mist"
+Product Types for Hair: "shampoo", "conditioner", "hair_mask", "hair_serum", "hair_oil", "scalp_treatment", "hair_spray", "styling_cream", "styling_gel", "mousse", "texturizer", "pomade_wax", "heat_protectant", "uv_protectant", "color_care"
+
+Concerns for Face: "dark_spots", "uneven_tone", "melasma", "post_inflammatory_hyperpigmentation", "sun_spots", "dullness", "tan", "sallowness", "fine_lines", "wrinkles", "deep_wrinkles", "sagging", "loss_of_elasticity", "crepey_skin", "volume_loss", "large_pores", "rough_texture", "uneven_texture", "congestion", "milia", "acne", "blackheads", "whiteheads", "cystic_acne", "fungal_acne", "acne_scars", "excess_sebum", "dryness", "dehydration", "flakiness", "tight_skin", "compromised_barrier", "trans_epidermal_water_loss", "redness", "rosacea", "irritation", "reactive_skin", "eczema", "psoriasis", "contact_dermatitis", "oiliness", "enlarged_oil_glands", "combination_skin"
+
+Benefits for Face: "hydrating", "moisturizing", "barrier_repair", "plumping", "brightening", "dark_spot_correcting", "tone_evening", "radiance_boosting", "detan", "anti_aging", "anti_wrinkle", "firming", "lifting", "collagen_boosting", "elasticity_improving", "anti_acne", "pore_minimizing", "oil_control", "mattifying", "purifying", "clarifying", "exfoliating", "smoothening", "resurfacing", "cell_renewal", "soothing", "anti_inflammatory", "redness_reducing", "sun_protection", "antioxidant", "pollution_protection", "nourishing", "revitalizing", "strengthening"
+
+Market Positioning: "natural", "organic", "clinical", "ayurvedic", "korean", "japanese", "french", "sustainable", "vegan", "cruelty_free", "fragrance_free", "dermat_tested", "salon_professional", "pharmacy", "luxury", "clean_beauty", "reef_safe", "waterless", "indie"
+
+Price Tiers (based on MRP):
+- "mass_market" for MRP < ₹300
+- "masstige" for MRP ₹300-₹700
+- "premium" for MRP ₹700-₹1500
+- "prestige" for MRP > ₹1500
 
 RULES:
 1. **active_ingredients**: Extract active ingredients with percentages if mentioned. If percentage not available, set to null.
@@ -866,32 +912,23 @@ RULES:
    - Common sizes: 30ml, 50ml, 100ml, 200ml
    - If volume unknown, estimate based on product type (serums usually 30ml, creams 50ml)
 
-4. **form**: Single value from: "cream", "lotion", "serum", "gel", "toner", "cleanser", "shampoo", "conditioner", "mask", "scrub", "oil", "balm", "foam", "mist", "essence", "emulsion"
-   - Determine from product name, description, or subcategory
+4. **keywords**: ALL taxonomy fields MUST be inside the keywords object:
+    - **product_formulation**: Array of Formulynx form IDs (e.g., ["serum", "water_based"])
+    - **form**: Single primary Formulynx form ID (e.g., "serum", "cream", "gel")
+    - **mrp**: Array with EXACTLY ONE Formulynx price_tier ID: ["mass_market"], ["masstige"], ["premium"], or ["prestige"]
+    - **price_tier**: Single Formulynx price tier ID (same as mrp[0])
+    - **target_area**: Single Formulynx target area ID: "face", "hair", "body", "lips", "undereye", "neck", "hands", "feet", "scalp"
+    - **product_type_id**: Single Formulynx product type ID: "cleanser", "serum", "moisturizer", "shampoo", etc.
+    - **concerns**: Array of Formulynx concern IDs (e.g., ["acne", "dark_spots", "dryness"])
+    - **benefits**: Array of Formulynx benefit IDs (e.g., ["brightening", "hydrating", "anti_aging"])
+    - **functionality**: Array of Formulynx benefit IDs (same as benefits, for backward compatibility)
+    - **market_positioning**: Array of Formulynx market positioning IDs (e.g., ["natural", "clinical"])
+    - **application**: Array of application keywords (legacy)
+    - **functional_categories**: Array of functional categories (legacy)
+    - **main_category**: "skincare", "haircare", "lipcare", "bodycare" (legacy)
+    - **subcategory**: Product subcategory (legacy)
 
-5. **functional_categories**: Array of functional benefits from: "moisturizing", "brightening", "anti_aging", "acne_treatment", "soothing", "exfoliating", "cleansing", "sunscreen", "hair_repair", "volumizing", "color_protection", "dandruff_control", "lip_care", "body_care"
-   - Extract from ingredients (e.g., Niacinamide → brightening, Hyaluronic Acid → moisturizing)
-   - Extract from product claims/description
-
-6. **main_category**: "skincare", "haircare", "lipcare", "bodycare"
-   - Determine from product name, URL, or ingredient profile
-
-7. **subcategory**: Specific product type (e.g., "face_serum", "cleanser", "shampoo")
-   - Be specific and use lowercase with underscores
-
-8. **application**: Array from: "night_cream", "day_cream", "sun_protection", "brightening", "anti_aging", "moisturizing", "cleansing", "exfoliating", "repair", "volumizing", "smoothing", "color_protection", "damage_repair", "hair_growth", "dandruff_control", "lip_balm", "lip_tint", "body_moisturizer", "body_scrub"
-   - Extract from product name, description, or claims
-
-9. **keywords**: Organize keywords by category:
-   - **product_formulation**: Form-related keywords (e.g., "serum", "water_based", "oil_free", "gel_texture", "lightweight")
-   - **mrp**: MUST return EXACTLY ONE keyword from these fixed options based on MRP value:
-     * "budget" for MRP < 500
-     * "mid_range" for MRP 500-2000
-     * "premium" for MRP 2000-5000
-     * "luxury" for MRP > 5000
-     * Return ONLY ONE keyword, not multiple. Use the exact names above.
-   - **application**: Use case keywords (same as application field) - avoid duplicates
-   - **functionality**: Functional benefit keywords (same as functional_categories) - avoid duplicates
+CRITICAL: ALL taxonomy fields (form, target_area, product_type_id, concerns, benefits, price_tier, market_positioning) MUST be inside the keywords object, NOT at the top level of the response.
 
 Return ONLY valid JSON, no markdown code blocks, no explanations."""
 
@@ -959,9 +996,89 @@ Extract all fields as specified in the system prompt. Return ONLY the JSON objec
             if field in result and not isinstance(result[field], list):
                 result[field] = []
         
-        # Clean and normalize keywords
+        # Move taxonomy fields from structured_analysis to keywords
         mrp_value = result.get("mrp")
-        result["keywords"] = clean_keywords(result.get("keywords", {}), mrp_value)
+        keywords = result.get("keywords", {})
+        
+        # Extract taxonomy fields from result (AI may return them at top level or in structured_analysis)
+        target_area = result.pop("target_area", None)
+        product_type_id = result.pop("product_type_id", None)
+        concerns = result.pop("concerns", [])
+        benefits = result.pop("benefits", [])
+        price_tier = result.pop("price_tier", None)
+        market_positioning = result.pop("market_positioning", [])
+        form = result.pop("form", None)
+        functional_categories = result.pop("functional_categories", [])
+        main_category = result.pop("main_category", None)
+        subcategory = result.pop("subcategory", None)
+        application = result.pop("application", [])
+        
+        # Map legacy fields if taxonomy fields not provided
+        if not target_area and main_category:
+            target_area = map_category_to_target_area(main_category)
+        
+        if not product_type_id and subcategory:
+            subcategory_lower = subcategory.lower()
+            if "serum" in subcategory_lower:
+                product_type_id = "serum"
+            elif "cleanser" in subcategory_lower:
+                product_type_id = "cleanser"
+            elif "moisturizer" in subcategory_lower or "cream" in subcategory_lower:
+                product_type_id = "moisturizer"
+            elif "toner" in subcategory_lower:
+                product_type_id = "toner"
+            elif "sunscreen" in subcategory_lower or "spf" in subcategory_lower:
+                product_type_id = "sunscreen"
+            elif "mask" in subcategory_lower:
+                product_type_id = "mask"
+            elif "shampoo" in subcategory_lower:
+                product_type_id = "shampoo"
+            elif "conditioner" in subcategory_lower:
+                product_type_id = "conditioner"
+        
+        if not price_tier:
+            price_tier = get_price_tier_by_mrp(mrp_value)
+        
+        # Ensure arrays are lists
+        if not isinstance(concerns, list):
+            concerns = []
+        if not isinstance(benefits, list):
+            benefits = []
+        if not isinstance(market_positioning, list):
+            market_positioning = []
+        if not isinstance(functional_categories, list):
+            functional_categories = []
+        if not isinstance(application, list):
+            application = []
+        
+        # Build keywords object with all taxonomy fields
+        keywords["form"] = form
+        keywords["target_area"] = target_area
+        keywords["product_type_id"] = product_type_id
+        keywords["concerns"] = concerns
+        keywords["benefits"] = benefits
+        keywords["price_tier"] = price_tier
+        keywords["market_positioning"] = market_positioning
+        keywords["functional_categories"] = functional_categories
+        keywords["main_category"] = main_category
+        keywords["subcategory"] = subcategory
+        
+        # Update product_formulation to include form if not already there
+        if form and form not in keywords.get("product_formulation", []):
+            if "product_formulation" not in keywords:
+                keywords["product_formulation"] = []
+            keywords["product_formulation"].append(form)
+        
+        # Update functionality to include benefits if not already there
+        if benefits:
+            if "functionality" not in keywords:
+                keywords["functionality"] = []
+            for benefit in benefits:
+                if benefit not in keywords["functionality"]:
+                    keywords["functionality"].append(benefit)
+        
+        # Clean and normalize keywords (handles MRP normalization)
+        result["keywords"] = clean_keywords(keywords, mrp_value)
         
         print(f"    ✅ AI Structured Analysis completed")
         return result
@@ -984,6 +1101,22 @@ Extract all fields as specified in the system prompt. Return ONLY the JSON objec
                 "mrp": [],
                 "application": [],
                 "functionality": []
+            },
+            "keywords": {
+                "product_formulation": [],
+                "mrp": [],
+                "application": [],
+                "functionality": [],
+                "form": None,
+                "target_area": None,
+                "product_type_id": None,
+                "concerns": [],
+                "benefits": [],
+                "price_tier": None,
+                "market_positioning": [],
+                "functional_categories": [],
+                "main_category": None,
+                "subcategory": None
             }
         }
     except Exception as e:
@@ -995,15 +1128,20 @@ Extract all fields as specified in the system prompt. Return ONLY the JSON objec
             "mrp": None,
             "mrp_per_ml": None,
             "mrp_source": None,
-            "form": None,
-            "functional_categories": [],
-            "main_category": None,
-            "subcategory": None,
-            "application": [],
             "keywords": {
                 "product_formulation": [],
                 "mrp": [],
                 "application": [],
-                "functionality": []
+                "functionality": [],
+                "form": None,
+                "target_area": None,
+                "product_type_id": None,
+                "concerns": [],
+                "benefits": [],
+                "price_tier": None,
+                "market_positioning": [],
+                "functional_categories": [],
+                "main_category": None,
+                "subcategory": None
             }
         }

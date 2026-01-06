@@ -11,11 +11,14 @@ import os
 import json
 import asyncio
 from typing import List, Dict, Optional
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, HTTPException, Depends
+from bson import ObjectId
 
 from app.ai_ingredient_intelligence.auth import verify_jwt_token
 from app.ai_ingredient_intelligence.logic.url_scraper import URLScraper
 from app.ai_ingredient_intelligence.utils.inci_parser import parse_inci_string
+from app.ai_ingredient_intelligence.db.collections import compare_history_col
 from app.ai_ingredient_intelligence.models.schemas import (
     CompareProductsResponse,
     ProductComparisonItem
@@ -55,6 +58,36 @@ async def compare_products(
     """
     start = time.time()
     scraper = None
+    
+    # 🔹 Auto-save: Extract user info and required name/tag for history
+    user_id_value = current_user.get("user_id") or current_user.get("_id")
+    name = payload.get("name", "").strip() if payload.get("name") else ""  # Required: custom name for history
+    tag = payload.get("tag")  # Optional: tag for history
+    notes = payload.get("notes")  # Optional: notes for history
+    provided_history_id = payload.get("history_id")  # Optional: reuse existing history item
+    history_id = None
+    
+    # Validate name is provided if auto-save is enabled (user_id is present)
+    if user_id_value and not provided_history_id and not name:
+        raise HTTPException(status_code=400, detail="name is required for auto-save")
+    
+    # Validate history_id if provided
+    if provided_history_id:
+        try:
+            if ObjectId.is_valid(provided_history_id):
+                existing_item = await compare_history_col.find_one({
+                    "_id": ObjectId(provided_history_id),
+                    "user_id": user_id_value
+                })
+                if existing_item:
+                    history_id = provided_history_id
+                    print(f"[AUTO-SAVE] Using existing history_id: {history_id}")
+                else:
+                    print(f"[AUTO-SAVE] Warning: Provided history_id {provided_history_id} not found or doesn't belong to user, creating new one")
+            else:
+                print(f"[AUTO-SAVE] Warning: Invalid history_id format: {provided_history_id}, creating new one")
+        except Exception as e:
+            print(f"[AUTO-SAVE] Warning: Error validating history_id: {e}, creating new one")
     
     try:
         # Parse products from payload
@@ -114,13 +147,23 @@ async def compare_products(
                     except:
                         pass
             else:
-                # INCI input - parse directly first, then use Claude to clean if needed
-                product_data["text"] = product_input
+                # INCI input - validate it's a list
+                if not isinstance(product_input, list):
+                    raise HTTPException(status_code=400, detail=f"Product {product_num} input must be an array of strings when input_type is 'inci'")
+                
+                if not product_input:
+                    raise HTTPException(status_code=400, detail=f"Product {product_num} INCI list cannot be empty")
+                
+                # Parse INCI list (handles list of strings, each may contain separators)
+                product_data["text"] = ", ".join(product_input)  # Join for display
                 product_data["inci"] = parse_inci_string(product_input)
+                
                 # Use Claude to clean and validate INCI list if we have a scraper
                 if product_scraper and product_data["inci"]:
                     try:
-                        cleaned_inci = await product_scraper.extract_ingredients_from_text(product_input)
+                        # Join for Claude text extraction
+                        inci_text = ", ".join(product_input)
+                        cleaned_inci = await product_scraper.extract_ingredients_from_text(inci_text)
                         if cleaned_inci:
                             product_data["inci"] = cleaned_inci
                     except:
@@ -562,16 +605,95 @@ CRITICAL: NEVER use null. Always provide a value (even if it's "Unknown" for tex
         # Calculate processing time
         processing_time = time.time() - start
         
+        # 🔹 Auto-save: Create or update history before processing completes
+        if user_id_value and not history_id:
+            try:
+                # Build products array for history
+                products_array = []
+                for product in products_list:
+                    products_array.append({
+                        "input": product.get("input", ""),
+                        "input_type": product.get("input_type", "inci")
+                    })
+                
+                # Check if there's an existing history item with same products
+                existing_history = await compare_history_col.find_one({
+                    "user_id": user_id_value,
+                    "products": products_array
+                })
+                
+                if existing_history:
+                    history_id = str(existing_history["_id"])
+                    print(f"[AUTO-SAVE] Found existing history item with same products, reusing history_id: {history_id}")
+                    
+                    # Reset status to in_progress
+                    await compare_history_col.update_one(
+                        {"_id": ObjectId(history_id)},
+                        {"$set": {
+                            "status": "in_progress",
+                            "name": name,
+                            "tag": tag,
+                            "notes": notes or ""
+                        }}
+                    )
+                    print(f"[AUTO-SAVE] Reset existing history item {history_id} status to 'in_progress'")
+                else:
+                    # Create new history document with "in_progress" status
+                    history_doc = {
+                        "user_id": user_id_value,
+                        "name": name,
+                        "tag": tag,
+                        "notes": notes or "",
+                        "products": products_array,
+                        "status": "in_progress",
+                        "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
+                    }
+                    
+                    result = await compare_history_col.insert_one(history_doc)
+                    history_id = str(result.inserted_id)
+                    print(f"[AUTO-SAVE] Saved initial state with history_id: {history_id}")
+            except Exception as e:
+                print(f"[AUTO-SAVE] Warning: Failed to save initial state: {e}")
+                import traceback
+                traceback.print_exc()
+                # Continue without history_id
+        
         # Convert to ProductComparisonItem objects
         product_items = [ProductComparisonItem(**product_data) for product_data in final_products_data]
         
-        # Build response
+        # Build response with history_id included
         response_data = {
             "products": product_items,
-            "processing_time": processing_time
+            "processing_time": processing_time,
+            "id": history_id if history_id else None
         }
         
-        return CompareProductsResponse(**response_data)
+        response = CompareProductsResponse(**response_data)
+        
+        # 🔹 Auto-save: Update history with "completed" status and comparison_result
+        if history_id and user_id_value:
+            try:
+                # Convert response to dict for storage
+                comparison_result_dict = response.dict(exclude_none=True) if hasattr(response, "dict") else response.model_dump(exclude_none=True)
+                
+                update_doc = {
+                    "status": "completed",
+                    "comparison_result": comparison_result_dict,
+                    "processing_time": processing_time
+                }
+                
+                await compare_history_col.update_one(
+                    {"_id": ObjectId(history_id), "user_id": user_id_value},
+                    {"$set": update_doc}
+                )
+                print(f"[AUTO-SAVE] Updated history {history_id} with completed status")
+            except Exception as e:
+                print(f"[AUTO-SAVE] Warning: Failed to update history: {e}")
+                import traceback
+                traceback.print_exc()
+                # Don't fail the response if saving fails
+        
+        return response
         
     except HTTPException:
         raise

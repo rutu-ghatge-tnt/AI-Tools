@@ -158,7 +158,7 @@ async def match_inci_names(
     
     # Identify INCI combinations (ingredients with "(and)", "&", or "and" when other separators exist)
     # These should be searched as combinations in MongoDB
-    from app.ai_ingredient_intelligence.utils.inci_parser import parse_inci_string
+    from app.ai_ingredient_intelligence.utils.inci_parser import parse_inci_string, split_combination
     import re
     
     # Parse to identify combinations
@@ -169,34 +169,23 @@ async def match_inci_names(
     single_ingredients = []  # Regular single ingredients
     
     for ingredient in parsed_ingredients:
-        # Check if this is a combination (contains "(and)", "&", or multiple "and" when other separators exist)
+        # Check if this is a combination (contains "(and)", "&", or "and")
         normalized_ing = ingredient.lower()
         has_and_paren = bool(re.search(r'\(and\)', normalized_ing, re.IGNORECASE))
         has_ampersand = '&' in normalized_ing
-        has_multiple_and = len(re.findall(r'\s+and\s+', normalized_ing, re.IGNORECASE)) > 0
+        has_and_word = bool(re.search(r'\s+and\s+', normalized_ing, re.IGNORECASE))
         
-        # Check if there are other separators in the original input
+        # Check if there are other separators in the original input (for "and" word combinations)
         original_has_separators = any(sep in ', '.join(inci_names) for sep in [',', ';', '|', '\n'])
         
-        if (has_and_paren or has_ampersand or (has_multiple_and and original_has_separators)):
-            # This is a combination - extract individual INCI names
-            # Split by "(and)", "&", or "and" while preserving the ingredient names
-            combo_text = ingredient  # Keep original case for better matching
+        # Determine if this is a combination
+        is_combination = has_and_paren or has_ampersand or (has_and_word and original_has_separators)
+        
+        if is_combination:
+            # Use the centralized helper function to split combinations
+            combo_inci_list = split_combination(ingredient)
             
-            # Split by combination separators
-            if has_and_paren:
-                # Split by "(and)" or "(And)" etc.
-                combo_parts = re.split(r'\s*\(and\)\s*', combo_text, flags=re.IGNORECASE)
-            elif has_ampersand:
-                # Split by "&"
-                combo_parts = re.split(r'\s+&\s+', combo_text)
-            else:
-                # Split by "and"
-                combo_parts = re.split(r'\s+and\s+', combo_text, flags=re.IGNORECASE)
-            
-            # Clean and filter parts
-            combo_inci_list = [part.strip() for part in combo_parts if part.strip() and len(part.strip()) > 2]
-            
+            # If we got multiple parts, it's a valid combination
             if len(combo_inci_list) > 1:
                 combinations.append((ingredient, combo_inci_list))
                 print(f"[INFO] Detected INCI combination: '{ingredient}' -> {combo_inci_list}")
