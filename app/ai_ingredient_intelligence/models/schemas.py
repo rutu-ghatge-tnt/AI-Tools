@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from fastapi import UploadFile
 
 class AnalyzeInciRequest(BaseModel):
-    inci_names: Optional[List[str]] = Field(None, description="Raw INCI names from product label")
+    inci_names: List[str] = Field(..., description="Raw INCI names from product label (array of strings)")
     # New fields for different input types
     pdf_file: Optional[UploadFile] = Field(None, description="PDF file containing ingredient list")
     image_file: Optional[UploadFile] = Field(None, description="Image file containing ingredient list")
@@ -98,7 +98,7 @@ class ProductComparisonItem(BaseModel):
 
 class ProductInput(BaseModel):
     """Schema for a single product input"""
-    input: str = Field(..., description="URL or INCI string")
+    input: Union[str, List[str]] = Field(..., description="URL (str) or INCI list (List[str])")
     input_type: str = Field(..., description="Type of input: 'url' or 'inci'")
 
 
@@ -361,7 +361,7 @@ class MarketResearchProduct(BaseModel):
 class MarketResearchRequest(BaseModel):
     """Request schema for market research"""
     url: Optional[str] = Field(None, description="Product URL to extract ingredients from")
-    inci: Optional[str] = Field(None, description="INCI ingredient list")
+    inci: Optional[List[str]] = Field(None, description="INCI ingredient list (array of strings)")
     input_type: str = Field(..., description="Type of input: 'url' or 'inci'")
 
 
@@ -410,7 +410,7 @@ class MarketResearchOverviewRequest(BaseModel):
     """Request schema for market research overview endpoint"""
     input_type: str = Field(..., description="Type of input: 'url' or 'inci'")
     url: Optional[str] = Field(None, description="Product URL (required if input_type is 'url')")
-    inci: Optional[str] = Field(None, description="INCI ingredient list (required if input_type is 'inci')")
+    inci: Optional[List[str]] = Field(None, description="INCI ingredient list (required if input_type is 'inci', array of strings)")
     # Optional: provide category info if already known (to avoid re-analysis)
     primary_category: Optional[str] = Field(None, description="Primary category (if already known)")
     subcategory: Optional[str] = Field(None, description="Subcategory (if already known)")
@@ -500,32 +500,49 @@ class ActiveIngredient(BaseModel):
 
 
 class ProductKeywords(BaseModel):
-    """Schema for keywords organized by feature category"""
-    product_formulation: List[str] = Field(default_factory=list, description="Product form/type keywords (e.g., 'serum', 'cream', 'water_based')")
-    mrp: List[str] = Field(default_factory=list, description="Price range keywords (e.g., 'premium', 'mid_range', 'budget')")
+    """Schema for keywords organized by feature category - includes all Formulynx taxonomy fields"""
+    # Form-related keywords
+    product_formulation: List[str] = Field(default_factory=list, description="Product form keywords - uses Formulynx taxonomy form IDs (e.g., 'serum', 'cream', 'gel')")
+    form: Optional[str] = Field(None, description="Primary product form - Formulynx taxonomy form ID (e.g., 'serum', 'cream', 'gel')")
+    
+    # Price tier
+    mrp: List[str] = Field(default_factory=list, description="Price range keywords - uses Formulynx taxonomy price_tier IDs (e.g., 'premium', 'masstige')")
+    price_tier: Optional[str] = Field(None, description="Price tier - Formulynx taxonomy price_tier ID: 'mass_market', 'masstige', 'premium', 'prestige'")
+    
+    # Application/Use case keywords
     application: List[str] = Field(default_factory=list, description="Use case keywords (e.g., 'night_cream', 'brightening', 'sun_protection')")
-    functionality: List[str] = Field(default_factory=list, description="Functional benefit keywords (e.g., 'brightening', 'moisturizing', 'acne_treatment')")
+    
+    # Functional benefit keywords
+    functionality: List[str] = Field(default_factory=list, description="Functional benefit keywords - uses Formulynx taxonomy benefit IDs (e.g., 'brightening', 'hydrating', 'anti_aging')")
+    benefits: List[str] = Field(default_factory=list, description="Formulynx benefit IDs (e.g., 'brightening', 'hydrating', 'anti_aging')")
+    
+    # Formulynx Taxonomy Fields
+    target_area: Optional[str] = Field(None, description="Formulynx target area ID (e.g., 'face', 'hair', 'body', 'lips', 'undereye', 'neck', 'hands', 'feet', 'scalp')")
+    product_type_id: Optional[str] = Field(None, description="Formulynx product type ID (e.g., 'cleanser', 'serum', 'moisturizer', 'shampoo')")
+    concerns: List[str] = Field(default_factory=list, description="Formulynx concern IDs (e.g., 'acne', 'dark_spots', 'dryness')")
+    market_positioning: List[str] = Field(default_factory=list, description="Formulynx market positioning IDs (e.g., 'natural', 'organic', 'clinical', 'korean')")
+    
+    # Legacy fields (for backward compatibility)
+    functional_categories: List[str] = Field(default_factory=list, description="Functional categories as keywords (legacy)")
+    main_category: Optional[str] = Field(None, description="Main category: skincare, haircare, lipcare, bodycare (legacy)")
+    subcategory: Optional[str] = Field(None, description="Subcategory/product type (legacy)")
 
 
 class ProductStructuredAnalysis(BaseModel):
-    """Schema for structured product analysis"""
+    """Schema for structured product analysis - only contains non-keyword data"""
     active_ingredients: List[ActiveIngredient] = Field(default_factory=list, description="Active ingredients with percentages")
     mrp: Optional[float] = Field(None, description="MRP of the product")
     mrp_per_ml: Optional[float] = Field(None, description="MRP per ml")
     mrp_source: Optional[str] = Field(None, description="Source of MRP: 'scraped' or 'ai_estimated'")
-    form: Optional[str] = Field(None, description="Product form: cream, lotion, serum, etc.")
-    functional_categories: List[str] = Field(default_factory=list, description="Functional categories as keywords")
-    main_category: Optional[str] = Field(None, description="Main category: skincare, haircare, lipcare, bodycare")
-    subcategory: Optional[str] = Field(None, description="Subcategory/product type")
-    application: List[str] = Field(default_factory=list, description="Application types as keywords")
-    # Note: keywords removed from here to avoid redundancy - use available_keywords in response instead
+    # Note: All taxonomy fields (form, target_area, product_type_id, concerns, benefits, price_tier, market_positioning) 
+    # are now in the keywords object, not here
 
 
 class ProductAnalysisRequest(BaseModel):
     """Request schema for product analysis endpoint"""
     input_type: str = Field(..., description="Type of input: 'url' or 'inci'")
     url: Optional[str] = Field(None, description="Product URL (required if input_type is 'url')")
-    inci: Optional[str] = Field(None, description="INCI ingredient list (required if input_type is 'inci')")
+    inci: Optional[List[str]] = Field(None, description="INCI ingredient list (required if input_type is 'inci', array of strings)")
     name: Optional[str] = Field(None, description="Name for history (optional)")
     tag: Optional[str] = Field(None, description="Tag for categorization (optional)")
 
@@ -557,7 +574,7 @@ class MarketResearchWithKeywordsRequest(BaseModel):
     """Request schema for market research with keywords"""
     input_type: str = Field(..., description="Type of input: 'url' or 'inci'")
     url: Optional[str] = Field(None, description="Product URL (required if input_type is 'url')")
-    inci: Optional[str] = Field(None, description="INCI ingredient list (required if input_type is 'inci')")
+    inci: Optional[List[str]] = Field(None, description="INCI ingredient list (required if input_type is 'inci', array of strings)")
     selected_keywords: Optional[ProductKeywords] = Field(None, description="Selected keywords for filtering")
     filters: Optional[Dict[str, Any]] = Field(None, description="Additional filters (price_range, brand, etc.)")
     page: int = Field(1, ge=1, description="Page number")
@@ -614,3 +631,94 @@ class MakeWishResponse(BaseModel):
     cost_analysis: Dict[str, Any] = Field(..., description="Stage 4: Cost analysis and pricing recommendations")
     compliance: Dict[str, Any] = Field(..., description="Stage 5: Regulatory compliance check")
     metadata: Dict[str, Any] = Field(..., description="Metadata about the generation process")
+
+
+# ============================================================================
+# FORMULYNX TAXONOMY SCHEMAS
+# ============================================================================
+
+class TaxonomyForm(BaseModel):
+    """Schema for a form in the taxonomy"""
+    id: str = Field(..., description="Form ID (e.g., 'serum', 'cream', 'gel')")
+    label: str = Field(..., description="Form label")
+    icon: Optional[str] = Field(None, description="Form icon")
+    description: Optional[str] = Field(None, description="Form description")
+    texture_feel: Optional[str] = Field(None, description="Texture feel category")
+
+
+class TaxonomyProductType(BaseModel):
+    """Schema for a product type in the taxonomy"""
+    id: str = Field(..., description="Product type ID")
+    label: str = Field(..., description="Product type label")
+    description: Optional[str] = Field(None, description="Product type description")
+    forms: List[str] = Field(default_factory=list, description="Valid form IDs for this product type")
+    sub_types: List[str] = Field(default_factory=list, description="Sub-type IDs")
+
+
+class TaxonomyConcern(BaseModel):
+    """Schema for a concern in the taxonomy"""
+    id: str = Field(..., description="Concern ID")
+    label: str = Field(..., description="Concern label")
+    parent: Optional[str] = Field(None, description="Parent concern category")
+
+
+class TaxonomyBenefit(BaseModel):
+    """Schema for a benefit in the taxonomy"""
+    id: str = Field(..., description="Benefit ID")
+    label: str = Field(..., description="Benefit label")
+    description: Optional[str] = Field(None, description="Benefit description")
+
+
+class TaxonomyTargetArea(BaseModel):
+    """Schema for a target area in the taxonomy"""
+    id: str = Field(..., description="Target area ID")
+    icon: Optional[str] = Field(None, description="Target area icon")
+    label: str = Field(..., description="Target area label")
+    category: Optional[str] = Field(None, description="Category (skin, hair, etc.)")
+    sub_areas: Optional[List[str]] = Field(None, description="Sub-area IDs")
+    product_types: List[TaxonomyProductType] = Field(default_factory=list, description="Product types for this target area")
+    concerns: List[TaxonomyConcern] = Field(default_factory=list, description="Concerns for this target area")
+    benefits: List[TaxonomyBenefit] = Field(default_factory=list, description="Benefits for this target area")
+
+
+class TaxonomyPriceTier(BaseModel):
+    """Schema for a price tier in the taxonomy"""
+    id: str = Field(..., description="Price tier ID")
+    label: str = Field(..., description="Price tier label")
+    range: str = Field(..., description="Price range")
+    icon: Optional[str] = Field(None, description="Price tier icon")
+    color: Optional[str] = Field(None, description="Price tier color")
+
+
+class TaxonomyMarketPositioning(BaseModel):
+    """Schema for market positioning in the taxonomy"""
+    id: str = Field(..., description="Market positioning ID")
+    label: str = Field(..., description="Market positioning label")
+
+
+class TaxonomyResponse(BaseModel):
+    """Response schema for complete taxonomy"""
+    forms: Dict[str, TaxonomyForm] = Field(..., description="All available forms")
+    target_areas: Dict[str, TaxonomyTargetArea] = Field(..., description="All target areas with their product types, concerns, and benefits")
+    price_tiers: List[TaxonomyPriceTier] = Field(..., description="All price tiers")
+    market_positioning: List[TaxonomyMarketPositioning] = Field(..., description="All market positioning options")
+
+
+class TaxonomyTargetAreaResponse(BaseModel):
+    """Response schema for a specific target area"""
+    target_area: TaxonomyTargetArea = Field(..., description="Target area details")
+
+
+class TaxonomyFormsResponse(BaseModel):
+    """Response schema for all forms"""
+    forms: Dict[str, TaxonomyForm] = Field(..., description="All available forms")
+
+
+class TaxonomyPriceTiersResponse(BaseModel):
+    """Response schema for price tiers"""
+    price_tiers: List[TaxonomyPriceTier] = Field(..., description="All price tiers")
+
+
+class TaxonomyMarketPositioningResponse(BaseModel):
+    """Response schema for market positioning"""
+    market_positioning: List[TaxonomyMarketPositioning] = Field(..., description="All market positioning options")

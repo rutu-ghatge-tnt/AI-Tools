@@ -745,15 +745,24 @@ async def market_research_analyze(
             
             input_data_value = url
         else:
-            inci = payload.get("inci", "").strip()
+            inci = payload.get("inci")
             if not inci:
                 raise HTTPException(status_code=400, detail="inci is required when input_type is 'inci'")
             
+            # Validate that inci is a list
+            if not isinstance(inci, list):
+                raise HTTPException(status_code=400, detail="inci must be an array of strings")
+            
+            if not inci:
+                raise HTTPException(status_code=400, detail="inci cannot be empty")
+            
+            # Parse INCI list (handles list of strings, each may contain separators)
             ingredients = parse_inci_string(inci)
             if not ingredients:
-                raise HTTPException(status_code=400, detail="No valid ingredients found in INCI string")
+                raise HTTPException(status_code=400, detail="No valid ingredients found in INCI list")
             
-            input_data_value = inci
+            # Store as comma-separated string for history
+            input_data_value = ", ".join(inci)
         
         # Perform AI structured analysis
         structured_data = await extract_structured_product_info_with_ai(
@@ -1260,14 +1269,21 @@ async def market_research(
             input_data_value = url  # Store URL for auto-save
         elif input_type == "inci":
             # INCI input
-            inci = payload.get("inci", "").strip()
+            inci = payload.get("inci")
             if not inci:
                 raise HTTPException(status_code=400, detail="inci is required when input_type is 'inci'")
             
-            # Parse INCI string
+            # Validate that inci is a list
+            if not isinstance(inci, list):
+                raise HTTPException(status_code=400, detail="inci must be an array of strings")
+            
+            if not inci:
+                raise HTTPException(status_code=400, detail="inci cannot be empty")
+            
+            # Parse INCI list (handles list of strings, each may contain separators)
             ingredients = parse_inci_string(inci)
-            extracted_text = inci
-            input_data_value = inci  # Store INCI for auto-save
+            extracted_text = ", ".join(inci)  # Join for display
+            input_data_value = ", ".join(inci)  # Store as comma-separated string for auto-save
             
             if not ingredients:
                 raise HTTPException(
@@ -2390,14 +2406,21 @@ async def market_research_products(
             input_data_value = url  # Store URL for auto-save
         elif input_type == "inci":
             # INCI input
-            inci = payload.get("inci", "").strip()
+            inci = payload.get("inci")
             if not inci:
                 raise HTTPException(status_code=400, detail="inci is required when input_type is 'inci'")
             
-            # Parse INCI string
+            # Validate that inci is a list
+            if not isinstance(inci, list):
+                raise HTTPException(status_code=400, detail="inci must be an array of strings")
+            
+            if not inci:
+                raise HTTPException(status_code=400, detail="inci cannot be empty")
+            
+            # Parse INCI list (handles list of strings, each may contain separators)
             ingredients = parse_inci_string(inci)
-            extracted_text = inci
-            input_data_value = inci  # Store INCI for auto-save
+            extracted_text = ", ".join(inci)  # Join for display
+            input_data_value = ", ".join(inci)  # Store as comma-separated string for auto-save
             
             if not ingredients:
                 raise HTTPException(
@@ -3098,12 +3121,20 @@ async def market_research_overview(
                     detail="No ingredients found on the product page. Please ensure the page contains ingredient information."
                 )
         elif input_type == "inci":
-            inci = payload.get("inci", "").strip()
+            inci = payload.get("inci")
             if not inci:
                 raise HTTPException(status_code=400, detail="inci is required when input_type is 'inci'")
             
+            # Validate that inci is a list
+            if not isinstance(inci, list):
+                raise HTTPException(status_code=400, detail="inci must be an array of strings")
+            
+            if not inci:
+                raise HTTPException(status_code=400, detail="inci cannot be empty")
+            
+            # Parse INCI list (handles list of strings, each may contain separators)
             ingredients = parse_inci_string(inci)
-            extracted_text = inci
+            extracted_text = ", ".join(inci)  # Join for display
             
             if not ingredients:
                 raise HTTPException(

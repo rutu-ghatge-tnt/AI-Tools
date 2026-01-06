@@ -173,6 +173,59 @@ def _parse_single_string(inci_str: str) -> List[str]:
         return ingredients
 
 
+def split_combination(combination_str: str) -> List[str]:
+    """
+    Split an INCI combination string into individual ingredient names.
+    
+    Handles combinations like:
+    - "Xylitylglucoside (and) Anhydroxylitol (and) Xylitol"
+    - "Acacia Senegal Gum & Xanthan Gum"
+    - "Ingredient1 and Ingredient2 and Ingredient3"
+    
+    Args:
+        combination_str: A combination string containing multiple ingredients
+        
+    Returns:
+        List of individual ingredient names
+        
+    Examples:
+        split_combination("Xylitylglucoside (and) Anhydroxylitol (and) Xylitol")
+        -> ["Xylitylglucoside", "Anhydroxylitol", "Xylitol"]
+        
+        split_combination("Acacia Senegal Gum & Xanthan Gum")
+        -> ["Acacia Senegal Gum", "Xanthan Gum"]
+    """
+    if not combination_str or not combination_str.strip():
+        return []
+    
+    combo_text = combination_str.strip()
+    
+    # Check for different combination patterns
+    has_and_paren = bool(re.search(r'\(and\)', combo_text, re.IGNORECASE))
+    has_ampersand = '&' in combo_text
+    has_and_word = bool(re.search(r'\s+and\s+', combo_text, re.IGNORECASE))
+    
+    # Split by combination separators (in order of specificity)
+    if has_and_paren:
+        # Split by "(and)" or "(And)" etc.
+        combo_parts = re.split(r'\s*\(and\)\s*', combo_text, flags=re.IGNORECASE)
+    elif has_ampersand:
+        # Split by "&" (with spaces around it)
+        combo_parts = re.split(r'\s+&\s+', combo_text)
+    elif has_and_word:
+        # Split by "and" (with spaces around it)
+        combo_parts = re.split(r'\s+and\s+', combo_text, flags=re.IGNORECASE)
+    else:
+        # Not a combination, return as single ingredient
+        return [combo_text]
+    
+    # Clean and filter parts
+    combo_inci_list = [part.strip() for part in combo_parts if part.strip() and len(part.strip()) > 2]
+    
+    # If we got multiple parts, return them; otherwise return original as single ingredient
+    return combo_inci_list if len(combo_inci_list) > 1 else [combo_text]
+
+
 def normalize_ingredient_name(name: str) -> str:
     """
     Normalize an ingredient name for comparison.

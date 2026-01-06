@@ -810,6 +810,15 @@ async def analyze_inci(
         raise HTTPException(status_code=400, detail="Missing required field: inci_names")
     
     inci_input = payload["inci_names"]
+    
+    # Validate that inci_names is a list
+    if not isinstance(inci_input, list):
+        raise HTTPException(status_code=400, detail="inci_names must be an array of strings")
+    
+    if not inci_input:
+        raise HTTPException(status_code=400, detail="inci_names cannot be empty")
+    
+    # Parse INCI names (handles list of strings, each may contain separators)
     ingredients = parse_inci_string(inci_input)
     
     if not ingredients:
@@ -3981,15 +3990,19 @@ async def analyze_and_report(
     
     # Parse INCI names
     inci_input = payload["inci_names"]
-    if isinstance(inci_input, str):
-        ingredients = parse_inci_string(inci_input)
-    elif isinstance(inci_input, list):
-        ingredients = inci_input
-    else:
-        raise HTTPException(status_code=400, detail="inci_names must be a string or list")
+    
+    # Validate that inci_names is a list
+    if not isinstance(inci_input, list):
+        raise HTTPException(status_code=400, detail="inci_names must be an array of strings")
+    
+    if not inci_input:
+        raise HTTPException(status_code=400, detail="inci_names cannot be empty")
+    
+    # Parse INCI names (handles list of strings, each may contain separators)
+    ingredients = parse_inci_string(inci_input)
     
     if not ingredients:
-        raise HTTPException(status_code=400, detail="No ingredients found in inci_names")
+        raise HTTPException(status_code=400, detail="No valid ingredients found after parsing")
     
     print(f"[DEBUG] Parsed {len(ingredients)} ingredients")
     
