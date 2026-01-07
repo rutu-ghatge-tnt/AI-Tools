@@ -1001,6 +1001,7 @@ async def market_research_products_paginated(
     page_size: int = Query(10, ge=1, le=100, description="Items per page"),
     sort_by: str = Query("match_score", description="Sort by: price_low, price_high, match_score"),
     filters: Optional[str] = Query(None, description="JSON string of additional filters"),
+    unlock_page: bool = Query(False, description="Flag to unlock page after credits are deducted (frontend should set this to true after calling credit deduction API)"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
@@ -1008,15 +1009,23 @@ async def market_research_products_paginated(
     
     Uses stored selected_keywords and structured_analysis from history to filter products.
     
+    Credit-Based Pagination:
+    - Pages 1-2 are free (automatically unlocked)
+    - Pages 3+ require credits (must be unlocked via unlock_page flag)
+    - Frontend should call credit deduction API first, then call this endpoint with unlock_page=true
+    - Once a page is unlocked, it remains unlocked for that history_id
+    
     Query Parameters:
     - history_id: History item ID (required)
     - page: Page number (default: 1)
     - page_size: Items per page (default: 10, max: 100)
     - sort_by: Sort method - "price_low", "price_high", or "match_score" (default: "match_score")
     - filters: JSON string of additional filters (optional)
+    - unlock_page: Set to true after deducting credits via third-party API (default: false)
     
     Example:
     GET /api/market-research/products/paginated?history_id=abc123&page=1&page_size=20&sort_by=price_low
+    GET /api/market-research/products/paginated?history_id=abc123&page=3&unlock_page=true
     """
     start = time.time()
     
@@ -1038,6 +1047,47 @@ async def market_research_products_paginated(
         
         if not history_item:
             raise HTTPException(status_code=404, detail="History item not found")
+        
+        # ========================================================================
+        # CREDIT-BASED PAGINATION LOGIC
+        # ========================================================================
+        # Get accessed_pages from history (pages user has unlocked)
+        accessed_pages = history_item.get("accessed_pages", [])
+        
+        # Pages 1-2 are free
+        FREE_PAGES_LIMIT = 2
+        
+        # Check if page requires credit
+        page_requires_credit = page > FREE_PAGES_LIMIT
+        is_page_unlocked = page in accessed_pages
+        
+        # Handle credit-based access control
+        if page_requires_credit and not is_page_unlocked:
+            # Page requires credit but is not unlocked
+            if unlock_page:
+                # Frontend has deducted credits - unlock the page
+                await market_research_history_col.update_one(
+                    {"_id": ObjectId(history_id)},
+                    {"$addToSet": {"accessed_pages": page}}  # $addToSet prevents duplicates
+                )
+                # Update accessed_pages for response
+                accessed_pages.append(page)
+                is_page_unlocked = True
+            else:
+                # Page not unlocked and no unlock flag - return error
+                raise HTTPException(
+                    status_code=402,
+                    detail=f"This page requires credits. Please unlock it first. Page {page} requires payment. Unlocked pages: {sorted(accessed_pages)}"
+                )
+        elif not page_requires_credit:
+            # Free page - add to accessed_pages if not already there (for tracking)
+            if page not in accessed_pages:
+                await market_research_history_col.update_one(
+                    {"_id": ObjectId(history_id)},
+                    {"$addToSet": {"accessed_pages": page}}
+                )
+                accessed_pages.append(page)
+        # ========================================================================
         
         # Get stored data
         structured_analysis_dict = history_item.get("structured_analysis")
@@ -1185,6 +1235,11 @@ async def market_research_products_paginated(
         
         processing_time = round(time.time() - start, 2)
         
+        # Determine next page unlock status
+        next_page = page + 1
+        next_page_requires_credit = next_page > FREE_PAGES_LIMIT
+        next_page_unlocked = next_page in accessed_pages if next_page_requires_credit else True
+        
         return MarketResearchPaginatedResponse(
             products=paginated_products,
             total_matched=total_matched,
@@ -1200,7 +1255,12 @@ async def market_research_products_paginated(
             primary_category=available_keywords.main_category if available_keywords else history_item.get("primary_category"),
             subcategory=available_keywords.subcategory if available_keywords else history_item.get("subcategory"),
             category_confidence=history_item.get("category_confidence"),
-            history_id=history_id
+            history_id=history_id,
+            page_requires_credit=page_requires_credit,
+            is_unlocked=is_page_unlocked if page_requires_credit else True,
+            unlocked_pages=sorted(accessed_pages),
+            next_page_requires_credit=next_page_requires_credit,
+            next_page_unlocked=next_page_unlocked
         )
         
     except HTTPException:

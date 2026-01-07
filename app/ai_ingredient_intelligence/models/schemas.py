@@ -625,6 +625,12 @@ class MarketResearchPaginatedResponse(BaseModel):
     subcategory: Optional[str] = Field(None, description="Subcategory")
     category_confidence: Optional[str] = Field(None, description="Category confidence")
     history_id: Optional[str] = Field(None, description="History item ID if saved")
+    # Credit-based pagination fields
+    page_requires_credit: bool = Field(False, description="Whether current page requires credits (pages > 2)")
+    is_unlocked: bool = Field(True, description="Whether current page is unlocked (always true for pages <= 2)")
+    unlocked_pages: List[int] = Field(default_factory=list, description="List of all unlocked pages for this history")
+    next_page_requires_credit: bool = Field(False, description="Whether next page requires credits")
+    next_page_unlocked: bool = Field(True, description="Whether next page is unlocked")
 
 
 # ============================================================================
