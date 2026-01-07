@@ -38,9 +38,29 @@ PLATFORM_DOMAINS = {
     "amazon": ["amazon.in", "amazon.com"],
     "nykaa": ["nykaa.com"],
     "flipkart": ["flipkart.com"],
-    "tira_beauty": ["tiabeauty.in", "tirabeauty.com"],
+    "tira_beauty": ["tiabeauty.in", "tirabeauty.com", "tira"],
     "sephora_india": ["sephora.in", "sephora.co.in"],
     "myntra": ["myntra.com"]
+}
+
+# Map Serper source names to normalized platform names
+SOURCE_TO_PLATFORM = {
+    "amazon.in": "amazon",
+    "amazon": "amazon",
+    "nykaa": "nykaa",
+    "myntra": "myntra",
+    "tira": "tira_beauty",
+    "tiabeauty": "tira_beauty",
+    "tirabeauty": "tira_beauty",
+    "sephora": "sephora_india",
+    "sephora india": "sephora_india",
+    "flipkart": "flipkart",
+    "purplle": "purplle",
+    "purplle.com": "purplle",
+    "jiomart": "jiomart",
+    "jiomart grocery": "jiomart",
+    "ajio": "ajio",
+    "ajio.com": "ajio"
 }
 
 # Platform display names
@@ -62,6 +82,117 @@ PLATFORM_LOGO_URLS = {
     "sephora_india": "https://www.sephora.in/favicon.ico",
     "myntra": "https://www.myntra.com/favicon.ico"
 }
+
+
+def is_valid_ecommerce_url(url: str) -> bool:
+    """
+    Check if URL is a valid e-commerce product URL (not a search engine or aggregator).
+    
+    Args:
+        url: URL to check
+        
+    Returns:
+        True if valid e-commerce URL, False otherwise
+    """
+    if not url:
+        return False
+    
+    url_lower = url.lower()
+    
+    # Filter out search engines and aggregators
+    excluded_domains = [
+        "google.com",
+        "google.co.in",
+        "bing.com",
+        "yahoo.com",
+        "duckduckgo.com",
+        "search.yahoo.com",
+        "shopping.google.com",
+        "www.google.com/search",
+        "google.com/search"
+    ]
+    
+    # Check if URL is from excluded domains
+    for excluded in excluded_domains:
+        if excluded in url_lower:
+            return False
+    
+    # Filter out URLs that are clearly search pages
+    search_indicators = [
+        "/search?",
+        "?q=",
+        "&q=",
+        "search?q=",
+        "udm=",  # Google Shopping parameter
+        "ibp=oshop"  # Google Shopping parameter
+    ]
+    
+    # If URL contains search indicators, it's likely a search page
+    if any(indicator in url_lower for indicator in search_indicators):
+        # But allow if it's from a known e-commerce platform (they might have search in URL structure)
+        parsed = urlparse(url)
+        domain = parsed.netloc.lower()
+        
+        # Allow if it's from a known e-commerce platform
+        for platform, domains in PLATFORM_DOMAINS.items():
+            for platform_domain in domains:
+                if domain == platform_domain or domain.endswith(f".{platform_domain}"):
+                    return True
+        
+        # Otherwise, it's likely a search engine
+        return False
+    
+    return True
+
+
+def normalize_platform_from_source(source: str) -> str:
+    """
+    Normalize platform name from Serper source field.
+    
+    Args:
+        source: Source field from Serper API (e.g., "Amazon.in", "Myntra", "Nykaa")
+        
+    Returns:
+        Normalized platform name (e.g., "amazon", "nykaa")
+    """
+    if not source:
+        return "unknown"
+    
+    source_lower = source.lower().strip()
+    
+    # Check direct mappings first
+    for source_key, platform in SOURCE_TO_PLATFORM.items():
+        if source_key in source_lower:
+            return platform
+    
+    # Check if source contains known platform names
+    if "amazon" in source_lower:
+        return "amazon"
+    elif "nykaa" in source_lower:
+        return "nykaa"
+    elif "myntra" in source_lower:
+        return "myntra"
+    elif "tira" in source_lower:
+        return "tira_beauty"
+    elif "sephora" in source_lower:
+        return "sephora_india"
+    elif "flipkart" in source_lower:
+        return "flipkart"
+    elif "purplle" in source_lower:
+        return "purplle"
+    elif "jiomart" in source_lower:
+        return "jiomart"
+    elif "ajio" in source_lower:
+        return "ajio"
+    
+    # Extract base name from source
+    # Remove common suffixes like ".com", " - ", etc.
+    source_clean = source_lower.replace(".com", "").replace(".in", "").replace(" - ", " ").strip()
+    parts = source_clean.split()
+    if parts:
+        return parts[0].lower()
+    
+    return "unknown"
 
 
 def normalize_platform(url: str) -> str:
@@ -129,15 +260,27 @@ def fetch_serper_results(product_name: str, page: int = 1, num: int = 10) -> Opt
     payload = {
         "q": product_name,
         "type": "shopping",
-        "country": "IN",
+        "gl": "in",  # Google location code for India
+        "hl": "en",  # Language: English
+        "location": "India",  # Explicit location for better India results
         "num": num,
         "page": page
     }
     
+    print(f"Serper API request - Query: {product_name}, Location: in (India), Page: {page}")
+    
     try:
+        print(f"Serper API Request Payload: {payload}")
         response = requests.post(url, json=payload, headers=headers, timeout=30)
         response.raise_for_status()
-        return response.json()
+        result = response.json()
+        
+        # Debug: Check what location was actually used
+        search_params = result.get("searchParameters", {})
+        actual_gl = search_params.get("gl", "not found")
+        print(f"Serper API Response - Actual location used: {actual_gl}")
+        
+        return result
     except requests.exceptions.RequestException as e:
         print(f"Error fetching Serper results: {str(e)}")
         return None
@@ -148,7 +291,7 @@ def deduplicate_by_platform(results: List[Dict]) -> List[Dict]:
     Deduplicate results by platform, keeping best match per platform.
     
     Args:
-        results: List of result dicts with 'link', 'position', 'title', 'price'
+        results: List of result dicts with 'link', 'position', 'title', 'price', 'platform_from_source'
         
     Returns:
         Deduplicated list with one result per platform
@@ -156,7 +299,10 @@ def deduplicate_by_platform(results: List[Dict]) -> List[Dict]:
     platform_results = {}
     
     for result in results:
-        platform = normalize_platform(result.get("link", ""))
+        # Use pre-calculated platform from source if available, otherwise fall back to URL
+        platform = result.get("platform_from_source")
+        if not platform:
+            platform = normalize_platform(result.get("link", ""))
         
         if platform not in platform_results:
             platform_results[platform] = result
@@ -363,29 +509,68 @@ def fetch_platforms(product_name: str) -> List[Dict]:
         response = fetch_serper_results(product_name, page=page)
         
         if not response:
+            print(f"No response from Serper API for page {page}")
             break
         
         # Extract shopping results
         shopping_results = response.get("shopping", [])
+        
         if not shopping_results:
+            print(f"No shopping results in response for page {page}")
+            # Check if there are other result types we can use
+            if page == 1:
+                print(f"Response keys: {list(response.keys())}")
+                print(f"Full response sample: {str(response)[:500]}")
             break
         
-        # Process results
+        print(f"Page {page}: Found {len(shopping_results)} shopping results")
+        
+        # Process results - use source field to identify platform
+        valid_count = 0
         for item in shopping_results:
+            link = item.get("link", "")
+            source = item.get("source", "")
+            
+            # Use source field to identify platform (more reliable than URL for Google Shopping)
+            platform_from_source = normalize_platform_from_source(source)
+            
+            # Skip if platform is unknown or invalid
+            if platform_from_source == "unknown":
+                print(f"  Skipping unknown platform from source: {source}")
+                continue
+            
+            # Skip search engines even if they appear in source
+            if platform_from_source in ["google", "bing", "yahoo"]:
+                print(f"  Skipping search engine: {source}")
+                continue
+            
+            valid_count += 1
             all_results.append({
-                "link": item.get("link", ""),
+                "link": link,  # Keep Google Shopping redirect link (it will redirect to actual product)
                 "title": item.get("title", ""),
                 "price": item.get("price"),
-                "position": item.get("position", 999)
+                "position": item.get("position", 999),
+                "source": source,  # Store source for reference
+                "platform_from_source": platform_from_source  # Pre-calculated platform
             })
+        
+        print(f"Page {page}: {valid_count} valid e-commerce platforms after filtering")
+        
+        # If we got results but they're all filtered out, log for debugging
+        if len(shopping_results) > 0 and valid_count == 0:
+            print(f"  Warning: All {len(shopping_results)} results were filtered out on page {page}")
+            print(f"  Sample sources: {[item.get('source', 'N/A') for item in shopping_results[:5]]}")
         
         # Check if there are more pages
         # Serper API doesn't always indicate if more pages exist,
         # so we stop if we get fewer results than requested
         if len(shopping_results) < 10:
+            print(f"Page {page}: Only {len(shopping_results)} results, stopping pagination")
             break
         
         page += 1
+    
+    print(f"Total results collected: {len(all_results)}")
     
     # Deduplicate by platform
     deduplicated = deduplicate_by_platform(all_results)
@@ -399,7 +584,18 @@ def fetch_platforms(product_name: str) -> List[Dict]:
     # Build final response with platform info and logos
     final_results = []
     for result in sorted_results:
-        platform = normalize_platform(result.get("link", ""))
+        link = result.get("link", "")
+        
+        # Use pre-calculated platform from source if available
+        platform = result.get("platform_from_source")
+        if not platform:
+            # Fallback to URL-based detection (but this won't work for Google Shopping links)
+            platform = normalize_platform(link)
+        
+        # Skip if platform is "google" or other search engines
+        if platform in ["google", "bing", "yahoo", "duckduckgo", "unknown"]:
+            continue
+        
         platform_display_name = get_platform_display_name(platform)
         
         # Get or upload logo
@@ -410,12 +606,13 @@ def fetch_platforms(product_name: str) -> List[Dict]:
         final_results.append({
             "platform": platform,
             "platform_display_name": platform_display_name,
-            "url": result.get("link", ""),
+            "url": link,  # Google Shopping redirect link (will redirect to actual product page)
             "logo_url": logo_url,
             "title": result.get("title", ""),
             "price": result.get("price"),
             "position": result.get("position", 999)
         })
     
+    print(f"Final results: {len(final_results)} platforms found")
     return final_results
 
