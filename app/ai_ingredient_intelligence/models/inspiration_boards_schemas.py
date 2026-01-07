@@ -118,6 +118,8 @@ class AddProductFromURLRequest(BaseModel):
     url: str = Field(..., description="Product URL from e-commerce site")
     notes: Optional[str] = Field(None, max_length=1000)
     tags: Optional[List[str]] = Field(default_factory=list)
+    # Optional: Pre-fetched product data to avoid re-scraping
+    fetched_data: Optional[Dict[str, Any]] = Field(None, description="Pre-fetched product data from /fetch-product endpoint")
 
 
 class AddProductManualRequest(BaseModel):
@@ -130,8 +132,6 @@ class AddProductManualRequest(BaseModel):
     size: float = Field(..., gt=0)
     unit: str = Field(default="ml", max_length=10)
     category: Optional[str] = Field(None, max_length=100)
-    rating: Optional[float] = Field(None, ge=0, le=5)
-    reviews: Optional[int] = Field(None, ge=0)
     notes: Optional[str] = Field(None, max_length=1000)
     tags: Optional[List[str]] = Field(default_factory=list)
     image: Optional[str] = Field(None, max_length=200)
@@ -159,8 +159,6 @@ class ProductSummary(BaseModel):
     unit: str
     price_per_ml: float
     category: Optional[str]
-    rating: Optional[float]
-    reviews: Optional[int]
     date_added: datetime
     notes: Optional[str]
     tags: List[str]
@@ -192,8 +190,6 @@ class ProductResponse(BaseModel):
     unit: str
     price_per_ml: float
     category: Optional[str]
-    rating: Optional[float]
-    reviews: Optional[int]
     date_added: datetime
     notes: Optional[str]
     tags: List[str]

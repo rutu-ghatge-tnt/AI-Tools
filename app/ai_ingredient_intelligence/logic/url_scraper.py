@@ -319,7 +319,7 @@ class URLScraper:
                 
                 text_parts = []
                 
-                # FIRST: Extract main product information (name, price, ratings, brand) from the page header
+                # FIRST: Extract main product information (name, price, brand) from the page header
                 try:
                     # Get the main product section - try multiple selectors
                     product_selectors = [
@@ -382,38 +382,6 @@ class URLScraper:
                     except:
                         pass
                     
-                    # Try to get ratings
-                    rating_selectors = [
-                        "[class*='rating']",
-                        "[class*='Rating']",
-                        "[data-testid='rating']",
-                        "[class*='star']",
-                    ]
-                    
-                    for selector in rating_selectors:
-                        try:
-                            elements = driver.find_elements(By.CSS_SELECTOR, selector)
-                            for elem in elements:
-                                text = elem.text.strip()
-                                if '/' in text and ('5' in text or 'star' in text.lower() or 'rating' in text.lower()):
-                                    product_info.append(f"Ratings: {text}")
-                                    break
-                            if any('Ratings:' in p for p in product_info):
-                                break
-                        except:
-                            continue
-                    
-                    # Also try XPath for ratings
-                    try:
-                        rating_elements = driver.find_elements(By.XPATH, "//*[contains(text(), '/5') or contains(text(), 'rating')]")
-                        for elem in rating_elements[:5]:
-                            text = elem.text.strip()
-                            if ('/5' in text or 'rating' in text.lower()) and len(text) < 100:
-                                product_info.append(f"Ratings: {text}")
-                                break
-                    except:
-                        pass
-                    
                     # Get brand name - usually before product name or in breadcrumbs
                     try:
                         brand_elements = driver.find_elements(By.CSS_SELECTOR, "[class*='brand'], [class*='Brand'], a[href*='/brand/']")
@@ -464,7 +432,7 @@ class URLScraper:
                         driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", ingredients_tab)
                         time.sleep(0.5)
                         driver.execute_script("arguments[0].click();", ingredients_tab)
-                        time.sleep(2)  # Increased wait time
+                        time.sleep(2)  # Wait for content to load
                         
                         # Try multiple content selectors
                         content_selectors = [
@@ -657,7 +625,7 @@ class URLScraper:
                 try:
                     # Get visible text from the page (more content for better extraction)
                     body_text = driver.find_element(By.TAG_NAME, "body").text
-                    # Extract first 5000 chars which usually contains product info, price, ratings
+                    # Extract first 5000 chars which usually contains product info, price
                     visible_text = body_text[:5000]
                     if visible_text and visible_text not in "\n".join(text_parts):
                         # Only add if it's not already included
@@ -981,7 +949,7 @@ class URLScraper:
     async def extract_product_image(self, driver: webdriver.Chrome, url: str) -> Optional[str]:
         """
         Extract product image URL from the page using Selenium
-        Excludes images from "also viewed" and recommended product sections
+        Excludes images from "also viewed" and recommended product section
         
         Args:
             driver: Selenium WebDriver instance
@@ -999,64 +967,49 @@ class URLScraper:
                 platform = self._detect_platform(url)
                 
                 def is_in_recommendation_section(img_element):
-                    """Check if image is in a recommendation/also-viewed section"""
+                    """Check if image is in a recommendation/also-viewed section - OPTIMIZED for speed"""
                     try:
-                        # Get all ancestor elements using XPath
+                        # OPTIMIZATION: Only check immediate parent and 2-3 ancestors, not all ancestors
+                        # This is much faster and usually sufficient
                         try:
-                            ancestors = img_element.find_elements(By.XPATH, "./ancestor::*")
+                            # Get immediate parent and a few ancestors (limit to 5 levels)
+                            parent = img_element.find_element(By.XPATH, "./..")
+                            ancestors = [parent]
+                            current = parent
+                            for _ in range(4):  # Check up to 4 more levels
+                                try:
+                                    current = current.find_element(By.XPATH, "./..")
+                                    ancestors.append(current)
+                                except:
+                                    break
                         except:
                             return False
                         
                         # Recommendation section indicators
                         recommendation_keywords = [
-                            'also viewed', 'also-viewed', 'alsoviewed',
-                            'recommended', 'recommendation', 'suggested',
-                            'similar', 'related', 'you may like', 'customers also',
-                            'cav_pd',  # Nykaa's "Customers also Viewed" identifier
+                            'cav_pd',  # Nykaa's "Customers also Viewed" - most common
+                            'also-viewed', 'alsoviewed',
+                            'recommended', 'recommendation',
+                            'similar', 'related',
                         ]
                         
-                        # Check if any ancestor has recommendation-related classes/text/IDs
+                        # Check if any ancestor has recommendation-related classes/IDs (fast check)
                         for ancestor in ancestors:
                             try:
-                                # Check class names
+                                # Check class names (fastest)
                                 class_attr = ancestor.get_attribute('class') or ''
-                                class_lower = class_attr.lower()
-                                
-                                if any(keyword in class_lower for keyword in recommendation_keywords):
+                                if any(keyword in class_attr.lower() for keyword in recommendation_keywords):
                                     return True
                                 
-                                # Check for specific IDs
+                                # Check for specific IDs (fast)
                                 id_attr = ancestor.get_attribute('id') or ''
-                                id_lower = id_attr.lower()
-                                if any(keyword in id_lower for keyword in recommendation_keywords):
+                                if any(keyword in id_attr.lower() for keyword in recommendation_keywords):
                                     return True
                                 
-                                # Check text content of section headers (but limit to avoid performance issues)
-                                try:
-                                    # Only check text for elements that might be section headers
-                                    tag_name = ancestor.tag_name.lower()
-                                    if tag_name in ['h1', 'h2', 'h3', 'h4', 'section', 'div']:
-                                        text = ancestor.text.lower()
-                                        if text and len(text) < 200:  # Limit text length check
-                                            if any(keyword in text for keyword in [
-                                                'customers also viewed', 'also viewed', 
-                                                'recommended for you', 'you may also like',
-                                                'similar products', 'related products'
-                                            ]):
-                                                return True
-                                except:
-                                    pass
-                                
-                                # Check data attributes
-                                try:
-                                    data_attrs = ['data-testid', 'data-section', 'data-type']
-                                    for attr in data_attrs:
-                                        attr_value = ancestor.get_attribute(attr) or ''
-                                        if any(keyword in attr_value.lower() for keyword in recommendation_keywords):
-                                            return True
-                                except:
-                                    pass
-                                
+                                # Check data attributes (fast)
+                                data_testid = ancestor.get_attribute('data-testid') or ''
+                                if any(keyword in data_testid.lower() for keyword in recommendation_keywords):
+                                    return True
                             except:
                                 continue
                         
@@ -1067,73 +1020,60 @@ class URLScraper:
                 try:
                     # Method 1: Platform-specific extraction (most reliable)
                     if platform == "nykaa":
-                        # For Nykaa, focus on main product image area
-                        # Look for images in product detail modal or main product section
-                        nykaa_selectors = [
-                            # Main product image in modal or detail section
-                            '[class*="product-image"] img:not([class*="carousel"])',
-                            '[class*="ProductImage"] img',
-                            '[id*="product-image"] img',
-                            # Look for images in portal-root (main product modal)
-                            '#portal-root img[src*="catalog/product"]',
-                            # Main product gallery (not recommendations)
-                            '[class*="product-gallery"]:not([class*="recommend"]) img',
-                            '[class*="product-slider"]:not([class*="recommend"]) img',
-                        ]
-                        
-                        for selector in nykaa_selectors:
-                            try:
-                                imgs = driver.find_elements(By.CSS_SELECTOR, selector)
-                                for img in imgs[:10]:  # Check more images for Nykaa
+                        # Use the reference pattern: find all img[src], img[srcset], source[srcset]
+                        # This matches the JavaScript reference code exactly
+                        try:
+                            # Find all img elements with src or srcset, and source elements with srcset
+                            imgs = driver.find_elements(By.CSS_SELECTOR, 'img[src], img[srcset], source[srcset]')
+                            
+                            for img in imgs:
+                                try:
+                                    # Get src attribute
+                                    src = ''
                                     try:
-                                        # Skip if in recommendation section
-                                        if is_in_recommendation_section(img):
-                                            continue
-                                        
-                                        src = img.get_attribute('src') or img.get_attribute('data-src') or ''
+                                        src = img.get_attribute('src') or ''
+                                    except:
+                                        pass
+                                    
+                                    # Get srcset attribute
+                                    srcset = ''
+                                    try:
                                         srcset = img.get_attribute('srcset') or ''
-                                        
-                                        candidates = []
-                                        if src and src.startswith(('http://', 'https://', '//')):
-                                            candidates.append(src)
-                                        if srcset:
-                                            for item in srcset.split(','):
-                                                url_part = item.strip().split(' ')[0]
-                                                if url_part and url_part.startswith(('http://', 'https://', '//')):
-                                                    candidates.append(url_part)
-                                        
-                                        for candidate_url in candidates:
-                                            if candidate_url:
-                                                if candidate_url.startswith('//'):
-                                                    candidate_url = 'https:' + candidate_url
-                                                
-                                                # Filter out placeholders, logos, icons
-                                                if not any(exclude in candidate_url.lower() for exclude in [
-                                                    'placeholder', 'logo', 'icon', 'avatar', 'banner', 
-                                                    'spinner', 'loading', 'default', 'no-image', 'not-found'
-                                                ]):
-                                                    # Check if it's a catalog product image (Nykaa pattern)
-                                                    if 'catalog/product' in candidate_url.lower():
-                                                        try:
-                                                            width = img.size.get('width', 0)
-                                                            height = img.size.get('height', 0)
-                                                            area = width * height
-                                                        except:
-                                                            area = 0
-                                                        
-                                                        clean_url = candidate_url.split('?')[0]
-                                                        if clean_url and clean_url not in image_urls:
-                                                            image_urls.add(clean_url)
-                                                            candidate_images.append({
-                                                                'url': clean_url,
-                                                                'area': area,
-                                                                'has_product_keyword': True,
-                                                                'is_catalog_image': True
-                                                            })
-                                    except Exception as e:
-                                        continue
-                            except Exception as e:
-                                continue
+                                    except:
+                                        pass
+                                    
+                                    # Build candidates list - match reference pattern exactly
+                                    candidates = []
+                                    if src:
+                                        candidates.append(src)
+                                    if srcset:
+                                        # Parse srcset: split by comma, then take first part (URL) before space
+                                        for item in srcset.split(','):
+                                            url_part = item.strip().split(' ')[0]
+                                            if url_part:
+                                                candidates.append(url_part)
+                                    
+                                    # Process each candidate URL
+                                    for url in candidates:
+                                        if url and url.strip():
+                                            # Normalize protocol-relative URLs
+                                            if url.startswith('//'):
+                                                url = 'https:' + url
+                                            
+                                            # Check if it's a Nykaa catalog/product image
+                                            if 'nykaa.com' in url.lower() and 'catalog/product' in url.lower():
+                                                # Remove query parameters (split on '?')
+                                                clean_url = url.split('?')[0]
+                                                if clean_url and clean_url not in image_urls:
+                                                    image_urls.add(clean_url)
+                                                    # Return first valid catalog/product image found
+                                                    print(f"Found Nykaa product image: {clean_url}")
+                                                    return clean_url
+                                except Exception as e:
+                                    continue
+                        except Exception as e:
+                            print(f"Error in Nykaa image extraction: {e}")
+                            pass
                     
                     # Method 2: Generic product image selectors (for all platforms)
                     product_image_selectors = [
@@ -1209,79 +1149,34 @@ class URLScraper:
                         except Exception as e:
                             continue
                     
-                    # Method 3: Comprehensive extraction - get all images and filter intelligently (exclude recommendations)
-                    if not image_urls:
-                        try:
-                            imgs = driver.find_elements(By.CSS_SELECTOR, 'img[src], img[data-src], source[srcset]')
-                            for img in imgs:
-                                try:
-                                    # CRITICAL: Skip images in recommendation/also-viewed sections
-                                    if is_in_recommendation_section(img):
-                                        continue
-                                    
-                                    src = img.get_attribute('src') or img.get_attribute('data-src') or ''
-                                    srcset = img.get_attribute('srcset') or ''
-                                    
-                                    candidates = []
-                                    if src and src.startswith(('http://', 'https://', '//')):
-                                        candidates.append(src)
-                                    if srcset:
-                                        for item in srcset.split(','):
-                                            url_part = item.strip().split(' ')[0]
-                                            if url_part and url_part.startswith(('http://', 'https://', '//')):
-                                                candidates.append(url_part)
-                                    
-                                    for candidate_url in candidates:
-                                        if candidate_url:
-                                            # Convert protocol-relative URLs
-                                            if candidate_url.startswith('//'):
-                                                candidate_url = 'https:' + candidate_url
-                                            
-                                            # More lenient filtering - exclude only obvious non-product images
-                                            exclude_patterns = [
-                                                'placeholder', 'logo', 'icon', 'avatar', 'banner',
-                                                'spinner', 'loading', 'default', 'no-image', 'not-found',
-                                                'social', 'share', 'facebook', 'twitter', 'instagram',
-                                                'favicon', 'sprite', 'advertisement', 'ad-'
-                                            ]
-                                            
-                                            # Check if URL looks like a product image
-                                            url_lower = candidate_url.lower()
-                                            is_likely_product = (
-                                                # Has image extension
-                                                any(ext in url_lower for ext in ['.jpg', '.jpeg', '.png', '.webp', '.gif']) or
-                                                # Contains product-related keywords
-                                                any(keyword in url_lower for keyword in ['product', 'catalog', 'item', 'sku']) or
-                                                # Is from known e-commerce domains
-                                                any(domain in url_lower for domain in ['nykaa', 'amazon', 'flipkart', 'myntra', 'purplle'])
-                                            )
-                                            
-                                            if is_likely_product and not any(exclude in url_lower for exclude in exclude_patterns):
-                                                try:
-                                                    width = img.size.get('width', 0)
-                                                    height = img.size.get('height', 0)
-                                                    area = width * height
-                                                except:
-                                                    area = 0
-                                                
-                                                clean_url = candidate_url.split('?')[0]
-                                                if clean_url and clean_url not in image_urls:
-                                                    image_urls.add(clean_url)
-                                                    candidate_images.append({
-                                                        'url': clean_url,
-                                                        'area': area,
-                                                        'has_product_keyword': 'product' in clean_url.lower()
-                                                    })
-                                except Exception as e:
-                                    continue
-                        except Exception as e:
-                            print(f"Error in comprehensive image extraction: {e}")
+                    # Method 3: Comprehensive extraction - SKIPPED (too slow, checks all images on page)
+                    # This was causing 5-10 minute delays. Using faster methods 1, 2, and 4 instead.
                     
                     # Method 4: Fallback - simpler extraction for product images (exclude recommendations)
+                    # Only check first 10 images to avoid delay, and prioritize main product area
                     if not image_urls:
                         try:
-                            img_elements = driver.find_elements(By.CSS_SELECTOR, 'img[src], img[data-src]')
-                            for img in img_elements[:30]:  # Check first 30 images
+                            # First, try to find images in the main product area (above the fold)
+                            main_area_selectors = [
+                                'main img[src]',
+                                '[role="main"] img[src]',
+                                'article img[src]',
+                                'header ~ * img[src]',  # Images after header
+                            ]
+                            
+                            for area_selector in main_area_selectors:
+                                try:
+                                    imgs = driver.find_elements(By.CSS_SELECTOR, area_selector)
+                                    if imgs:
+                                        img_elements = imgs[:5]  # Only first 5 in main area
+                                        break
+                                except:
+                                    continue
+                            else:
+                                # Fallback: check first 10 images total
+                                img_elements = driver.find_elements(By.CSS_SELECTOR, 'img[src], img[data-src]')[:10]
+                            
+                            for img in img_elements:
                                 try:
                                     # CRITICAL: Skip images in recommendation/also-viewed sections
                                     if is_in_recommendation_section(img):
@@ -1336,6 +1231,23 @@ class URLScraper:
                         selected = candidate_images[0]['url']
                         print(f"Selected product image: {selected}")
                         return selected
+                    
+                    # If no images found yet, try one more quick check: look for the first large image in main content
+                    try:
+                        main_imgs = driver.find_elements(By.CSS_SELECTOR, 'main img[src], [role="main"] img[src], article img[src]')
+                        for img in main_imgs[:3]:  # Only check first 3
+                            if is_in_recommendation_section(img):
+                                continue
+                            src = img.get_attribute('src') or img.get_attribute('data-src')
+                            if src and src.startswith(('http://', 'https://', '//')):
+                                if src.startswith('//'):
+                                    src = 'https:' + src
+                                if 'catalog/product' in src.lower() and 'cav' not in src.lower():
+                                    clean_url = src.split('?')[0]
+                                    print(f"Found product image in main area: {clean_url}")
+                                    return clean_url
+                    except:
+                        pass
                     
                     # Fallback: return first image if we have any
                     if image_urls:

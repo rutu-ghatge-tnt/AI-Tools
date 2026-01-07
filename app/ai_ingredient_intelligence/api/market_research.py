@@ -29,6 +29,7 @@ from app.ai_ingredient_intelligence.logic.ai_analysis import (
     extract_structured_product_info_with_ai,
     claude_client  # Import claude_client directly
 )
+from app.ai_ingredient_intelligence.logic.serper_product_search import fetch_platforms
 import os  # For claude_api_key check
 
 # Check if anthropic is available (for error messages)
@@ -59,6 +60,9 @@ from app.ai_ingredient_intelligence.models.schemas import (
     MarketResearchWithKeywordsRequest,
     MarketResearchPaginatedResponse,
     ActiveIngredient,
+    FetchPlatformsRequest,
+    FetchPlatformsResponse,
+    PlatformInfo,
 )
 
 router = APIRouter(tags=["Market Research"])
@@ -3679,5 +3683,90 @@ async def market_research_overview(
                 await scraper.close()
             except:
                 pass
+
+
+# ============================================================================
+# PLATFORM FETCHER ENDPOINT
+# ============================================================================
+
+@router.post("/fetch-platforms", response_model=FetchPlatformsResponse)
+async def fetch_platforms_endpoint(
+    request: FetchPlatformsRequest,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
+    """
+    Fetch all platform links for a product using Serper.dev API.
+    
+    This endpoint searches for a product across multiple e-commerce platforms
+    and returns one link per platform (deduplicated).
+    
+    REQUEST BODY:
+    {
+        "product_name": "Simple Kind to Skin Face Wash"
+    }
+    
+    RESPONSE:
+    {
+        "platforms": [
+            {
+                "platform": "amazon",
+                "platform_display_name": "Amazon",
+                "url": "https://amazon.in/...",
+                "logo_url": "https://platform_logos.s3.../amazon.png",
+                "title": "Product Title",
+                "price": "₹499",
+                "position": 1
+            },
+            ...
+        ],
+        "total_platforms": 6,
+        "product_name": "Simple Kind to Skin Face Wash"
+    }
+    
+    Authentication:
+    - Requires JWT token in Authorization header
+    """
+    try:
+        if not request.product_name or not request.product_name.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="product_name is required and cannot be empty"
+            )
+        
+        # Fetch platforms
+        platforms = fetch_platforms(request.product_name.strip())
+        
+        # Convert to response format using PlatformInfo schema
+        platform_info_list = [
+            PlatformInfo(
+                platform=p["platform"],
+                platform_display_name=p["platform_display_name"],
+                url=p["url"],
+                logo_url=p.get("logo_url"),
+                title=p["title"],
+                price=p.get("price"),
+                position=p["position"]
+            )
+            for p in platforms
+        ]
+        
+        return FetchPlatformsResponse(
+            platforms=platform_info_list,
+            total_platforms=len(platform_info_list),
+            product_name=request.product_name.strip()
+        )
+        
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch platforms: {str(e)}"
+        )
 
 

@@ -132,23 +132,52 @@ async def add_product_from_url_endpoint(
 ):
     """Add product to board from URL"""
     try:
-        # Fetch product data from URL
-        fetched_data = await fetch_product_from_url(request.url)
+        # Use pre-fetched data if provided, otherwise fetch now
+        if request.fetched_data:
+            # Use pre-fetched data (from /fetch-product endpoint) - avoids double scraping!
+            fetched_data = request.fetched_data
+            print(f"Using pre-fetched product data for {request.url}")
+        else:
+            # Fetch product data from URL (fallback for direct calls)
+            print(f"Fetching product data for {request.url} (no pre-fetched data provided)")
+            fetched_data = await fetch_product_from_url(request.url)
         
-        # Be more lenient - if we have any data, proceed (even if success is False)
-        if not fetched_data or (not fetched_data.get("success") and not fetched_data.get("name") and not fetched_data.get("platform")):
+        # Validate fetched data - be lenient but ensure we have minimum required data
+        if not fetched_data:
             raise HTTPException(
                 status_code=400,
-                detail=fetched_data.get("message", "Failed to fetch product from URL") if fetched_data else "Failed to fetch product from URL"
+                detail="No product data received"
+            )
+        
+        # Check if we have at least name or URL (minimum requirement)
+        has_name = fetched_data.get("name") and fetched_data.get("name") != "Unknown Product"
+        has_url = request.url and request.url.strip()
+        
+        if not has_name and not has_url:
+            error_msg = fetched_data.get("message", "Failed to fetch product data")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid product data: {error_msg}"
             )
         
         # Add product to board
-        result = await add_product_from_url(user_id, board_id, request, fetched_data)
-        
-        if not result:
-            raise HTTPException(status_code=404, detail="Board not found or access denied")
-        
-        return result
+        try:
+            result = await add_product_from_url(user_id, board_id, request, fetched_data)
+            
+            if not result:
+                raise HTTPException(status_code=404, detail="Board not found or access denied")
+            
+            return result
+        except Exception as e:
+            # Provide more specific error messages
+            error_msg = str(e)
+            if "Board not found" in error_msg or "access denied" in error_msg.lower():
+                raise HTTPException(status_code=404, detail=error_msg)
+            elif "Invalid product data" in error_msg or "Failed to insert" in error_msg:
+                raise HTTPException(status_code=400, detail=error_msg)
+            else:
+                # Re-raise to be caught by outer exception handler
+                raise
     except HTTPException:
         raise
     except Exception as e:

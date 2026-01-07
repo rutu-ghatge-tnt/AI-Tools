@@ -98,12 +98,28 @@ async def fetch_product_from_url(url: str) -> Dict[str, Any]:
             
             product_data["price"] = _extract_price_from_text(extracted_text)
             product_data["size"] = _extract_size_from_text(extracted_text)
-            # Extract category, benefits, tags and target audience using Claude
-            claude_data = await _extract_category_benefits_tags_with_claude(extracted_text, product_data.get("name", ""), product_data.get("ingredients", []))
-            product_data["category"] = claude_data.get("category")
-            product_data["benefits"] = claude_data.get("benefits", [])
-            product_data["tags"] = claude_data.get("tags", [])
-            product_data["target_audience"] = claude_data.get("target_audience", [])
+            
+            # Use fast text-based extraction first (no AI call)
+            # This allows quick product addition, AI enhancement can happen later if needed
+            product_data["category"] = _extract_category_from_text(extracted_text, product_data.get("name", ""))
+            product_data["benefits"] = _extract_benefits_from_text(extracted_text)
+            product_data["tags"] = []  # Tags require AI, can be added later
+            product_data["target_audience"] = []  # Target audience requires AI, can be added later
+            
+            # Optional: Enhance with AI in background (commented out for speed)
+            # Uncomment if you want AI-enhanced category/benefits/tags
+            # try:
+            #     claude_data = await _extract_category_benefits_tags_with_claude(extracted_text, product_data.get("name", ""), product_data.get("ingredients", []))
+            #     if claude_data.get("category") and claude_data.get("category") != "Unknown":
+            #         product_data["category"] = claude_data.get("category")
+            #     if claude_data.get("benefits"):
+            #         product_data["benefits"] = claude_data.get("benefits", [])
+            #     if claude_data.get("tags"):
+            #         product_data["tags"] = claude_data.get("tags", [])
+            #     if claude_data.get("target_audience"):
+            #         product_data["target_audience"] = claude_data.get("target_audience", [])
+            # except Exception as e:
+            #     print(f"AI enhancement failed (non-critical): {e}")
         
         return product_data
         

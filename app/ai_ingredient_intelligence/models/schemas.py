@@ -752,3 +752,30 @@ class TaxonomyPriceTiersResponse(BaseModel):
 class TaxonomyMarketPositioningResponse(BaseModel):
     """Response schema for market positioning"""
     market_positioning: List[TaxonomyMarketPositioning] = Field(..., description="All market positioning options")
+
+
+# ============================================================================
+# PLATFORM FETCHER SCHEMAS
+# ============================================================================
+
+class FetchPlatformsRequest(BaseModel):
+    """Request schema for fetching product platforms"""
+    product_name: str = Field(..., description="Name of the product to search")
+
+
+class PlatformInfo(BaseModel):
+    """Schema for a single platform result"""
+    platform: str = Field(..., description="Normalized platform name (e.g., 'amazon', 'nykaa')")
+    platform_display_name: str = Field(..., description="Human-readable platform name (e.g., 'Amazon', 'Nykaa')")
+    url: str = Field(..., description="Product URL on the platform")
+    logo_url: Optional[str] = Field(None, description="S3 URL of platform logo")
+    title: str = Field(..., description="Product title from search result")
+    price: Optional[str] = Field(None, description="Product price if available")
+    position: int = Field(..., description="Original search position (lower is better)")
+
+
+class FetchPlatformsResponse(BaseModel):
+    """Response schema for fetching product platforms"""
+    platforms: List[PlatformInfo] = Field(..., description="List of platform links for the product")
+    total_platforms: int = Field(..., description="Total number of unique platforms found")
+    product_name: str = Field(..., description="The product name that was searched")

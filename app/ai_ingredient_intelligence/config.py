@@ -30,3 +30,7 @@ DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE", "10485760"))  # 10MB default
 ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/bmp", "image/webp"]
 ALLOWED_PDF_TYPES = ["application/pdf"]
+
+#serper
+SERPER_API_KEY = os.getenv("SERPER_API")
+AWS_S3_BUCKET_PLATFORM_LOGOS = "platform_logos"
