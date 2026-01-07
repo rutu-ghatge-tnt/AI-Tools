@@ -81,15 +81,45 @@ async def fetch_product_from_url(url: str) -> Dict[str, Any]:
         
         # Extract other fields from text if available
         if extracted_text:
-            product_data["brand"] = _extract_brand_from_text(extracted_text)
+            # Extract brand: First try URL, then validate with scraped data and AI
+            brand_from_url = _extract_brand_from_url(url)
+            brand_from_text = _extract_brand_from_text(extracted_text)
+            
+            # Validate brand using AI knowledge if we have both sources
+            if brand_from_url or brand_from_text:
+                product_data["brand"] = await _validate_brand_name(
+                    brand_from_url, 
+                    brand_from_text, 
+                    extracted_text, 
+                    product_data.get("name", "")
+                )
+            else:
+                product_data["brand"] = None
+            
             product_data["price"] = _extract_price_from_text(extracted_text)
             product_data["size"] = _extract_size_from_text(extracted_text)
-            # Extract category, benefits, tags and target audience using Claude
-            claude_data = await _extract_category_benefits_tags_with_claude(extracted_text, product_data.get("name", ""), product_data.get("ingredients", []))
-            product_data["category"] = claude_data.get("category")
-            product_data["benefits"] = claude_data.get("benefits", [])
-            product_data["tags"] = claude_data.get("tags", [])
-            product_data["target_audience"] = claude_data.get("target_audience", [])
+            
+            # Use fast text-based extraction first (no AI call)
+            # This allows quick product addition, AI enhancement can happen later if needed
+            product_data["category"] = _extract_category_from_text(extracted_text, product_data.get("name", ""))
+            product_data["benefits"] = _extract_benefits_from_text(extracted_text)
+            product_data["tags"] = []  # Tags require AI, can be added later
+            product_data["target_audience"] = []  # Target audience requires AI, can be added later
+            
+            # Optional: Enhance with AI in background (commented out for speed)
+            # Uncomment if you want AI-enhanced category/benefits/tags
+            # try:
+            #     claude_data = await _extract_category_benefits_tags_with_claude(extracted_text, product_data.get("name", ""), product_data.get("ingredients", []))
+            #     if claude_data.get("category") and claude_data.get("category") != "Unknown":
+            #         product_data["category"] = claude_data.get("category")
+            #     if claude_data.get("benefits"):
+            #         product_data["benefits"] = claude_data.get("benefits", [])
+            #     if claude_data.get("tags"):
+            #         product_data["tags"] = claude_data.get("tags", [])
+            #     if claude_data.get("target_audience"):
+            #         product_data["target_audience"] = claude_data.get("target_audience", [])
+            # except Exception as e:
+            #     print(f"AI enhancement failed (non-critical): {e}")
         
         return product_data
         
@@ -167,6 +197,46 @@ def _extract_product_name_from_text(text: str) -> Optional[str]:
     return None
 
 
+def _extract_brand_from_url(url: str) -> Optional[str]:
+    """Extract brand name from URL"""
+    import re
+    from urllib.parse import unquote, urlparse
+    
+    try:
+        # Decode URL encoding
+        url = unquote(url)
+        parsed = urlparse(url)
+        path = parsed.path.lower()
+        
+        # For Nykaa: /brand-name/product-name/p/ID
+        # Pattern: /brand-name/ or /brand-name/product-name/
+        nykaa_match = re.search(r'/([^/]+)/(?:[^/]+/)?p/\d+', path)
+        if nykaa_match:
+            brand_candidate = nykaa_match.group(1)
+            # Clean up brand name
+            brand_candidate = brand_candidate.replace('-', ' ').title()
+            # Filter out common non-brand segments
+            excluded = {'product', 'products', 'search', 'category', 'brand', 'brands', 'shop', 'buy'}
+            if brand_candidate.lower() not in excluded and len(brand_candidate) > 2:
+                return brand_candidate
+        
+        # For Amazon: /brand-name/dp/ or /dp/PRODUCT_ID (brand might be in product name)
+        # For Flipkart: /brand-name/product-name/p/ITEM_ID
+        # Generic: look for brand-like segments in path
+        path_segments = [s for s in path.split('/') if s and s not in ['', 'p', 'dp', 'gp', 'product']]
+        if path_segments:
+            # First meaningful segment might be brand
+            for segment in path_segments[:2]:  # Check first 2 segments
+                segment = segment.replace('-', ' ').replace('_', ' ')
+                # Check if it looks like a brand (has letters, reasonable length)
+                if re.search(r'[a-zA-Z]{3,}', segment) and len(segment) > 2 and len(segment) < 50:
+                    return segment.title()
+    except:
+        pass
+    
+    return None
+
+
 def _extract_brand_from_text(text: str) -> Optional[str]:
     """Extract brand name from text"""
     import re
@@ -210,6 +280,78 @@ def _extract_brand_from_text(text: str) -> Optional[str]:
                 return word
     
     return None
+
+
+async def _validate_brand_name(
+    brand_from_url: Optional[str], 
+    brand_from_text: Optional[str], 
+    extracted_text: str,
+    product_name: Optional[str]
+) -> Optional[str]:
+    """
+    Validate and determine the correct brand name using AI knowledge
+    Prioritizes brand from URL, validates with scraped data
+    """
+    if not claude_client:
+        # If Claude not available, return the best match
+        return brand_from_url or brand_from_text
+    
+    try:
+        # Prepare prompt for brand validation
+        brand_candidates = []
+        if brand_from_url:
+            brand_candidates.append(f"From URL: {brand_from_url}")
+        if brand_from_text:
+            brand_candidates.append(f"From scraped text: {brand_from_text}")
+        
+        if not brand_candidates:
+            return None
+        
+        text_snippet = extracted_text[:2000] if len(extracted_text) > 2000 else extracted_text
+        
+        prompt = f"""You are analyzing an e-commerce product page to determine the correct brand name.
+
+Product Name: {product_name or "Unknown"}
+
+Brand candidates found:
+{chr(10).join(brand_candidates)}
+
+Scraped text snippet:
+{text_snippet}
+
+Your task:
+1. Determine the correct brand name from the candidates provided
+2. If brand from URL matches brand from text, use that
+3. If they differ, choose the one that appears more consistently in the scraped text
+4. If neither is clear, infer the brand from the product name (usually the first word)
+5. Return ONLY the brand name as a plain text string (no quotes, no explanation)
+6. If you cannot determine a brand, return "null"
+
+Brand name:"""
+
+        response = claude_client.messages.create(
+            model=claude_model,
+            max_tokens=100,
+            temperature=0.1,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        brand = response.content[0].text.strip()
+        
+        # Clean up response
+        if brand.lower() in ["null", "none", "n/a", ""]:
+            # Fallback to best candidate
+            return brand_from_url or brand_from_text
+        
+        # Remove quotes if present
+        brand = brand.strip('"\'')
+        
+        return brand if brand else (brand_from_url or brand_from_text)
+        
+    except Exception as e:
+        print(f"Error validating brand name with AI: {e}")
+        # Fallback to best candidate
+        return brand_from_url or brand_from_text
 
 
 def _extract_price_from_text(text: str) -> Optional[float]:

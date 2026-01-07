@@ -67,6 +67,9 @@ webdriver-manager>=4.0.0
 beautifulsoup4>=4.12.0
 anthropic>=0.18.0
 
+# AWS SDK for S3 operations
+boto3>=1.34.0
+
 # Fuzzy Matching for ingredient name matching
 rapidfuzz>=3.0.0
 

@@ -29,6 +29,7 @@ from app.ai_ingredient_intelligence.logic.ai_analysis import (
     extract_structured_product_info_with_ai,
     claude_client  # Import claude_client directly
 )
+from app.ai_ingredient_intelligence.logic.serper_product_search import fetch_platforms
 import os  # For claude_api_key check
 
 # Check if anthropic is available (for error messages)
@@ -59,6 +60,9 @@ from app.ai_ingredient_intelligence.models.schemas import (
     MarketResearchWithKeywordsRequest,
     MarketResearchPaginatedResponse,
     ActiveIngredient,
+    FetchPlatformsRequest,
+    FetchPlatformsResponse,
+    PlatformInfo,
 )
 
 router = APIRouter(tags=["Market Research"])
@@ -997,6 +1001,7 @@ async def market_research_products_paginated(
     page_size: int = Query(10, ge=1, le=100, description="Items per page"),
     sort_by: str = Query("match_score", description="Sort by: price_low, price_high, match_score"),
     filters: Optional[str] = Query(None, description="JSON string of additional filters"),
+    unlock_page: bool = Query(False, description="Flag to unlock page after credits are deducted (frontend should set this to true after calling credit deduction API)"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
@@ -1004,15 +1009,23 @@ async def market_research_products_paginated(
     
     Uses stored selected_keywords and structured_analysis from history to filter products.
     
+    Credit-Based Pagination:
+    - Pages 1-2 are free (automatically unlocked)
+    - Pages 3+ require credits (must be unlocked via unlock_page flag)
+    - Frontend should call credit deduction API first, then call this endpoint with unlock_page=true
+    - Once a page is unlocked, it remains unlocked for that history_id
+    
     Query Parameters:
     - history_id: History item ID (required)
     - page: Page number (default: 1)
     - page_size: Items per page (default: 10, max: 100)
     - sort_by: Sort method - "price_low", "price_high", or "match_score" (default: "match_score")
     - filters: JSON string of additional filters (optional)
+    - unlock_page: Set to true after deducting credits via third-party API (default: false)
     
     Example:
     GET /api/market-research/products/paginated?history_id=abc123&page=1&page_size=20&sort_by=price_low
+    GET /api/market-research/products/paginated?history_id=abc123&page=3&unlock_page=true
     """
     start = time.time()
     
@@ -1034,6 +1047,47 @@ async def market_research_products_paginated(
         
         if not history_item:
             raise HTTPException(status_code=404, detail="History item not found")
+        
+        # ========================================================================
+        # CREDIT-BASED PAGINATION LOGIC
+        # ========================================================================
+        # Get accessed_pages from history (pages user has unlocked)
+        accessed_pages = history_item.get("accessed_pages", [])
+        
+        # Pages 1-2 are free
+        FREE_PAGES_LIMIT = 2
+        
+        # Check if page requires credit
+        page_requires_credit = page > FREE_PAGES_LIMIT
+        is_page_unlocked = page in accessed_pages
+        
+        # Handle credit-based access control
+        if page_requires_credit and not is_page_unlocked:
+            # Page requires credit but is not unlocked
+            if unlock_page:
+                # Frontend has deducted credits - unlock the page
+                await market_research_history_col.update_one(
+                    {"_id": ObjectId(history_id)},
+                    {"$addToSet": {"accessed_pages": page}}  # $addToSet prevents duplicates
+                )
+                # Update accessed_pages for response
+                accessed_pages.append(page)
+                is_page_unlocked = True
+            else:
+                # Page not unlocked and no unlock flag - return error
+                raise HTTPException(
+                    status_code=402,
+                    detail=f"This page requires credits. Please unlock it first. Page {page} requires payment. Unlocked pages: {sorted(accessed_pages)}"
+                )
+        elif not page_requires_credit:
+            # Free page - add to accessed_pages if not already there (for tracking)
+            if page not in accessed_pages:
+                await market_research_history_col.update_one(
+                    {"_id": ObjectId(history_id)},
+                    {"$addToSet": {"accessed_pages": page}}
+                )
+                accessed_pages.append(page)
+        # ========================================================================
         
         # Get stored data
         structured_analysis_dict = history_item.get("structured_analysis")
@@ -1181,6 +1235,11 @@ async def market_research_products_paginated(
         
         processing_time = round(time.time() - start, 2)
         
+        # Determine next page unlock status
+        next_page = page + 1
+        next_page_requires_credit = next_page > FREE_PAGES_LIMIT
+        next_page_unlocked = next_page in accessed_pages if next_page_requires_credit else True
+        
         return MarketResearchPaginatedResponse(
             products=paginated_products,
             total_matched=total_matched,
@@ -1196,7 +1255,12 @@ async def market_research_products_paginated(
             primary_category=available_keywords.main_category if available_keywords else history_item.get("primary_category"),
             subcategory=available_keywords.subcategory if available_keywords else history_item.get("subcategory"),
             category_confidence=history_item.get("category_confidence"),
-            history_id=history_id
+            history_id=history_id,
+            page_requires_credit=page_requires_credit,
+            is_unlocked=is_page_unlocked if page_requires_credit else True,
+            unlocked_pages=sorted(accessed_pages),
+            next_page_requires_credit=next_page_requires_credit,
+            next_page_unlocked=next_page_unlocked
         )
         
     except HTTPException:
@@ -3224,9 +3288,10 @@ async def market_research_overview(
     
     Request body:
     {
-        "input_type": "url" or "inci",
-        "url": "https://example.com/product/..." (required if input_type is "url"),
-        "inci": "Water, Glycerin, ..." (required if input_type is "inci"),
+        "history_id": "abc123" (optional, if provided, will use stored data from history),
+        "input_type": "url" or "inci" (optional if history_id provided),
+        "url": "https://example.com/product/..." (required if input_type is "url" and no history_id),
+        "inci": "Water, Glycerin, ..." (required if input_type is "inci" and no history_id),
         "primary_category": "skincare" (optional, if already known),
         "subcategory": "cleanser" (optional, if already known),
         "category_confidence": "high" (optional, if already known)
@@ -3245,63 +3310,136 @@ async def market_research_overview(
     start = time.time()
     scraper = None
     
+    # Extract user info
+    user_id_value = current_user.get("user_id") or current_user.get("_id")
+    provided_history_id = payload.get("history_id")
+    history_id = None
+    existing_item = None
+    
+    # Validate history_id if provided and retrieve stored data
+    if provided_history_id:
+        try:
+            if ObjectId.is_valid(provided_history_id):
+                existing_item = await market_research_history_col.find_one({
+                    "_id": ObjectId(provided_history_id),
+                    "user_id": user_id_value
+                })
+                if existing_item:
+                    history_id = provided_history_id
+                    print(f"[OVERVIEW] Using existing history_id: {history_id}")
+                else:
+                    print(f"[OVERVIEW] Warning: Provided history_id {provided_history_id} not found or doesn't belong to user")
+            else:
+                print(f"[OVERVIEW] Warning: Invalid history_id format: {provided_history_id}")
+        except Exception as e:
+            print(f"[OVERVIEW] Warning: Error validating history_id: {e}")
+    
     try:
-        # Validate payload
+        # Get input_type from payload or from history if history_id provided
         input_type = payload.get("input_type", "").lower()
+        if not input_type and existing_item:
+            # Retrieve input_type from history
+            input_type = existing_item.get("input_type", "").lower()
+            print(f"[OVERVIEW] Retrieved input_type '{input_type}' from history")
+        
+        # Validate input_type
         if input_type not in ["url", "inci"]:
-            raise HTTPException(status_code=400, detail="input_type must be 'url' or 'inci'")
+            raise HTTPException(status_code=400, detail="input_type must be 'url' or 'inci'. If using history_id, ensure the history item has a valid input_type.")
         
         ingredients = []
         extracted_text = ""
+        input_data_value = ""
         
-        if input_type == "url":
-            url = payload.get("url", "").strip()
-            if not url:
-                raise HTTPException(status_code=400, detail="url is required when input_type is 'url'")
-            
-            if not url.startswith(("http://", "https://")):
-                raise HTTPException(status_code=400, detail="Invalid URL format. Must start with http:// or https://")
-            
-            scraper = URLScraper()
-            print(f"Scraping URL for market research overview: {url}")
-            extraction_result = await scraper.extract_ingredients_from_url(url)
-            
-            ingredients_raw = extraction_result.get("ingredients", [])
-            extracted_text = extraction_result.get("extracted_text", "")
-            
-            if isinstance(ingredients_raw, str):
-                ingredients = parse_inci_string(ingredients_raw)
-            elif isinstance(ingredients_raw, list):
-                ingredients = ingredients_raw
+        # If history_id provided, try to get ingredients from history first
+        if existing_item and not payload.get("url") and not payload.get("inci"):
+            # Try to get ingredients from research_result
+            research_result = existing_item.get("research_result", {})
+            if research_result and research_result.get("extracted_ingredients"):
+                ingredients = research_result.get("extracted_ingredients", [])
+                input_data_value = existing_item.get("input_data", "")
+                print(f"[OVERVIEW] Retrieved {len(ingredients)} ingredients from research_result")
             else:
-                ingredients = []
+                input_data_value = existing_item.get("input_data", "")
+                print(f"[OVERVIEW] No research_result found, will extract from input_data if needed")
+        
+        # Only process URL/INCI if we don't already have ingredients from history
+        if not ingredients:
+            if input_type == "url":
+                url = payload.get("url", "").strip()
+                if not url and existing_item:
+                    # Try to get from history input_data
+                    url = existing_item.get("input_data", "").strip()
+                    if url:
+                        print(f"[OVERVIEW] Using URL from history input_data")
+                
+                if not url:
+                    raise HTTPException(status_code=400, detail="url is required when input_type is 'url'. Provide url in payload or ensure history has input_data.")
+                
+                if not url.startswith(("http://", "https://")):
+                    raise HTTPException(status_code=400, detail="Invalid URL format. Must start with http:// or https://")
+                
+                scraper = URLScraper()
+                print(f"Scraping URL for market research overview: {url}")
+                extraction_result = await scraper.extract_ingredients_from_url(url)
+                
+                ingredients_raw = extraction_result.get("ingredients", [])
+                extracted_text = extraction_result.get("extracted_text", "")
+                
+                if isinstance(ingredients_raw, str):
+                    ingredients = parse_inci_string(ingredients_raw)
+                elif isinstance(ingredients_raw, list):
+                    ingredients = ingredients_raw
+                else:
+                    ingredients = []
+                
+                if not ingredients:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="No ingredients found on the product page. Please ensure the page contains ingredient information."
+                    )
+                
+                input_data_value = url
+            elif input_type == "inci":
+                # INCI input - can come from payload or from history input_data
+                inci = payload.get("inci")
+                if not inci and existing_item:
+                    # Try to get from history input_data
+                    input_data_from_history = existing_item.get("input_data", "")
+                    if input_data_from_history:
+                        # Parse input_data (could be comma-separated string)
+                        if isinstance(input_data_from_history, str):
+                            inci = [ing.strip() for ing in input_data_from_history.split(",") if ing.strip()]
+                        elif isinstance(input_data_from_history, list):
+                            inci = input_data_from_history
+                        print(f"[OVERVIEW] Using INCI from history input_data: {len(inci)} items")
+                
+                if not inci:
+                    raise HTTPException(status_code=400, detail="inci is required when input_type is 'inci'. Provide inci in payload or ensure history has input_data.")
             
-            if not ingredients:
-                raise HTTPException(
-                    status_code=404,
-                    detail="No ingredients found on the product page. Please ensure the page contains ingredient information."
-                )
-        elif input_type == "inci":
-            inci = payload.get("inci")
-            if not inci:
-                raise HTTPException(status_code=400, detail="inci is required when input_type is 'inci'")
-            
-            # Validate that inci is a list
-            if not isinstance(inci, list):
-                raise HTTPException(status_code=400, detail="inci must be an array of strings")
-            
-            if not inci:
-                raise HTTPException(status_code=400, detail="inci cannot be empty")
-            
-            # Parse INCI list (handles list of strings, each may contain separators)
-            ingredients = parse_inci_string(inci)
-            extracted_text = ", ".join(inci)  # Join for display
-            
-            if not ingredients:
-                raise HTTPException(
-                    status_code=400,
-                    detail="No valid ingredients found after parsing. Please check your input format."
-                )
+                # Validate that inci is a list
+                if not isinstance(inci, list):
+                    raise HTTPException(status_code=400, detail="inci must be an array of strings")
+                
+                if not inci:
+                    raise HTTPException(status_code=400, detail="inci cannot be empty")
+                
+                # Parse INCI list (handles list of strings, each may contain separators)
+                ingredients = parse_inci_string(inci)
+                extracted_text = ", ".join(inci)  # Join for display
+                if not input_data_value:
+                    input_data_value = ", ".join(inci)
+                
+                if not ingredients:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="No valid ingredients found after parsing. Please check your input format."
+                    )
+        else:
+            # Ingredients already retrieved from history, use them
+            print(f"[OVERVIEW] Using {len(ingredients)} ingredients retrieved from history")
+            if not extracted_text and input_data_value:
+                if isinstance(input_data_value, str):
+                    extracted_text = input_data_value
         
         # Normalize ingredients
         import re
@@ -3531,6 +3669,52 @@ async def market_research_overview(
         
         processing_time = time.time() - start
         
+        # 🔹 Auto-save: Update history with overview if history_id provided or find/create history
+        if user_id_value:
+            try:
+                if history_id:
+                    # Update existing history with overview
+                    await market_research_history_col.update_one(
+                        {"_id": ObjectId(history_id), "user_id": user_id_value},
+                        {"$set": {
+                            "market_research_overview": market_research_overview,
+                            "primary_category": category_info.get("primary_category"),
+                            "subcategory": category_info.get("subcategory"),
+                            "category_confidence": category_info.get("confidence")
+                        }}
+                    )
+                    print(f"[OVERVIEW] Updated history {history_id} with overview")
+                elif input_data_value and input_type:
+                    # Check if a history item with the same input_data already exists
+                    existing_history_item = await market_research_history_col.find_one({
+                        "user_id": user_id_value,
+                        "input_type": input_type,
+                        "input_data": input_data_value
+                    }, sort=[("created_at", -1)])  # Get the most recent one
+                    
+                    if existing_history_item:
+                        # Update existing history with overview
+                        history_id = str(existing_history_item["_id"])
+                        await market_research_history_col.update_one(
+                            {"_id": existing_history_item["_id"]},
+                            {"$set": {
+                                "market_research_overview": market_research_overview,
+                                "primary_category": category_info.get("primary_category"),
+                                "subcategory": category_info.get("subcategory"),
+                                "category_confidence": category_info.get("confidence")
+                            }}
+                        )
+                        print(f"[OVERVIEW] Updated existing history {history_id} with overview")
+                    else:
+                        # No existing history found - overview endpoint doesn't create new history
+                        # (it should be created by the main research endpoints first)
+                        print(f"[OVERVIEW] No existing history found for input_data, overview not saved")
+            except Exception as e:
+                print(f"[OVERVIEW] Warning: Failed to save/update history with overview: {e}")
+                import traceback
+                traceback.print_exc()
+                # Don't fail the response if saving fails
+        
         print(f"\n{'='*60}")
         print(f"Market Research Overview Summary:")
         print(f"  Total products matched: {total_matched}")
@@ -3540,7 +3724,7 @@ async def market_research_overview(
         return MarketResearchOverviewResponse(
             market_research_overview=market_research_overview,
             processing_time=round(processing_time, 2),
-            history_id=None  # Can be set if auto-save is implemented
+            history_id=history_id
         )
         
     except HTTPException:
@@ -3559,5 +3743,90 @@ async def market_research_overview(
                 await scraper.close()
             except:
                 pass
+
+
+# ============================================================================
+# PLATFORM FETCHER ENDPOINT
+# ============================================================================
+
+@router.post("/fetch-platforms", response_model=FetchPlatformsResponse)
+async def fetch_platforms_endpoint(
+    request: FetchPlatformsRequest,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
+    """
+    Fetch all platform links for a product using Serper.dev API.
+    
+    This endpoint searches for a product across multiple e-commerce platforms
+    and returns one link per platform (deduplicated).
+    
+    REQUEST BODY:
+    {
+        "product_name": "Simple Kind to Skin Face Wash"
+    }
+    
+    RESPONSE:
+    {
+        "platforms": [
+            {
+                "platform": "amazon",
+                "platform_display_name": "Amazon",
+                "url": "https://amazon.in/...",
+                "logo_url": "https://platform_logos.s3.../amazon.png",
+                "title": "Product Title",
+                "price": "₹499",
+                "position": 1
+            },
+            ...
+        ],
+        "total_platforms": 6,
+        "product_name": "Simple Kind to Skin Face Wash"
+    }
+    
+    Authentication:
+    - Requires JWT token in Authorization header
+    """
+    try:
+        if not request.product_name or not request.product_name.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="product_name is required and cannot be empty"
+            )
+        
+        # Fetch platforms
+        platforms = fetch_platforms(request.product_name.strip())
+        
+        # Convert to response format using PlatformInfo schema
+        platform_info_list = [
+            PlatformInfo(
+                platform=p["platform"],
+                platform_display_name=p["platform_display_name"],
+                url=p["url"],
+                logo_url=p.get("logo_url"),
+                title=p["title"],
+                price=p.get("price"),
+                position=p["position"]
+            )
+            for p in platforms
+        ]
+        
+        return FetchPlatformsResponse(
+            platforms=platform_info_list,
+            total_platforms=len(platform_info_list),
+            product_name=request.product_name.strip()
+        )
+        
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch platforms: {str(e)}"
+        )
 
 

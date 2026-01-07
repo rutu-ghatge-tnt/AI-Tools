@@ -31,10 +31,18 @@ async def add_product_from_url(
     if not board:
         return None
     
-    # Calculate price_per_ml
-    price = fetched_data.get("price", 0)
-    size = fetched_data.get("size", 0)
+    # Calculate price_per_ml (handle None values)
+    price = fetched_data.get("price") or 0
+    size = fetched_data.get("size") or 0
     price_per_ml = price / size if size > 0 else 0
+    
+    # Ensure price and size are numbers
+    try:
+        price = float(price) if price else 0
+        size = float(size) if size else 0
+    except (ValueError, TypeError):
+        price = 0
+        size = 0
     
     product_data = {
         "board_id": board_obj_id,
@@ -49,8 +57,6 @@ async def add_product_from_url(
         "unit": fetched_data.get("unit", "ml"),
         "price_per_ml": price_per_ml,
         "category": fetched_data.get("category"),
-        "rating": fetched_data.get("rating"),
-        "reviews": fetched_data.get("reviews"),
         "date_added": datetime.utcnow(),
         "notes": request.notes or "",
         "tags": request.tags or [],
@@ -61,31 +67,38 @@ async def add_product_from_url(
         "updated_at": datetime.utcnow()
     }
     
-    print(f"DEBUG: Inserting product for board {board_id}, user {user_id}")
-    print(f"DEBUG: Product data: name={product_data.get('name')}, brand={product_data.get('brand')}, url={product_data.get('url')}")
+    # Validate tags if provided
+    if request.tags:
+        from app.ai_ingredient_intelligence.logic.product_tags import validate_tags
+        tag_validation = await validate_tags(request.tags)
+        if tag_validation.get("invalid"):
+            # Log but don't fail - just use valid tags
+            print(f"WARNING: Invalid tags filtered: {tag_validation.get('invalid')}")
+        product_data["tags"] = tag_validation.get("valid", [])
     
-    result = await inspiration_products_col.insert_one(product_data)
+    # Insert product
+    try:
+        result = await inspiration_products_col.insert_one(product_data)
+        product_id = result.inserted_id
+    except Exception as e:
+        print(f"ERROR: Failed to insert product: {e}")
+        raise Exception(f"Failed to insert product: {str(e)}")
     
-    print(f"DEBUG: Product inserted with ID: {result.inserted_id}")
+    # Update board's updated_at timestamp (non-blocking, don't wait for it)
+    try:
+        await inspiration_boards_col.update_one(
+            {"_id": board_obj_id},
+            {"$set": {"updated_at": datetime.utcnow()}}
+        )
+    except Exception as e:
+        # Non-critical, log but continue
+        print(f"WARNING: Failed to update board timestamp: {e}")
     
-    # Update board's updated_at timestamp
-    await inspiration_boards_col.update_one(
-        {"_id": board_obj_id},
-        {"$set": {"updated_at": datetime.utcnow()}}
-    )
-    
-    # Verify the product was inserted
-    verify_product = await inspiration_products_col.find_one({"_id": result.inserted_id})
-    print(f"DEBUG: Verification - Product found in DB: {verify_product is not None}")
-    if verify_product:
-        print(f"DEBUG: Product board_id in DB: {verify_product.get('board_id')}, expected: {board_obj_id}")
-    
+    # Format and return product (no verification query needed - insert_one already confirms success)
     formatted_product = await _format_product({
         **product_data,
-        "_id": result.inserted_id
+        "_id": product_id
     })
-    
-    print(f"DEBUG: Returning formatted product: {formatted_product.get('product_id')}")
     
     return formatted_product
 
@@ -126,8 +139,6 @@ async def add_product_manual(
         "unit": request.unit,
         "price_per_ml": price_per_ml,
         "category": request.category,
-        "rating": request.rating,
-        "reviews": request.reviews,
         "date_added": datetime.utcnow(),
         "notes": request.notes or "",
         "tags": request.tags or [],
@@ -237,8 +248,6 @@ async def _format_product(product_doc: Dict[str, Any]) -> Dict[str, Any]:
         "unit": product_doc.get("unit", "ml"),
         "price_per_ml": product_doc.get("price_per_ml", 0),
         "category": product_doc.get("category"),
-        "rating": product_doc.get("rating"),
-        "reviews": product_doc.get("reviews"),
         "date_added": product_doc.get("date_added", product_doc.get("created_at")),
         "notes": product_doc.get("notes"),
         "tags": product_doc.get("tags", []),

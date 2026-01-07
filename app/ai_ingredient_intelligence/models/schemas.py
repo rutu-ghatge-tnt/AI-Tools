@@ -625,6 +625,12 @@ class MarketResearchPaginatedResponse(BaseModel):
     subcategory: Optional[str] = Field(None, description="Subcategory")
     category_confidence: Optional[str] = Field(None, description="Category confidence")
     history_id: Optional[str] = Field(None, description="History item ID if saved")
+    # Credit-based pagination fields
+    page_requires_credit: bool = Field(False, description="Whether current page requires credits (pages > 2)")
+    is_unlocked: bool = Field(True, description="Whether current page is unlocked (always true for pages <= 2)")
+    unlocked_pages: List[int] = Field(default_factory=list, description="List of all unlocked pages for this history")
+    next_page_requires_credit: bool = Field(False, description="Whether next page requires credits")
+    next_page_unlocked: bool = Field(True, description="Whether next page is unlocked")
 
 
 # ============================================================================
@@ -752,3 +758,30 @@ class TaxonomyPriceTiersResponse(BaseModel):
 class TaxonomyMarketPositioningResponse(BaseModel):
     """Response schema for market positioning"""
     market_positioning: List[TaxonomyMarketPositioning] = Field(..., description="All market positioning options")
+
+
+# ============================================================================
+# PLATFORM FETCHER SCHEMAS
+# ============================================================================
+
+class FetchPlatformsRequest(BaseModel):
+    """Request schema for fetching product platforms"""
+    product_name: str = Field(..., description="Name of the product to search")
+
+
+class PlatformInfo(BaseModel):
+    """Schema for a single platform result"""
+    platform: str = Field(..., description="Normalized platform name (e.g., 'amazon', 'nykaa')")
+    platform_display_name: str = Field(..., description="Human-readable platform name (e.g., 'Amazon', 'Nykaa')")
+    url: str = Field(..., description="Product URL on the platform")
+    logo_url: Optional[str] = Field(None, description="S3 URL of platform logo")
+    title: str = Field(..., description="Product title from search result")
+    price: Optional[str] = Field(None, description="Product price if available")
+    position: int = Field(..., description="Original search position (lower is better)")
+
+
+class FetchPlatformsResponse(BaseModel):
+    """Response schema for fetching product platforms"""
+    platforms: List[PlatformInfo] = Field(..., description="List of platform links for the product")
+    total_platforms: int = Field(..., description="Total number of unique platforms found")
+    product_name: str = Field(..., description="The product name that was searched")
