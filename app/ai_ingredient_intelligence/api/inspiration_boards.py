@@ -130,23 +130,25 @@ async def add_product_from_url_endpoint(
     user_id: str = Query(..., description="User ID"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
-    """Add product to board from URL"""
+    """Add product to board from URL - requires pre-fetched data from /fetch-product endpoint"""
     try:
-        # Use pre-fetched data if provided, otherwise fetch now
-        if request.fetched_data:
-            # Use pre-fetched data (from /fetch-product endpoint) - avoids double scraping!
-            fetched_data = request.fetched_data
-            print(f"Using pre-fetched product data for {request.url}")
-        else:
-            # Fetch product data from URL (fallback for direct calls)
-            print(f"Fetching product data for {request.url} (no pre-fetched data provided)")
-            fetched_data = await fetch_product_from_url(request.url)
+        # This endpoint should ONLY add products, NOT scrape
+        # Pre-fetched data MUST be provided from /fetch-product endpoint
+        if not request.fetched_data:
+            raise HTTPException(
+                status_code=400,
+                detail="Pre-fetched product data is required. Please call /fetch-product endpoint first and pass the result in 'fetched_data' field."
+            )
         
-        # Validate fetched data - be lenient but ensure we have minimum required data
+        # Use pre-fetched data (from /fetch-product endpoint) - NO scraping here!
+        fetched_data = request.fetched_data
+        print(f"Adding product to board using pre-fetched data for {request.url}")
+        
+        # Validate fetched data - ensure we have minimum required data
         if not fetched_data:
             raise HTTPException(
                 status_code=400,
-                detail="No product data received"
+                detail="Invalid pre-fetched product data: data is empty"
             )
         
         # Check if we have at least name or URL (minimum requirement)
@@ -154,10 +156,10 @@ async def add_product_from_url_endpoint(
         has_url = request.url and request.url.strip()
         
         if not has_name and not has_url:
-            error_msg = fetched_data.get("message", "Failed to fetch product data")
+            error_msg = fetched_data.get("message", "Invalid product data")
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid product data: {error_msg}"
+                detail=f"Invalid pre-fetched product data: {error_msg}. Please ensure /fetch-product returned valid data."
             )
         
         # Add product to board

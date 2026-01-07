@@ -451,23 +451,94 @@ class URLScraper:
                                 html = block.get_attribute("innerHTML")
                                 soup = BeautifulSoup(html, "html.parser")
                                 
-                                # Extract text from paragraphs and lists
+                                # CRITICAL: Look for "Full Ingredient List" first (this is the actual ingredient list)
+                                # vs "Key Ingredients" which are just descriptions
+                                # The ingredient list text is often a text node AFTER the paragraph, not inside it
+                                
+                                # Strategy: Get the full text from the container and split at "Full Ingredient List:"
+                                full_text = soup.get_text(separator=" ", strip=True)
+                                
+                                # Check if "Full Ingredient List" exists
+                                if "full ingredient list:" in full_text.lower():
+                                    # Extract everything after "Full Ingredient List:"
+                                    # Use case-insensitive split
+                                    parts = re.split(r'full ingredient list:\s*', full_text, flags=re.IGNORECASE, maxsplit=1)
+                                    
+                                    if len(parts) > 1:
+                                        ingredient_part = parts[1].strip()
+                                        
+                                        # Stop at next major section (Key Ingredients comes BEFORE Full Ingredient List in HTML,
+                                        # but we want to make sure we don't include it if it appears after)
+                                        # Also stop at other common sections
+                                        stop_patterns = [
+                                            r'\bkey ingredients:\s*',
+                                            r'\bdescription:\s*',
+                                            r'\bhow to use:\s*',
+                                            r'\bbenefits:\s*',
+                                            r'\bhow it works:\s*',
+                                            r'\bproduct details:\s*'
+                                        ]
+                                        
+                                        for pattern in stop_patterns:
+                                            match = re.search(pattern, ingredient_part, flags=re.IGNORECASE)
+                                            if match:
+                                                ingredient_part = ingredient_part[:match.start()].strip()
+                                                break
+                                        
+                                        # Clean up: remove any button text like "Read Less ^"
+                                        ingredient_part = re.sub(r'\s*read\s+(less|more)\s*\^?\s*$', '', ingredient_part, flags=re.IGNORECASE)
+                                        
+                                        if ingredient_part and len(ingredient_part) > 20:
+                                            # This is the actual ingredient list - use it directly
+                                            text_parts.append(f"Ingredients:\nFull Ingredient List: {ingredient_part}")
+                                            ingredients_extracted = True
+                                            print(f"Successfully extracted Full Ingredient List using selector: {content_selector}")
+                                            break
+                                
+                                # Fallback: If no "Full Ingredient List" found, extract all paragraphs and lists
+                                # But EXCLUDE "Key Ingredients" section if it exists
                                 lines = []
+                                
+                                # Extract paragraphs, but skip "Key Ingredients" paragraph
                                 for p in soup.find_all("p"):
                                     text = p.get_text(strip=True)
-                                    if text and len(text) > 3:
-                                        lines.append(text)
-                                for li in soup.find_all("li"):
-                                    text = li.get_text(strip=True)
-                                    if text and len(text) > 3:
-                                        lines.append("• " + text)
-                                for div in soup.find_all("div"):
-                                    text = div.get_text(strip=True)
-                                    if text and len(text) > 10 and "ingredient" in text.lower():
+                                    # Skip "Key Ingredients:" paragraph - we don't want descriptions
+                                    if text and len(text) > 3 and "key ingredients:" not in text.lower():
                                         lines.append(text)
                                 
+                                # Extract list items, but skip items that are part of "Key Ingredients" section
+                                # (Key Ingredients usually come before Full Ingredient List)
+                                found_key_ingredients = False
+                                for li in soup.find_all("li"):
+                                    text = li.get_text(strip=True)
+                                    # Check if this list item is part of a "Key Ingredients" section
+                                    # by checking if there's a preceding "Key Ingredients" paragraph
+                                    parent = li.parent
+                                    if parent:
+                                        # Check siblings before this list
+                                        prev_sibling = parent.previous_sibling
+                                        while prev_sibling:
+                                            if hasattr(prev_sibling, 'get_text'):
+                                                prev_text = prev_sibling.get_text(strip=True)
+                                                if "key ingredients:" in prev_text.lower():
+                                                    found_key_ingredients = True
+                                                    break
+                                            prev_sibling = prev_sibling.previous_sibling
+                                    
+                                    # Only add if it's not part of Key Ingredients section
+                                    if text and len(text) > 3 and not found_key_ingredients:
+                                        lines.append("• " + text)
+                                
                                 if not lines:
-                                    lines = [soup.get_text(separator="\n", strip=True)]
+                                    # Last resort: get all text but try to exclude Key Ingredients
+                                    all_text = soup.get_text(separator="\n", strip=True)
+                                    if "key ingredients:" in all_text.lower() and "full ingredient list:" in all_text.lower():
+                                        # Extract only the Full Ingredient List part
+                                        parts = re.split(r'full ingredient list:\s*', all_text, flags=re.IGNORECASE, maxsplit=1)
+                                        if len(parts) > 1:
+                                            lines = [parts[1].strip()]
+                                    else:
+                                        lines = [all_text]
                                 
                                 ingredients_text = "\n".join(lines).strip()
                                 if ingredients_text and len(ingredients_text) > 20:
@@ -949,7 +1020,7 @@ class URLScraper:
     async def extract_product_image(self, driver: webdriver.Chrome, url: str) -> Optional[str]:
         """
         Extract product image URL from the page using Selenium
-        Excludes images from "also viewed" and recommended product section
+        Uses simple, direct logic for reliable image extraction
         
         Args:
             driver: Selenium WebDriver instance
@@ -1018,52 +1089,50 @@ class URLScraper:
                         return False
                 
                 try:
-                    # Method 1: Platform-specific extraction (most reliable)
+                    # Method 1: Platform-specific extraction using simple, direct logic
                     if platform == "nykaa":
-                        # Use the reference pattern: find all img[src], img[srcset], source[srcset]
-                        # This matches the JavaScript reference code exactly
+                        # Use the reference pattern exactly: find all img[src], img[srcset], source[srcset]
                         try:
-                            # Find all img elements with src or srcset, and source elements with srcset
                             imgs = driver.find_elements(By.CSS_SELECTOR, 'img[src], img[srcset], source[srcset]')
                             
                             for img in imgs:
                                 try:
-                                    # Get src attribute
+                                    # Get src attribute (match reference pattern)
                                     src = ''
                                     try:
                                         src = img.get_attribute('src') or ''
                                     except:
                                         pass
                                     
-                                    # Get srcset attribute
+                                    # Get srcset attribute (match reference pattern)
                                     srcset = ''
                                     try:
                                         srcset = img.get_attribute('srcset') or ''
                                     except:
                                         pass
                                     
-                                    # Build candidates list - match reference pattern exactly
+                                    # Build candidates array - match reference pattern exactly
                                     candidates = []
                                     if src:
                                         candidates.append(src)
                                     if srcset:
-                                        # Parse srcset: split by comma, then take first part (URL) before space
+                                        # Parse srcset: split by comma, trim, then split by space and take first part (URL)
                                         for item in srcset.split(','):
                                             url_part = item.strip().split(' ')[0]
                                             if url_part:
                                                 candidates.append(url_part)
                                     
                                     # Process each candidate URL
-                                    for url in candidates:
-                                        if url and url.strip():
+                                    for candidate_url in candidates:
+                                        if candidate_url and candidate_url.strip():
                                             # Normalize protocol-relative URLs
-                                            if url.startswith('//'):
-                                                url = 'https:' + url
+                                            if candidate_url.startswith('//'):
+                                                candidate_url = 'https:' + candidate_url
                                             
-                                            # Check if it's a Nykaa catalog/product image
-                                            if 'nykaa.com' in url.lower() and 'catalog/product' in url.lower():
+                                            # Check if it's a Nykaa catalog/product image (match reference pattern)
+                                            if 'nykaa.com' in candidate_url.lower() and 'catalog/product' in candidate_url.lower():
                                                 # Remove query parameters (split on '?')
-                                                clean_url = url.split('?')[0]
+                                                clean_url = candidate_url.split('?')[0]
                                                 if clean_url and clean_url not in image_urls:
                                                     image_urls.add(clean_url)
                                                     # Return first valid catalog/product image found
@@ -1071,6 +1140,12 @@ class URLScraper:
                                                     return clean_url
                                 except Exception as e:
                                     continue
+                            
+                            # If we collected URLs but didn't return early, return the first one
+                            if image_urls:
+                                selected = list(image_urls)[0]
+                                print(f"Selected first Nykaa product image: {selected}")
+                                return selected
                         except Exception as e:
                             print(f"Error in Nykaa image extraction: {e}")
                             pass
@@ -1433,50 +1508,73 @@ Return only the JSON array of INCI names:"""
                 
                 for line in lines:
                     line_lower = line.lower()
-                    if any(keyword in line_lower for keyword in ['ingredient', 'inci', 'composition', 'complete ingredients']):
+                    if any(keyword in line_lower for keyword in ['ingredient', 'inci', 'composition', 'complete ingredients', 'full ingredient']):
                         in_ingredient_section = True
                         ingredient_section.append(line)
                     elif in_ingredient_section:
-                        # Continue collecting until we hit a section break
-                        if line.strip() and not any(break_word in line_lower for break_word in ['description', 'how to use', 'benefits', 'product information']):
+                        # Continue collecting until we hit a clear section break
+                        # Don't stop early - collect ALL ingredients!
+                        if line.strip():
+                            # Only stop if we hit a clear new section (not just any keyword)
+                            if any(break_word in line_lower for break_word in ['description:', 'how to use:', 'benefits:', 'product information:', 'directions:', 'warnings:']):
+                                # Check if this is actually a section header (short line) vs part of ingredient list
+                                if len(line.strip()) < 50:  # Likely a section header
+                                    break
                             ingredient_section.append(line)
-                        elif line.strip() and len(ingredient_section) > 5:
-                            # We have enough ingredients, stop
-                            break
                 
                 if ingredient_section:
-                    # Use the ingredient section for extraction
+                    # Use the ingredient section for extraction - include full section
                     ingredient_text = '\n'.join(ingredient_section)
+                    # Use more text - up to 15000 chars for ingredient section to capture full list
+                    if len(ingredient_text) > 15000:
+                        ingredient_text = ingredient_text[:15000]
                     # Also include some context from the full text
                     text_to_analyze = ingredient_text + "\n\n--- Additional Context ---\n" + raw_text[:2000]
                 else:
-                    text_to_analyze = raw_text[:8000]
+                    # If no ingredient section found, use more of the raw text
+                    text_to_analyze = raw_text[:12000]  # Increased from 8000
             else:
                 text_to_analyze = raw_text[:8000]
             
             prompt = f"""
-You are an expert cosmetic ingredient analyst. Your task is to extract INCI (International Nomenclature of Cosmetic Ingredients) names from the following text scraped from an e-commerce product page.
+You are an expert cosmetic ingredient analyst. Your task is to extract ALL INCI (International Nomenclature of Cosmetic Ingredients) names from the following text scraped from an e-commerce product page.
 
-Please analyze the text and return ONLY a JSON array of INCI names in the exact format shown below.
+CRITICAL REQUIREMENTS:
+1. Extract ALL ingredients from the ingredient list - do NOT skip any ingredients
+2. If you see a "Full Ingredient List:" or "Complete Ingredients List:", extract EVERY SINGLE ingredient from that list
+3. Ingredients are typically comma-separated (e.g., "Water, Glycerin, Dimethicone, ...") or listed line by line
+4. Split comma-separated lists into individual ingredients
+5. Remove any non-ingredient text, headers, descriptions, or marketing content
+6. Clean up formatting (remove extra spaces, punctuation, brand names, percentages)
+7. Return as a simple JSON array of strings
+8. If no valid ingredients found, return empty array []
+9. DO NOT extract only "key ingredients" or "active ingredients" - extract the COMPLETE list
 
-Requirements:
-1. Extract only valid INCI ingredient names
-2. Remove any non-ingredient text, headers, descriptions, or marketing content
-3. Clean up formatting (remove extra spaces, punctuation, brand names)
-4. Return as a simple JSON array of strings
-5. If no valid ingredients found, return empty array []
-6. Focus on finding ingredient lists, composition sections, or INCI lists
-7. Look for sections labeled "Complete Ingredients List", "Key Ingredients", "Ingredients:", etc.
-8. Ingredients are often comma-separated or listed line by line
-9. Extract ALL ingredients from the list, not just key ingredients
+CRITICAL - IGNORE "KEY INGREDIENTS" SECTION:
+- If the text contains BOTH "Key Ingredients:" and "Full Ingredient List:", you MUST IGNORE the "Key Ingredients:" section entirely
+- "Key Ingredients:" sections contain DESCRIPTIONS (e.g., "SPF 50+ UVA/UVB: SPF 50+ UVA/UVB provides advanced UV filters...")
+- These are NOT actual ingredient names - they are marketing descriptions
+- ONLY extract from the "Full Ingredient List:" section which contains the actual INCI ingredient names
+- DO NOT extract text like "Key Ingredients:", "Full Ingredient List:", "• SPF 50+ UVA/UVB:", "• Adenosine:" as ingredients
+- DO NOT extract ingredient descriptions - only extract the actual ingredient names
+
+IMPORTANT:
+- If the text contains "Full Ingredient List:" or "Complete Ingredients List:", extract ALL ingredients that follow (comma-separated list)
+- A typical product has 10-50+ ingredients - if you only extract 1-3 ingredients, you're missing most of them
+- Look for patterns like: "Aqua / Water, Ethylhexyl Methoxycinnamate, Dimethicone, Glycerin, Drometrizole Trisiloxane, Terephthalylidene Dicamphor Sulfonic Acid, ..." and extract each one
+- Ingredients may be separated by commas, slashes (/), or newlines
+- When you see "Aqua / Water", extract both "Aqua" and "Water" as separate ingredients
+
+Example: If you see "Full Ingredient List: Aqua / Water, Ethylhexyl Methoxycinnamate, Dimethicone, Glycerin, Drometrizole Trisiloxane, ..." 
+You should extract: ["Aqua", "Water", "Ethylhexyl Methoxycinnamate", "Dimethicone", "Glycerin", "Drometrizole Trisiloxane", ...]
 
 Example output format:
-["Water", "Glycerin", "Sodium Hyaluronate", "Hyaluronic Acid"]
+["Water", "Glycerin", "Sodium Hyaluronate", "Hyaluronic Acid", "Dimethicone", "Ethylhexyl Methoxycinnamate", ...]
 
 Text to analyze:
 {text_to_analyze}
 
-Return only the JSON array:"""
+Return only the JSON array with ALL ingredients:"""
 
             # Get Claude client (lazy-loaded)
             claude_client = self._get_claude_client()
@@ -1527,6 +1625,86 @@ Return only the JSON array:"""
         except Exception as e:
             raise Exception(f"Failed to extract ingredients with Claude: {str(e)}")
     
+    def _extract_ingredient_section_text(self, raw_text: str) -> Optional[str]:
+        """
+        Extract the ingredient section text from scraped text for direct parsing
+        Returns the ingredient list text or None if not found
+        Handles Nykaa's format: "Ingredients:\nAqua / Water, Glycerin, ..."
+        """
+        try:
+            import re
+            
+            # Method 1: Look for "Ingredients:\n" pattern (Nykaa scraper format)
+            if "Ingredients:\n" in raw_text:
+                parts = raw_text.split("Ingredients:\n", 1)
+                if len(parts) > 1:
+                    ingredient_part = parts[1]
+                    # Stop at next section or button text
+                    for break_word in ['\n\nDescription', '\nDescription:', '\n\nHow to', '\nHow to use', '\n\nBenefits', '\nBenefits:', '\nRead Less', '\nRead More', '\nRead Less ^', 'Read Less ^']:
+                        if break_word in ingredient_part:
+                            ingredient_part = ingredient_part.split(break_word)[0]
+                            break
+                    if ingredient_part.strip():
+                        # Clean up: remove any remaining section headers
+                        cleaned = re.sub(r'^(?:full\s+ingredient\s+list|complete\s+ingredients?\s+list)\s*[:]?\s*', '', ingredient_part.strip(), flags=re.IGNORECASE)
+                        return cleaned
+            
+            # Method 2: Look for "Full Ingredient List:" or similar headers
+            lines = raw_text.split('\n')
+            ingredient_section = []
+            in_ingredient_section = False
+            found_header = False
+            
+            for i, line in enumerate(lines):
+                line_lower = line.lower().strip()
+                line_original = line.strip()
+                
+                # Look for ingredient list header
+                if any(keyword in line_lower for keyword in ['full ingredient list', 'complete ingredients list', 'ingredients:', 'ingredient list:']):
+                    in_ingredient_section = True
+                    found_header = True
+                    # Include text after colon if present
+                    if ':' in line_original:
+                        after_colon = line_original.split(':', 1)[1].strip()
+                        if after_colon:
+                            ingredient_section.append(after_colon)
+                    continue
+                elif in_ingredient_section:
+                    if line_original:
+                        # Stop at clear section breaks (but be lenient)
+                        if any(break_word in line_lower for break_word in ['description:', 'how to use:', 'benefits:', 'directions:', 'warnings:', 'read less', 'read more']):
+                            # Only stop if it's a short line (likely a header)
+                            if len(line_original) < 50:
+                                break
+                        # Collect the line - it's likely part of ingredient list
+                        ingredient_section.append(line_original)
+            
+            if ingredient_section:
+                # Join all lines - preserve commas and structure
+                ingredient_text = ' '.join(ingredient_section)
+                # Remove common prefixes
+                ingredient_text = re.sub(r'^(?:full\s+ingredient\s+list|complete\s+ingredients?\s+list|ingredients?:)\s*[:]?\s*', '', ingredient_text, flags=re.IGNORECASE)
+                # Remove button text like "Read Less ^"
+                ingredient_text = re.sub(r'\s*read\s+(less|more)\s*\^?\s*$', '', ingredient_text, flags=re.IGNORECASE)
+                return ingredient_text.strip()
+            
+            # Method 3: Look for comma-separated list pattern after ingredient keywords
+            # Pattern: "Full Ingredient List: Aqua / Water, Glycerin, ..."
+            pattern = r'(?:full\s+ingredient\s+list|complete\s+ingredients?\s+list|ingredients?:)\s*[:]?\s*([^:]+?)(?:\n\s*\n|\n[A-Z][a-z]+\s*:|$)'
+            match = re.search(pattern, raw_text, re.IGNORECASE | re.DOTALL)
+            if match:
+                ingredient_text = match.group(1).strip()
+                # Check if it looks like an ingredient list (has commas and common ingredients)
+                if ',' in ingredient_text and any(word in ingredient_text.lower() for word in ['water', 'aqua', 'glycerin', 'dimethicone', 'acid']):
+                    return ingredient_text
+            
+            return None
+        except Exception as e:
+            print(f"Error extracting ingredient section: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
     async def extract_ingredients_from_url(self, url: str) -> Dict[str, any]:
         """
         Complete workflow: Scrape URL and extract ingredients
@@ -1573,14 +1751,52 @@ Return only the JSON array:"""
                     "product_image": scrape_result.get("product_image")
                 }
             
-            # If we have ingredient content but extraction failed, try once more with more context
+            # If we have ingredient content but extraction failed, try direct parsing fallback
             if has_ingredient_content and not ingredients:
-                print("Found ingredient content but extraction returned empty, retrying with full text...")
+                print("Found ingredient content but Claude extraction returned empty, trying direct parsing fallback...")
+                try:
+                    # Use direct INCI parser as fallback - this handles comma-separated lists perfectly
+                    from app.ai_ingredient_intelligence.utils.inci_parser import parse_inci_string
+                    
+                    # Extract ingredient section from text
+                    ingredient_text = self._extract_ingredient_section_text(extracted_text)
+                    
+                    if ingredient_text:
+                        # Parse directly using INCI parser (handles commas, slashes, etc.)
+                        direct_ingredients = parse_inci_string(ingredient_text)
+                        
+                        # Clean up: remove empty, very short, or non-ingredient items
+                        cleaned = []
+                        for ing in direct_ingredients:
+                            ing = ing.strip()
+                            # Skip if too short, too long, or is a common word
+                            if (len(ing) > 2 and len(ing) < 100 and 
+                                not ing.lower() in ['and', 'or', 'the', 'a', 'an', 'with', 'for', 'from', 'to', 'of', 'in', 'on', 'read', 'less', 'more'] and
+                                not ing.lower().startswith(('read', 'click', 'show', 'hide', 'the ', 'this '))):
+                                cleaned.append(ing)
+                        
+                        if cleaned and len(cleaned) > 0:
+                            print(f"Direct parsing extracted {len(cleaned)} ingredients")
+                            return {
+                                "ingredients": cleaned,
+                                "extracted_text": extracted_text,
+                                "platform": scrape_result["platform"],
+                                "url": url,
+                                "is_estimated": False,
+                                "source": "url_extraction",
+                                "product_name": None,
+                                "product_image": scrape_result.get("product_image")
+                            }
+                except Exception as e:
+                    print(f"Direct parsing fallback failed: {e}")
+                
+                # If direct parsing also failed, try Claude again with more text context
+                print("Direct parsing didn't work, retrying Claude with full text...")
                 try:
                     # Try with more text context
                     ingredients = await self.extract_ingredients_from_text(extracted_text[:12000])
                     if ingredients and len(ingredients) > 0:
-                        print(f"Successfully extracted {len(ingredients)} ingredients on retry")
+                        print(f"Successfully extracted {len(ingredients)} ingredients on Claude retry")
                         return {
                             "ingredients": ingredients,
                             "extracted_text": extracted_text,
@@ -1592,7 +1808,7 @@ Return only the JSON array:"""
                             "product_image": scrape_result.get("product_image")
                         }
                 except Exception as e:
-                    print(f"Retry also failed: {e}")
+                    print(f"Claude retry also failed: {e}")
             
             # If extraction failed and we don't have ingredient content, try fallback: detect product name and search
             if not has_ingredient_content:

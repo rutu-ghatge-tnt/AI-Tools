@@ -114,12 +114,12 @@ class BoardDetailResponse(BoardResponse):
 # ============================================================================
 
 class AddProductFromURLRequest(BaseModel):
-    """Request to add product from URL"""
+    """Request to add product from URL - requires pre-fetched data from /fetch-product endpoint"""
     url: str = Field(..., description="Product URL from e-commerce site")
     notes: Optional[str] = Field(None, max_length=1000)
     tags: Optional[List[str]] = Field(default_factory=list)
-    # Optional: Pre-fetched product data to avoid re-scraping
-    fetched_data: Optional[Dict[str, Any]] = Field(None, description="Pre-fetched product data from /fetch-product endpoint")
+    # REQUIRED: Pre-fetched product data from /fetch-product endpoint (no scraping in this endpoint)
+    fetched_data: Dict[str, Any] = Field(..., description="Pre-fetched product data from /fetch-product endpoint. This endpoint does NOT scrape - you must fetch first.")
 
 
 class AddProductManualRequest(BaseModel):
