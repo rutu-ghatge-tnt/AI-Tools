@@ -204,30 +204,6 @@ class ProductResponse(BaseModel):
 
 
 # ============================================================================
-# DECODING SCHEMAS
-# ============================================================================
-
-class DecodeProductResponse(BaseModel):
-    """Response after decoding a product"""
-    product_id: str
-    decoded: bool
-    decoded_data: Optional[DecodedData]
-    message: Optional[str] = None
-
-
-class BatchDecodeRequest(BaseModel):
-    """Request to batch decode products"""
-    product_ids: Optional[List[str]] = Field(None, description="Specific product IDs, or omit to decode all pending")
-
-
-class BatchDecodeResponse(BaseModel):
-    """Response after batch decoding"""
-    decoded_count: int
-    failed_count: int
-    results: List[Dict[str, Any]]
-
-
-# ============================================================================
 # URL FETCHING SCHEMAS
 # ============================================================================
 

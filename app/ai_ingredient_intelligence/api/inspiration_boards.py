@@ -9,7 +9,6 @@ from app.ai_ingredient_intelligence.auth import verify_jwt_token
 from app.ai_ingredient_intelligence.models.inspiration_boards_schemas import (
     CreateBoardRequest, UpdateBoardRequest, BoardResponse, BoardListResponse, BoardDetailResponse,
     AddProductFromURLRequest, AddProductManualRequest, UpdateProductRequest, ProductResponse,
-    DecodeProductResponse, BatchDecodeRequest, BatchDecodeResponse,
     FetchProductRequest, FetchProductResponse,
     AnalysisRequest, AnalysisResponse,
     TagsResponse
@@ -21,7 +20,6 @@ from app.ai_ingredient_intelligence.logic.product_manager import (
     add_product_from_url, add_product_manual, get_product, update_product, delete_product
 )
 from app.ai_ingredient_intelligence.logic.url_fetcher import fetch_product_from_url
-from app.ai_ingredient_intelligence.logic.product_decoder import decode_product
 from app.ai_ingredient_intelligence.logic.competitor_analyzer import analyze_competitors
 from app.ai_ingredient_intelligence.logic.product_tags import get_all_tags, validate_tags, initialize_tags
 from datetime import datetime
@@ -282,155 +280,6 @@ async def delete_product_endpoint(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-# ============================================================================
-# PRODUCT DECODING ENDPOINTS
-# ============================================================================
-
-@router.post("/products/{product_id}/decode", response_model=DecodeProductResponse)
-async def decode_product_endpoint(
-    product_id: str,
-    user_id: str = Query(..., description="User ID"),
-    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
-):
-    """Decode a product (analyze ingredients)"""
-    try:
-        result = await decode_product(user_id, product_id)
-        
-        if not result.get("success"):
-            # Check if it's a timeout/cancellation error
-            error_msg = result.get("error", "Failed to decode product")
-            if "cancelled" in error_msg.lower() or "timeout" in error_msg.lower():
-                raise HTTPException(
-                    status_code=408,  # Request Timeout
-                    detail=error_msg
-                )
-            raise HTTPException(
-                status_code=400,
-                detail=error_msg
-            )
-        
-        return {
-            "product_id": product_id,
-            "decoded": result["decoded"],
-            "decoded_data": result.get("decoded_data"),
-            "message": result.get("message")
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        error_msg = str(e)
-        # Handle operation cancelled errors
-        if "_OperationCancelled" in error_msg or "operation cancelled" in error_msg.lower():
-            raise HTTPException(
-                status_code=408,
-                detail="Operation was cancelled. This may happen if the request was interrupted. Please try again."
-            )
-        raise HTTPException(status_code=500, detail=error_msg)
-
-
-@router.post("/boards/{board_id}/decode-all", response_model=BatchDecodeResponse)
-async def batch_decode_endpoint(
-    board_id: str,
-    request: BatchDecodeRequest,
-    user_id: str = Query(..., description="User ID"),
-    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
-):
-    """Batch decode all undecoded products in a board"""
-    try:
-        from app.ai_ingredient_intelligence.db.collections import inspiration_products_col, inspiration_boards_col
-        from bson import ObjectId
-        
-        # Verify board belongs to user
-        try:
-            board_obj_id = ObjectId(board_id)
-        except:
-            raise HTTPException(status_code=400, detail="Invalid board ID")
-        
-        board = await inspiration_boards_col.find_one({
-            "_id": board_obj_id,
-            "user_id": user_id
-        })
-        
-        if not board:
-            raise HTTPException(status_code=404, detail="Board not found")
-        
-        # Get products to decode
-        if request.product_ids:
-            # Decode specific products
-            product_obj_ids = [ObjectId(pid) for pid in request.product_ids]
-            query = {
-                "_id": {"$in": product_obj_ids},
-                "board_id": board_obj_id,
-                "user_id": user_id,
-                "decoded": False
-            }
-        else:
-            # Decode all undecoded products in board
-            query = {
-                "board_id": board_obj_id,
-                "user_id": user_id,
-                "decoded": False
-            }
-        
-        try:
-            products_cursor = inspiration_products_col.find(query)
-            products = []
-            async for p in products_cursor:
-                products.append(p)
-        except Exception as e:
-            error_msg = str(e)
-            if "_OperationCancelled" in error_msg or "operation cancelled" in error_msg.lower():
-                raise HTTPException(
-                    status_code=408,
-                    detail="Database operation was cancelled while fetching products. Please try again."
-                )
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to fetch products: {error_msg}"
-            )
-        
-        # Decode each product
-        results = []
-        decoded_count = 0
-        failed_count = 0
-        
-        for product in products:
-            product_id = str(product["_id"])
-            decode_result = await decode_product(user_id, product_id)
-            
-            if decode_result.get("success"):
-                decoded_count += 1
-                results.append({
-                    "product_id": product_id,
-                    "status": "success",
-                    "decoded": True
-                })
-            else:
-                failed_count += 1
-                results.append({
-                    "product_id": product_id,
-                    "status": "failed",
-                    "error": decode_result.get("error", "Unknown error")
-                })
-        
-        return {
-            "decoded_count": decoded_count,
-            "failed_count": failed_count,
-            "results": results
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        error_msg = str(e)
-        # Handle operation cancelled errors
-        if "_OperationCancelled" in error_msg or "operation cancelled" in error_msg.lower():
-            raise HTTPException(
-                status_code=408,
-                detail="Operation was cancelled. This may happen if the request was interrupted. Please try again."
-            )
-        raise HTTPException(status_code=500, detail=error_msg)
 
 
 # ============================================================================
