@@ -62,27 +62,95 @@ async def fetch_product_from_url(url: str, force_refresh: bool = False) -> Dict[
         # Extract ingredients and basic info
         result = await scraper.extract_ingredients_from_url(url)
         
-        # Parse the result
+        # Get extracted text for parsing product details
+        extracted_text = result.get("extracted_text", "")
+        ingredients = result.get("ingredients", [])
+        
+        # Debug logging
+        print(f"📊 Extraction results: {len(ingredients)} ingredients, {len(extracted_text)} chars of text")
+        
+        # If no extracted text, this is a problem - log it
+        if not extracted_text or len(extracted_text.strip()) < 10:
+            print(f"⚠️ Warning: Very little or no text extracted from {url}")
+            print(f"   Extracted text length: {len(extracted_text) if extracted_text else 0}")
+            print(f"   Ingredients found: {len(ingredients) if ingredients else 0}")
+        
         # Extract product image from result, fallback to emoji if not found
         product_image = result.get("product_image")
         if not product_image:
             product_image = "🧴"
         
+        # Extract product name - prioritize from result, fallback to text extraction
+        product_name = result.get("product_name")
+        if not product_name or product_name == "Unknown Product":
+            product_name = _extract_product_name_from_text(extracted_text)
+        if not product_name:
+            product_name = _extract_product_name_from_url(url)
+        if not product_name:
+            product_name = "Unknown Product"
+        
+        # Extract brand - try multiple sources
+        try:
+            brand_from_url = _extract_brand_from_url(url)
+            brand_from_text = _extract_brand_from_text(extracted_text)
+            brand = await _validate_brand_name(brand_from_url, brand_from_text, extracted_text, product_name)
+            if not brand:
+                brand = brand_from_url or brand_from_text or "Unknown Brand"
+        except Exception as e:
+            print(f"⚠️ Warning: Failed to extract brand: {e}")
+            brand = "Unknown Brand"
+        
+        # Extract price
+        price = _extract_price_from_text(extracted_text)
+        if price is None:
+            price = 0.0
+        
+        # Extract size and unit
+        size = _extract_size_from_text(extracted_text)
+        if size is None:
+            size = 0.0
+        # Try to extract unit from text
+        unit = "ml"  # default
+        if extracted_text:
+            unit_match = re.search(r'(\d+(?:\.\d+)?)\s*(ml|gm|g|kg|l)', extracted_text, re.IGNORECASE)
+            if unit_match:
+                unit = unit_match.group(2).lower()
+                if unit == "g":
+                    unit = "gm"
+        
+        # Extract category, benefits, tags, and target_audience using Claude
+        # Wrap in try/except to ensure we still return data even if this fails
+        try:
+            category_data = await _extract_category_benefits_tags_with_claude(
+                extracted_text, product_name, ingredients
+            )
+            category = category_data.get("category")
+            benefits = category_data.get("benefits", [])
+            tags = category_data.get("tags", [])
+            target_audience = category_data.get("target_audience", [])
+        except Exception as e:
+            print(f"⚠️ Warning: Failed to extract category/benefits/tags with Claude: {e}")
+            # Fallback: try to extract benefits from text directly
+            category = _extract_category_from_text(extracted_text, product_name)
+            benefits = _extract_benefits_from_text(extracted_text)
+            tags = []
+            target_audience = []
+        
         # Build standardized response
         response_data = {
-            "name": result.get("product_name", "Unknown Product"),
-            "brand": result.get("brand", "Unknown Brand"),
+            "name": product_name,
+            "brand": brand,
             "url": url,
             "platform": platform,
-            "price": result.get("price", 0),
-            "size": result.get("size", 0),
-            "unit": result.get("unit", "ml"),
-            "category": result.get("category"),
+            "price": price,
+            "size": size,
+            "unit": unit,
+            "category": category,
             "image": product_image,
-            "ingredients": result.get("ingredients", []),
-            "benefits": result.get("benefits", []),
-            "tags": result.get("tags", []),
-            "target_audience": result.get("target_audience", []),
+            "ingredients": ingredients,
+            "benefits": benefits,
+            "tags": tags,
+            "target_audience": target_audience,
             "success": True,
             "message": None,
             "scraped_at": datetime.utcnow().isoformat(),
@@ -90,11 +158,15 @@ async def fetch_product_from_url(url: str, force_refresh: bool = False) -> Dict[
         }
         
         # Store in cache for future use (only if scraping was successful)
-        if result.get("success", False):
+        # Check if we have ingredients OR if we successfully extracted product details
+        has_ingredients = ingredients and len(ingredients) > 0
+        has_product_data = product_name and product_name != "Unknown Product"
+        
+        if has_ingredients or has_product_data:
             await cache_url_data(url, response_data)
-            print(f"💾 Cached {url} for 30 days")
+            print(f"💾 Cached {url} for 30 days ({len(ingredients)} ingredients, product: {product_name[:50]})")
         else:
-            print(f"⚠️ Scraping failed for {url}, not caching")
+            print(f"⚠️ No ingredients or product data extracted for {url}, not caching")
         
         return response_data
         
