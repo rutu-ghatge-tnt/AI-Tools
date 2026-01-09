@@ -40,7 +40,10 @@ PLATFORM_DOMAINS = {
     "flipkart": ["flipkart.com"],
     "tira_beauty": ["tiabeauty.in", "tirabeauty.com", "tira"],
     "sephora_india": ["sephora.in", "sephora.co.in"],
-    "myntra": ["myntra.com"]
+    "myntra": ["myntra.com"],
+    "purplle": ["purplle.com"],
+    "jiomart": ["jiomart.com"],
+    "ajio": ["ajio.com"]
 }
 
 # Map Serper source names to normalized platform names
@@ -70,7 +73,10 @@ PLATFORM_DISPLAY_NAMES = {
     "flipkart": "Flipkart",
     "tira_beauty": "Tira Beauty",
     "sephora_india": "Sephora India",
-    "myntra": "Myntra"
+    "myntra": "Myntra",
+    "purplle": "Purplle",
+    "jiomart": "JioMart",
+    "ajio": "AJIO"
 }
 
 # Platform logo URLs (favicon or logo sources)
@@ -80,7 +86,10 @@ PLATFORM_LOGO_URLS = {
     "flipkart": "https://www.flipkart.com/favicon.ico",
     "tira_beauty": "https://www.tiabeauty.in/favicon.ico",
     "sephora_india": "https://www.sephora.in/favicon.ico",
-    "myntra": "https://www.myntra.com/favicon.ico"
+    "myntra": "https://www.myntra.com/favicon.ico",
+    "purplle": "https://www.purplle.com/favicon.ico",
+    "jiomart": "https://www.jiomart.com/favicon.ico",
+    "ajio": "https://www.ajio.com/favicon.ico"
 }
 
 
@@ -234,6 +243,45 @@ def normalize_platform(url: str) -> str:
 def get_platform_display_name(platform: str) -> str:
     """Get human-readable platform name."""
     return PLATFORM_DISPLAY_NAMES.get(platform, platform.replace("_", " ").title())
+
+
+def get_favicon_url_fallback(platform: str, product_url: str = None) -> Optional[str]:
+    """
+    Generate favicon URL as fallback when S3 logo is not available.
+    
+    Args:
+        platform: Normalized platform name
+        product_url: Product URL to extract domain from (optional)
+        
+    Returns:
+        Favicon URL or None
+    """
+    # First check if platform has a known favicon URL
+    if platform in PLATFORM_LOGO_URLS:
+        return PLATFORM_LOGO_URLS[platform]
+    
+    # Try to generate favicon URL from product URL
+    if product_url:
+        try:
+            parsed = urlparse(product_url)
+            domain = parsed.netloc.lower()
+            
+            # Remove www. prefix
+            if domain.startswith("www."):
+                domain = domain[4:]
+            
+            # Generate favicon URL
+            return f"https://{domain}/favicon.ico"
+        except Exception:
+            pass
+    
+    # Try to generate from platform name if we know the domain
+    if platform in PLATFORM_DOMAINS:
+        domains = PLATFORM_DOMAINS[platform]
+        if domains:
+            return f"https://www.{domains[0]}/favicon.ico"
+    
+    return None
 
 
 def fetch_serper_results(product_name: str, page: int = 1, num: int = 10) -> Optional[Dict]:
@@ -621,6 +669,12 @@ def fetch_platforms(product_name: str) -> List[Dict]:
             logo_url = check_logo_exists_in_s3(platform, s3_client)
             if not logo_url:
                 logo_url = upload_logo_to_s3(platform, s3_client)
+            
+            # Fallback to favicon URL if S3 logo is not available
+            if not logo_url:
+                logo_url = get_favicon_url_fallback(platform, link)
+                if logo_url:
+                    print(f"Using favicon fallback for {platform}: {logo_url}")
             
             # Cache the result (even if None, to avoid redundant S3 calls)
             logo_cache[platform] = logo_url
