@@ -192,8 +192,6 @@ def _detect_platform(url: str) -> str:
 
 # The rest of the existing helper functions continue below...
 # (All existing _extract_* functions remain unchanged)
-    else:
-        return "other"
 
 
 def _extract_product_name_from_text(text: str) -> Optional[str]:
