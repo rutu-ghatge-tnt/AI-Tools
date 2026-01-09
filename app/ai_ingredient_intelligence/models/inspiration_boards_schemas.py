@@ -188,6 +188,9 @@ class ProductSummary(BaseModel):
     # New fields for feature integration
     product_type: Optional[str] = Field(None, description="Product type: researched, decoded, compared, formulation")
     history_link: Optional[ProductHistoryLink] = Field(None, description="Link to feature history data")
+    # Platform links fetched from Serper API
+    platforms: Optional[List[Dict[str, Any]]] = Field(None, description="Platform links fetched from Serper API (fetched in background)")
+    platforms_fetched_at: Optional[str] = Field(None, description="Timestamp when platforms were fetched")
 
     class Config:
         from_attributes = True
@@ -220,6 +223,9 @@ class ProductResponse(BaseModel):
     product_type: Optional[str] = Field(None, description="Product type: researched, decoded, compared, formulation")
     history_link: Optional[ProductHistoryLink] = Field(None, description="Link to feature history data")
     feature_data: Optional[Dict[str, Any]] = Field(None, description="Full feature data fetched on demand")
+    # Platform links fetched from Serper API
+    platforms: Optional[List[Dict[str, Any]]] = Field(None, description="Platform links fetched from Serper API (fetched in background)")
+    platforms_fetched_at: Optional[str] = Field(None, description="Timestamp when platforms were fetched")
 
     class Config:
         from_attributes = True

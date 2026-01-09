@@ -1,8 +1,10 @@
 """
 Inspiration Boards API Endpoints
 """
-from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi import APIRouter, HTTPException, Query, Depends, BackgroundTasks
 from typing import List, Optional
+import asyncio
+from datetime import datetime
 
 # Import authentication
 from app.ai_ingredient_intelligence.auth import verify_jwt_token
@@ -26,9 +28,61 @@ from app.ai_ingredient_intelligence.logic.product_tags import get_all_tags, vali
 from app.ai_ingredient_intelligence.logic.feature_history_accessor import (
     get_feature_history, extract_product_data_from_history, validate_history_ids, get_product_type_config
 )
-from datetime import datetime
+from app.ai_ingredient_intelligence.logic.serper_product_search import fetch_platforms
+from app.ai_ingredient_intelligence.db.collections import inspiration_products_col
+from bson import ObjectId
 
 router = APIRouter(prefix="/inspiration-boards", tags=["Inspiration Boards"])
+
+
+# ============================================================================
+# BACKGROUND TASKS
+# ============================================================================
+
+async def fetch_platforms_for_product_background(product_id: str, user_id: str):
+    """
+    Background task to fetch platforms for a product after it's added or updated.
+    Extracts product name and fetches platform links.
+    """
+    try:
+        # Fetch the product
+        product = await inspiration_products_col.find_one({
+            "_id": ObjectId(product_id),
+            "user_id": user_id
+        })
+        
+        if not product:
+            print(f"[BACKGROUND] Product {product_id} not found, skipping platform fetch")
+            return
+        
+        # Extract product name
+        product_name = product.get("name")
+        
+        if not product_name or not product_name.strip() or product_name == "Unknown Product":
+            print(f"[BACKGROUND] No valid product name found for product {product_id}, skipping platform fetch")
+            return
+        
+        print(f"[BACKGROUND] Fetching platforms for product: {product_name}")
+        
+        # Fetch platforms (run sync function in thread pool to avoid blocking)
+        platforms = await asyncio.to_thread(fetch_platforms, product_name.strip())
+        
+        # Update product with platforms data
+        await inspiration_products_col.update_one(
+            {"_id": ObjectId(product_id), "user_id": user_id},
+            {"$set": {
+                "platforms": platforms,
+                "platforms_fetched_at": datetime.utcnow().isoformat()
+            }}
+        )
+        
+        print(f"[BACKGROUND] Successfully fetched and saved {len(platforms)} platforms for product {product_id}")
+        
+    except Exception as e:
+        print(f"[BACKGROUND] Error fetching platforms for product {product_id}: {e}")
+        import traceback
+        traceback.print_exc()
+        # Don't raise - background failures shouldn't affect user experience
 
 
 # ============================================================================
@@ -129,6 +183,7 @@ async def delete_board_endpoint(
 async def add_product_from_url_endpoint(
     board_id: str,
     request: AddProductFromURLRequest,
+    background_tasks: BackgroundTasks,
     user_id: str = Query(..., description="User ID"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
@@ -171,6 +226,11 @@ async def add_product_from_url_endpoint(
             if not result:
                 raise HTTPException(status_code=404, detail="Board not found or access denied")
             
+            # Trigger background task to fetch platforms
+            product_id = result.get("product_id")
+            if product_id:
+                background_tasks.add_task(fetch_platforms_for_product_background, product_id, user_id)
+            
             return result
         except Exception as e:
             # Provide more specific error messages
@@ -195,6 +255,7 @@ async def add_product_from_url_endpoint(
 async def add_product_manual_endpoint(
     board_id: str,
     request: AddProductManualRequest,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(verify_jwt_token),  # JWT token validation
     user_id: str = Query(..., description="User ID")
 ):
@@ -214,6 +275,11 @@ async def add_product_manual_endpoint(
         
         if not result:
             raise HTTPException(status_code=404, detail="Board not found or access denied")
+        
+        # Trigger background task to fetch platforms
+        product_id = result.get("product_id")
+        if product_id:
+            background_tasks.add_task(fetch_platforms_for_product_background, product_id, user_id)
         
         return result
     except HTTPException:
@@ -255,6 +321,7 @@ async def get_product_endpoint(
 async def update_product_endpoint(
     product_id: str,
     request: UpdateProductRequest,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(verify_jwt_token),  # JWT token validation
     user_id: str = Query(..., description="User ID")
 ):
@@ -273,6 +340,10 @@ async def update_product_endpoint(
         result = await update_product(user_id, product_id, request)
         if not result:
             raise HTTPException(status_code=404, detail="Product not found")
+        
+        # Trigger background task to fetch platforms (in case product name was updated)
+        background_tasks.add_task(fetch_platforms_for_product_background, product_id, user_id)
+        
         return result
     except HTTPException:
         raise
@@ -368,6 +439,7 @@ async def analyze_competitors_endpoint(
 @router.post("/export-to-board", response_model=ExportToBoardResponse)
 async def export_to_board_endpoint(
     request: ExportToBoardRequest,
+    background_tasks: BackgroundTasks,
     user_id: str = Query(..., description="User ID"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
@@ -425,6 +497,10 @@ async def export_to_board_endpoint(
                     added_product = await _add_exported_product_to_board(user_id, request.board_id, product_data)
                     if added_product:
                         exported_products.append(added_product)
+                        # Trigger background task to fetch platforms
+                        product_id = added_product.get("product_id")
+                        if product_id:
+                            background_tasks.add_task(fetch_platforms_for_product_background, product_id, user_id)
                     else:
                         errors.append(f"Failed to add product from {feature_type} history ID {history_id}")
                         skipped_count += 1

@@ -465,6 +465,8 @@ class MarketResearchHistoryItem(BaseModel):
     structured_analysis: Optional[Dict] = Field(None, description="Structured analysis data (ProductStructuredAnalysis as dict)")
     selected_keywords: Optional[Dict] = Field(None, description="Selected keywords (ProductKeywords as dict)")
     available_keywords: Optional[Dict] = Field(None, description="Available keywords (ProductKeywords as dict)")
+    platforms: Optional[List[Dict]] = Field(None, description="Platform links fetched from Serper API (fetched in background)")
+    platforms_fetched_at: Optional[str] = Field(None, description="Timestamp when platforms were fetched")
 
 
 class SaveMarketResearchHistoryRequest(BaseModel):
@@ -667,6 +669,28 @@ class MakeWishResponse(BaseModel):
     compliance: Dict[str, Any] = Field(..., description="Stage 5: Regulatory compliance check")
     metadata: Dict[str, Any] = Field(..., description="Metadata about the generation process")
     history_id: Optional[str] = Field(None, description="History item ID (MongoDB ObjectId) - returned when history is auto-saved")
+
+
+class UpdateWishHistoryRequest(BaseModel):
+    """Request schema for updating wish history item - all fields are optional"""
+    name: Optional[str] = Field(None, description="Update the name of the wish history item")
+    notes: Optional[str] = Field(None, description="Update user notes")
+    tag: Optional[str] = Field(None, description="Update tag for categorization")
+    wish_data: Optional[Dict[str, Any]] = Field(None, description="Update wish data (for regeneration)")
+    formula_result: Optional[Dict[str, Any]] = Field(None, description="Update formula result (for regeneration)")
+    status: Optional[str] = Field(None, description="Update status (e.g., 'in_progress', 'completed')")
+
+
+class UpdateWishHistoryResponse(BaseModel):
+    """Response schema for wish history update"""
+    success: bool = Field(..., description="Whether the update was successful")
+    message: str = Field(..., description="Success message")
+
+
+class DeleteWishHistoryResponse(BaseModel):
+    """Response schema for wish history deletion"""
+    success: bool = Field(..., description="Whether the deletion was successful")
+    message: str = Field(..., description="Success message")
 
 
 # ============================================================================
