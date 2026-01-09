@@ -255,6 +255,8 @@ async def _format_product(product_doc: Dict[str, Any]) -> Dict[str, Any]:
         "decoded": product_doc.get("decoded", False),
         "decoded_data": decoded_data,
         "created_at": product_doc.get("created_at"),
-        "updated_at": product_doc.get("updated_at", product_doc.get("created_at"))
+        "updated_at": product_doc.get("updated_at", product_doc.get("created_at")),
+        "platforms": product_doc.get("platforms"),
+        "platforms_fetched_at": product_doc.get("platforms_fetched_at")
     }
 

@@ -33,7 +33,10 @@ import time
 from app.ai_ingredient_intelligence.auth import verify_jwt_token
 from app.ai_ingredient_intelligence.models.schemas import (
     CreateWishRequest,
-    GenerateFormulaResponse
+    GenerateFormulaResponse,
+    UpdateWishHistoryRequest,
+    UpdateWishHistoryResponse,
+    DeleteWishHistoryResponse
 )
 from app.ai_ingredient_intelligence.logic.formula_generator import (
     generate_formula,
@@ -938,10 +941,10 @@ async def get_wish_history_detail(
         )
 
 
-@router.patch("/wish-history/{history_id}")
+@router.patch("/wish-history/{history_id}", response_model=UpdateWishHistoryResponse)
 async def update_wish_history(
     history_id: str,
-    payload: dict,
+    payload: UpdateWishHistoryRequest,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
@@ -955,8 +958,10 @@ async def update_wish_history(
     Editable fields (all optional):
     - name: Update the name of the wish history item
     - notes: Update user notes
+    - tag: Update tag for categorization
     - wish_data: Update wish data (for regeneration)
     - formula_result: Update formula result (for regeneration)
+    - status: Update status (e.g., 'in_progress', 'completed')
     
     Note: user_id and created_at are automatically preserved and should not be included in payload
     
@@ -968,7 +973,7 @@ async def update_wish_history(
     print(f"[DEBUG] 🚀 API CALL: /api/formula/wish-history/{history_id} (PATCH)")
     print(f"[DEBUG] Request received at: {datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()}")
     print(f"[DEBUG] History ID: {history_id}")
-    print(f"[DEBUG] Payload keys: {list(payload.keys())}")
+    print(f"[DEBUG] Payload: {payload.model_dump(exclude_none=True)}")
     print(f"{'='*80}\n")
     
     try:
@@ -985,13 +990,8 @@ async def update_wish_history(
         if not ObjectId.is_valid(history_id):
             raise HTTPException(status_code=400, detail="Invalid history ID")
         
-        # Build update document - allow all fields except user_id and created_at
-        update_doc = {}
-        excluded_fields = ["user_id", "created_at", "_id"]  # These should never be updated
-        
-        for key, value in payload.items():
-            if key not in excluded_fields:
-                update_doc[key] = value
+        # Build update document - only include fields that are provided (not None)
+        update_doc = payload.model_dump(exclude_none=True)
         
         if not update_doc:
             raise HTTPException(status_code=400, detail="No fields to update")
@@ -1008,10 +1008,10 @@ async def update_wish_history(
                 detail="History item not found or you don't have permission to update it"
             )
         
-        return {
-            "success": True,
-            "message": "Wish history updated successfully"
-        }
+        return UpdateWishHistoryResponse(
+            success=True,
+            message="Wish history updated successfully"
+        )
         
     except HTTPException:
         raise
@@ -1025,7 +1025,7 @@ async def update_wish_history(
         )
 
 
-@router.delete("/wish-history/{history_id}")
+@router.delete("/wish-history/{history_id}", response_model=DeleteWishHistoryResponse)
 async def delete_wish_history(
     history_id: str,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
@@ -1068,10 +1068,10 @@ async def delete_wish_history(
                 detail="History item not found or you don't have permission to delete it"
             )
         
-        return {
-            "success": True,
-            "message": "History item deleted successfully"
-        }
+        return DeleteWishHistoryResponse(
+            success=True,
+            message="History item deleted successfully"
+        )
         
     except HTTPException:
         raise

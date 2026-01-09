@@ -73,6 +73,7 @@ except ImportError as e:
 from fastapi.middleware.cors import CORSMiddleware
 from app.ai_ingredient_intelligence.db.collections import distributor_col
 from fastapi.openapi.utils import get_openapi
+from app.ai_ingredient_intelligence.middleware import TimingMiddleware
 
 app = FastAPI(
     title="SkinBB API Documentation",
@@ -212,6 +213,10 @@ def custom_openapi():
 # Override the default OpenAPI function
 app.openapi = custom_openapi
 
+# ✅ Timing Middleware - Track execution time for all endpoints
+# This must be added BEFORE CORS middleware to ensure it wraps all requests
+app.add_middleware(TimingMiddleware)
+
 # ✅ CORS - Updated for production
 # Using both explicit origins and regex pattern for flexibility
 # This middleware handles all CORS preflight (OPTIONS) and actual requests
@@ -311,6 +316,14 @@ except ImportError as e:
     print(f"Warning: Could not import auth router: {e}")
     print("   Authentication API will not be available.")
 
+# ✅ Add Timing Statistics API
+try:
+    from app.ai_ingredient_intelligence.api.timing_stats import router as timing_stats_router
+    app.include_router(timing_stats_router, prefix="/api")
+except ImportError as e:
+    print(f"Warning: Could not import timing_stats router: {e}")
+    print("   Timing Statistics API will not be available.")
+
 # ✅ New image-to-JSON API - Commented out - module doesn't exist
 # app.include_router(image_extractor_router, prefix="/api")
 
@@ -357,6 +370,17 @@ async def create_indexes():
         await inspiration_products_col.create_index([("board_id", 1), ("decoded", 1)])
         await inspiration_products_col.create_index([("user_id", 1), ("created_at", -1)])
         print("Inspiration boards collection indexes created successfully")
+        
+        # Initialize endpoint timing Excel file if it doesn't exist
+        from app.ai_ingredient_intelligence.middleware.timing_middleware import TIMING_EXCEL_FILE
+        if not TIMING_EXCEL_FILE.exists():
+            import pandas as pd
+            df = pd.DataFrame(columns=[
+                "timestamp", "method", "path", "feature", 
+                "execution_time", "status_code", "user_id", "error"
+            ])
+            df.to_excel(TIMING_EXCEL_FILE, index=False, engine='openpyxl')
+            print(f"Created endpoint timing Excel file: {TIMING_EXCEL_FILE}")
     except Exception as e:
         print(f"Warning: Could not create indexes: {e}")
         # Don't fail startup if indexes already exist

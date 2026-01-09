@@ -12,6 +12,21 @@ from bson import ObjectId
 # HELPER MODELS
 # ============================================================================
 
+class ProductHistoryLink(BaseModel):
+    """Link to feature history data"""
+    feature_type: str = Field(..., description="Feature type: market_research, make_wish, formulation_decode, product_comparison")
+    history_id: str = Field(..., description="History ID from the feature's collection")
+    source_description: str = Field(..., description="Brief description of the source data")
+
+
+class ProductTypeInfo(BaseModel):
+    """Product type configuration"""
+    type_name: str = Field(..., description="Product type: researched, decoded, compared, formulation")
+    emoji: str = Field(..., description="Default emoji for this product type")
+    label: str = Field(..., description="Display label for this product type")
+    has_real_image: bool = Field(..., description="Whether this product type has real images")
+
+
 class IngredientDetail(BaseModel):
     """Ingredient detail in decoded data"""
     name: str
@@ -170,6 +185,12 @@ class ProductSummary(BaseModel):
     has_decoded_data: bool = Field(False, description="Whether decoded_data exists")
     hero_ingredients_preview: Optional[List[str]] = Field(None, description="First 3 hero ingredients if decoded")
     estimated_cost: Optional[float] = Field(None, description="Estimated cost if decoded")
+    # New fields for feature integration
+    product_type: Optional[str] = Field(None, description="Product type: researched, decoded, compared, formulation")
+    history_link: Optional[ProductHistoryLink] = Field(None, description="Link to feature history data")
+    # Platform links fetched from Serper API
+    platforms: Optional[List[Dict[str, Any]]] = Field(None, description="Platform links fetched from Serper API (fetched in background)")
+    platforms_fetched_at: Optional[str] = Field(None, description="Timestamp when platforms were fetched")
 
     class Config:
         from_attributes = True
@@ -198,33 +219,16 @@ class ProductResponse(BaseModel):
     decoded_data: Optional[DecodedData]
     created_at: datetime
     updated_at: datetime
+    # New fields for feature integration
+    product_type: Optional[str] = Field(None, description="Product type: researched, decoded, compared, formulation")
+    history_link: Optional[ProductHistoryLink] = Field(None, description="Link to feature history data")
+    feature_data: Optional[Dict[str, Any]] = Field(None, description="Full feature data fetched on demand")
+    # Platform links fetched from Serper API
+    platforms: Optional[List[Dict[str, Any]]] = Field(None, description="Platform links fetched from Serper API (fetched in background)")
+    platforms_fetched_at: Optional[str] = Field(None, description="Timestamp when platforms were fetched")
 
     class Config:
         from_attributes = True
-
-
-# ============================================================================
-# DECODING SCHEMAS
-# ============================================================================
-
-class DecodeProductResponse(BaseModel):
-    """Response after decoding a product"""
-    product_id: str
-    decoded: bool
-    decoded_data: Optional[DecodedData]
-    message: Optional[str] = None
-
-
-class BatchDecodeRequest(BaseModel):
-    """Request to batch decode products"""
-    product_ids: Optional[List[str]] = Field(None, description="Specific product IDs, or omit to decode all pending")
-
-
-class BatchDecodeResponse(BaseModel):
-    """Response after batch decoding"""
-    decoded_count: int
-    failed_count: int
-    results: List[Dict[str, Any]]
 
 
 # ============================================================================
@@ -320,6 +324,32 @@ class AnalysisResponse(BaseModel):
     products_analyzed: int
     overview: Optional[OverviewAnalysis] = None
     ingredients: Optional[IngredientsAnalysis] = None
+
+
+# ============================================================================
+# EXPORT SCHEMAS
+# ============================================================================
+
+class ExportItemRequest(BaseModel):
+    """Single export item request"""
+    feature_type: str = Field(..., description="Feature type: market_research, make_wish, formulation_decode, product_comparison")
+    history_ids: List[str] = Field(..., description="History IDs to export from this feature")
+
+
+class ExportToBoardRequest(BaseModel):
+    """Request to export multiple items from multiple features to a board"""
+    board_id: str = Field(..., description="Target board ID")
+    exports: List[ExportItemRequest] = Field(..., description="List of export items from different features")
+
+
+class ExportToBoardResponse(BaseModel):
+    """Response from export operation"""
+    success: bool
+    exported_count: int
+    skipped_count: int
+    duplicates_count: int
+    errors: List[str] = Field(default_factory=list)
+    exported_products: List[ProductSummary] = Field(default_factory=list)
 
 
 # ============================================================================

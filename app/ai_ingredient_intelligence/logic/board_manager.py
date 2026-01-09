@@ -220,6 +220,13 @@ async def _format_product_summary(product_doc: Dict[str, Any]) -> Dict[str, Any]
             hero_ingredients_preview = hero_ingredients[:3]  # First 3 only
         estimated_cost = decoded_data.get("estimated_cost")
     
+    # Handle image based on product type (use emoji for formulations)
+    image = product_doc.get("image", "🧴")
+    product_type = product_doc.get("product_type")
+    if product_type == "formulation":
+        # Use emoji for formulations instead of real images
+        image = "✨"
+    
     return {
         "product_id": str(product_doc["_id"]),
         "board_id": str(product_doc["board_id"]),
@@ -228,7 +235,7 @@ async def _format_product_summary(product_doc: Dict[str, Any]) -> Dict[str, Any]
         "brand": product_doc["brand"],
         "url": product_doc.get("url"),
         "platform": product_doc.get("platform", "other"),
-        "image": product_doc.get("image", "🧴"),
+        "image": image,
         "price": product_doc.get("price", 0),
         "size": product_doc.get("size", 0),
         "unit": product_doc.get("unit", "ml"),
@@ -243,7 +250,10 @@ async def _format_product_summary(product_doc: Dict[str, Any]) -> Dict[str, Any]
         "updated_at": product_doc.get("updated_at", product_doc.get("created_at")),
         "has_decoded_data": has_decoded_data,
         "hero_ingredients_preview": hero_ingredients_preview,
-        "estimated_cost": estimated_cost
+        "estimated_cost": estimated_cost,
+        # New fields for feature integration
+        "product_type": product_doc.get("product_type"),
+        "history_link": product_doc.get("history_link")
     }
 
 
@@ -253,6 +263,13 @@ async def _format_product(product_doc: Dict[str, Any]) -> Dict[str, Any]:
     if product_doc.get("decoded") and product_doc.get("decoded_data"):
         decoded_data = product_doc["decoded_data"]
     
+    # Handle image based on product type (use emoji for formulations)
+    image = product_doc.get("image", "🧴")
+    product_type = product_doc.get("product_type")
+    if product_type == "formulation":
+        # Use emoji for formulations instead of real images
+        image = "✨"
+    
     return {
         "product_id": str(product_doc["_id"]),
         "board_id": str(product_doc["board_id"]),
@@ -261,7 +278,7 @@ async def _format_product(product_doc: Dict[str, Any]) -> Dict[str, Any]:
         "brand": product_doc["brand"],
         "url": product_doc.get("url"),
         "platform": product_doc.get("platform", "other"),
-        "image": product_doc.get("image", "🧴"),
+        "image": image,
         "price": product_doc.get("price", 0),
         "size": product_doc.get("size", 0),
         "unit": product_doc.get("unit", "ml"),
@@ -274,6 +291,10 @@ async def _format_product(product_doc: Dict[str, Any]) -> Dict[str, Any]:
         "decoded": product_doc.get("decoded", False),
         "decoded_data": decoded_data,
         "created_at": product_doc.get("created_at"),
-        "updated_at": product_doc.get("updated_at", product_doc.get("created_at"))
+        "updated_at": product_doc.get("updated_at", product_doc.get("created_at")),
+        # New fields for feature integration
+        "product_type": product_doc.get("product_type"),
+        "history_link": product_doc.get("history_link"),
+        "feature_data": None  # Will be populated on demand
     }
 

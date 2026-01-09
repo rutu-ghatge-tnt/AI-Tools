@@ -10,11 +10,12 @@ API endpoints for market research functionality including:
 Extracted from analyze_inci.py for better modularity.
 """
 
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, BackgroundTasks
 import time
 import os
 import json
 import re
+import asyncio
 from typing import List, Dict, Optional
 from bson import ObjectId
 from datetime import datetime, timezone, timedelta
@@ -69,7 +70,65 @@ router = APIRouter(tags=["Market Research"])
 
 
 # ============================================================================
-# MARKET RESEARCH HISTORY ENDPOINTS
+# EXPORT ENDPOINTS
+# ============================================================================
+
+@router.post("/export-to-inspiration-board")
+async def export_market_research_to_board(
+    request: dict,
+    user_id: str = Query(..., description="User ID"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
+    """Export market research results to inspiration board"""
+    try:
+        board_id = request.get("board_id")
+        history_ids = request.get("history_ids", [])
+        
+        if not board_id:
+            raise HTTPException(status_code=400, detail="Board ID is required")
+        
+        if not history_ids:
+            raise HTTPException(status_code=400, detail="At least one history ID is required")
+        
+        # Use the inspiration boards export endpoint
+        from app.ai_ingredient_intelligence.models.inspiration_boards_schemas import (
+            ExportToBoardRequest, ExportItemRequest
+        )
+        from app.ai_ingredient_intelligence.logic.board_manager import get_board_detail
+        
+        # Verify board exists and belongs to user
+        board_detail = await get_board_detail(user_id, board_id)
+        if not board_detail:
+            raise HTTPException(status_code=404, detail="Board not found or access denied")
+        
+        # Create export request
+        export_request = ExportToBoardRequest(
+            board_id=board_id,
+            exports=[
+                ExportItemRequest(
+                    feature_type="market_research",
+                    history_ids=history_ids
+                )
+            ]
+        )
+        
+        # Call the inspiration boards export endpoint
+        from app.ai_ingredient_intelligence.api.inspiration_boards import export_to_board_endpoint
+        result = await export_to_board_endpoint(export_request, user_id, current_user)
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        print(f"ERROR exporting market research to board: {str(e)}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# EXISTING ENDPOINTS CONTINUE...
 # ============================================================================
 
 # REMOVED: POST /save-market-research-history endpoint
@@ -379,10 +438,79 @@ async def get_market_research_history_detail(
         )
 
 
+async def fetch_platforms_background(history_id: str, user_id: str):
+    """
+    Background task to fetch platforms for a product after history update.
+    Extracts product name from history and fetches platform links.
+    """
+    try:
+        # Fetch the updated history item
+        history_item = await market_research_history_col.find_one({
+            "_id": ObjectId(history_id),
+            "user_id": user_id
+        })
+        
+        if not history_item:
+            print(f"[BACKGROUND] History item {history_id} not found, skipping platform fetch")
+            return
+        
+        # Extract product name from history
+        product_name = None
+        
+        # Try to get product name from name field
+        if history_item.get("name"):
+            product_name = history_item.get("name")
+        
+        # If not found, try to get from research_result products
+        if not product_name:
+            research_result = history_item.get("research_result", {})
+            products = research_result.get("products", [])
+            if products and len(products) > 0:
+                # Get product name from first product
+                first_product = products[0]
+                product_name = first_product.get("productName") or first_product.get("name")
+        
+        # If still not found, try to get from input_data if it's a URL
+        if not product_name:
+            input_data = history_item.get("input_data", "")
+            if input_data and isinstance(input_data, str) and input_data.startswith("http"):
+                # Try to extract product name from URL or use a generic name
+                # For now, we'll skip if we can't find a good product name
+                print(f"[BACKGROUND] Could not extract product name from history {history_id}, skipping platform fetch")
+                return
+        
+        if not product_name or not product_name.strip():
+            print(f"[BACKGROUND] No valid product name found in history {history_id}, skipping platform fetch")
+            return
+        
+        print(f"[BACKGROUND] Fetching platforms for product: {product_name}")
+        
+        # Fetch platforms (run sync function in thread pool to avoid blocking)
+        platforms = await asyncio.to_thread(fetch_platforms, product_name.strip())
+        
+        # Update history with platforms data
+        await market_research_history_col.update_one(
+            {"_id": ObjectId(history_id), "user_id": user_id},
+            {"$set": {
+                "platforms": platforms,
+                "platforms_fetched_at": datetime.utcnow().isoformat()
+            }}
+        )
+        
+        print(f"[BACKGROUND] Successfully fetched and saved {len(platforms)} platforms for history {history_id}")
+        
+    except Exception as e:
+        print(f"[BACKGROUND] Error fetching platforms for history {history_id}: {e}")
+        import traceback
+        traceback.print_exc()
+        # Don't raise - background failures shouldn't affect user experience
+
+
 @router.patch("/market-research-history/{history_id}")
 async def update_market_research_history(
     history_id: str, 
-    payload: dict, 
+    payload: dict,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
@@ -442,9 +570,12 @@ async def update_market_research_history(
         if result.matched_count == 0:
             raise HTTPException(status_code=404, detail="History item not found or you don't have permission to update it")
         
+        # Trigger background task to fetch platforms
+        background_tasks.add_task(fetch_platforms_background, history_id, user_id)
+        
         return {
             "success": True,
-            "message": "Market research history updated successfully"
+            "message": "Market research history updated successfully. Platforms are being fetched in the background."
         }
         
     except HTTPException:
