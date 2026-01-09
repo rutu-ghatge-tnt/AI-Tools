@@ -69,7 +69,65 @@ router = APIRouter(tags=["Market Research"])
 
 
 # ============================================================================
-# MARKET RESEARCH HISTORY ENDPOINTS
+# EXPORT ENDPOINTS
+# ============================================================================
+
+@router.post("/export-to-inspiration-board")
+async def export_market_research_to_board(
+    request: dict,
+    user_id: str = Query(..., description="User ID"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
+    """Export market research results to inspiration board"""
+    try:
+        board_id = request.get("board_id")
+        history_ids = request.get("history_ids", [])
+        
+        if not board_id:
+            raise HTTPException(status_code=400, detail="Board ID is required")
+        
+        if not history_ids:
+            raise HTTPException(status_code=400, detail="At least one history ID is required")
+        
+        # Use the inspiration boards export endpoint
+        from app.ai_ingredient_intelligence.models.inspiration_boards_schemas import (
+            ExportToBoardRequest, ExportItemRequest
+        )
+        from app.ai_ingredient_intelligence.logic.board_manager import get_board_detail
+        
+        # Verify board exists and belongs to user
+        board_detail = await get_board_detail(user_id, board_id)
+        if not board_detail:
+            raise HTTPException(status_code=404, detail="Board not found or access denied")
+        
+        # Create export request
+        export_request = ExportToBoardRequest(
+            board_id=board_id,
+            exports=[
+                ExportItemRequest(
+                    feature_type="market_research",
+                    history_ids=history_ids
+                )
+            ]
+        )
+        
+        # Call the inspiration boards export endpoint
+        from app.ai_ingredient_intelligence.api.inspiration_boards import export_to_board_endpoint
+        result = await export_to_board_endpoint(export_request, user_id, current_user)
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        print(f"ERROR exporting market research to board: {str(e)}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# EXISTING ENDPOINTS CONTINUE...
 # ============================================================================
 
 # REMOVED: POST /save-market-research-history endpoint

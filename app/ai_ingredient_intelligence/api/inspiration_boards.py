@@ -11,7 +11,8 @@ from app.ai_ingredient_intelligence.models.inspiration_boards_schemas import (
     AddProductFromURLRequest, AddProductManualRequest, UpdateProductRequest, ProductResponse,
     FetchProductRequest, FetchProductResponse,
     AnalysisRequest, AnalysisResponse,
-    TagsResponse
+    TagsResponse,
+    ExportToBoardRequest, ExportToBoardResponse, ExportItemRequest
 )
 from app.ai_ingredient_intelligence.logic.board_manager import (
     create_board, get_boards, get_board_detail, update_board, delete_board
@@ -22,6 +23,9 @@ from app.ai_ingredient_intelligence.logic.product_manager import (
 from app.ai_ingredient_intelligence.logic.url_fetcher import fetch_product_from_url
 from app.ai_ingredient_intelligence.logic.competitor_analyzer import analyze_competitors
 from app.ai_ingredient_intelligence.logic.product_tags import get_all_tags, validate_tags, initialize_tags
+from app.ai_ingredient_intelligence.logic.feature_history_accessor import (
+    get_feature_history, extract_product_data_from_history, validate_history_ids, get_product_type_config
+)
 from datetime import datetime
 
 router = APIRouter(prefix="/inspiration-boards", tags=["Inspiration Boards"])
@@ -221,13 +225,25 @@ async def add_product_manual_endpoint(
 @router.get("/products/{product_id}", response_model=ProductResponse)
 async def get_product_endpoint(
     product_id: str,
-    user_id: str = Query(..., description="User ID")
+    user_id: str = Query(..., description="User ID"),
+    include_feature_data: bool = Query(False, description="Include full feature history data")
 ):
-    """Get product details"""
+    """Get product details with optional feature data"""
     try:
         result = await get_product(user_id, product_id)
         if not result:
             raise HTTPException(status_code=404, detail="Product not found")
+        
+        # If product has history link and feature data is requested, fetch it
+        if include_feature_data and result.get("history_link"):
+            history_link = result["history_link"]
+            feature_data = await get_feature_history(
+                history_link["feature_type"], 
+                history_link["history_id"]
+            )
+            if feature_data:
+                result["feature_data"] = feature_data
+        
         return result
     except HTTPException:
         raise
@@ -289,11 +305,12 @@ async def delete_product_endpoint(
 @router.post("/fetch-product", response_model=FetchProductResponse)
 async def fetch_product_endpoint(
     request: FetchProductRequest,
+    force_refresh: bool = Query(False, description="Force refresh cache and scrape fresh data"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
-    """Fetch product data from e-commerce URL"""
+    """Fetch product data from e-commerce URL with 30-day caching support"""
     try:
-        result = await fetch_product_from_url(request.url)
+        result = await fetch_product_from_url(request.url, force_refresh=force_refresh)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -342,6 +359,181 @@ async def analyze_competitors_endpoint(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# EXPORT ENDPOINTS
+# ============================================================================
+
+@router.post("/export-to-board", response_model=ExportToBoardResponse)
+async def export_to_board_endpoint(
+    request: ExportToBoardRequest,
+    user_id: str = Query(..., description="User ID"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
+    """Export products from multiple features to an inspiration board"""
+    try:
+        # Verify board exists and belongs to user
+        board_detail = await get_board_detail(user_id, request.board_id)
+        if not board_detail:
+            raise HTTPException(status_code=404, detail="Board not found or access denied")
+        
+        exported_products = []
+        skipped_count = 0
+        duplicates_count = 0
+        errors = []
+        
+        # Process each export item
+        for export_item in request.exports:
+            feature_type = export_item.feature_type
+            history_ids = export_item.history_ids
+            
+            # Validate history IDs
+            validation = await validate_history_ids(feature_type, history_ids)
+            
+            if validation["invalid_count"] > 0:
+                errors.append(f"{feature_type}: {validation['invalid_count']} invalid history IDs")
+                skipped_count += validation["invalid_count"]
+            
+            # Process valid history IDs
+            for history_id in validation["valid_ids"]:
+                try:
+                    # Fetch history data
+                    history_data = await get_feature_history(feature_type, history_id)
+                    if not history_data:
+                        errors.append(f"{feature_type}: History ID {history_id} not found")
+                        skipped_count += 1
+                        continue
+                    
+                    # Extract product data
+                    product_data = await extract_product_data_from_history(feature_type, history_data)
+                    
+                    # Check for duplicates within this board
+                    if await _is_duplicate_in_board(request.board_id, product_data):
+                        duplicates_count += 1
+                        continue
+                    
+                    # Add history link
+                    product_config = get_product_type_config(feature_type)
+                    product_data["history_link"] = {
+                        "feature_type": feature_type,
+                        "history_id": history_id,
+                        "source_description": f"{product_config['label']} from {history_data.get('created_at', 'unknown date')}"
+                    }
+                    
+                    # Add product to board
+                    added_product = await _add_exported_product_to_board(user_id, request.board_id, product_data)
+                    if added_product:
+                        exported_products.append(added_product)
+                    else:
+                        errors.append(f"Failed to add product from {feature_type} history ID {history_id}")
+                        skipped_count += 1
+                        
+                except Exception as e:
+                    errors.append(f"Error processing {feature_type} history ID {history_id}: {str(e)}")
+                    skipped_count += 1
+        
+        return ExportToBoardResponse(
+            success=len(exported_products) > 0,
+            exported_count=len(exported_products),
+            skipped_count=skipped_count,
+            duplicates_count=duplicates_count,
+            errors=errors,
+            exported_products=exported_products
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        print(f"ERROR in export to board: {str(e)}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
+async def _is_duplicate_in_board(board_id: str, product_data: dict) -> bool:
+    """Check if product already exists in the board"""
+    from app.ai_ingredient_intelligence.db.collections import inspiration_products_col
+    from bson import ObjectId
+    
+    try:
+        board_obj_id = ObjectId(board_id)
+    except:
+        return False
+    
+    # Check for duplicates by URL or name+brand
+    duplicate_query = {
+        "board_id": board_obj_id,
+        "$or": [
+            {"url": product_data.get("url")},
+            {"name": product_data["name"], "brand": product_data.get("brand")}
+        ]
+    }
+    
+    # Only check URL if it exists
+    if not product_data.get("url"):
+        duplicate_query["$or"] = [{"name": product_data["name"], "brand": product_data.get("brand")}]
+    
+    existing = await inspiration_products_col.find_one(duplicate_query)
+    return existing is not None
+
+
+async def _add_exported_product_to_board(user_id: str, board_id: str, product_data: dict) -> Optional[dict]:
+    """Add exported product to board using existing product manager logic"""
+    from app.ai_ingredient_intelligence.logic.product_manager import add_product_manual
+    from app.ai_ingredient_intelligence.models.inspiration_boards_schemas import AddProductManualRequest
+    from bson import ObjectId
+    
+    try:
+        board_obj_id = ObjectId(board_id)
+    except:
+        return None
+    
+    # Create manual product request
+    manual_request = AddProductManualRequest(
+        name=product_data["name"],
+        brand=product_data.get("brand", "Unknown"),
+        url=product_data.get("url"),
+        platform=product_data.get("platform", "other"),
+        price=product_data.get("price", 0),
+        size=product_data.get("size", 0),
+        unit=product_data.get("unit", "ml"),
+        category=product_data.get("category"),
+        notes=product_data.get("notes"),
+        tags=product_data.get("tags", []),
+        image=product_data.get("image")
+    )
+    
+    # Add product using existing logic
+    result = await add_product_manual(user_id, board_id, manual_request)
+    
+    if result:
+        # Update product with history_link and product_type
+        from app.ai_ingredient_intelligence.db.collections import inspiration_products_col
+        
+        update_data = {}
+        if product_data.get("history_link"):
+            update_data["history_link"] = product_data["history_link"]
+        if product_data.get("product_type"):
+            update_data["product_type"] = product_data["product_type"]
+        
+        if update_data:
+            await inspiration_products_col.update_one(
+                {"_id": ObjectId(result["product_id"])},
+                {"$set": update_data}
+            )
+            
+            # Update result with new fields
+            result["history_link"] = product_data.get("history_link")
+            result["product_type"] = product_data.get("product_type")
+        
+        return result
+    
+    return None
 
 
 # ============================================================================

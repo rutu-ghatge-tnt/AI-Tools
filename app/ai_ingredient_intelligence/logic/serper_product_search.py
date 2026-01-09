@@ -364,6 +364,7 @@ def check_logo_exists_in_s3(platform: str, s3_client) -> Optional[str]:
         S3 URL if exists, None otherwise
     """
     if not s3_client:
+        print(f"Logo existence check skipped for {platform}: No S3 client available")
         return None
     
     try:
@@ -372,8 +373,11 @@ def check_logo_exists_in_s3(platform: str, s3_client) -> Optional[str]:
         
         # Construct S3 URL
         region = s3_client.meta.region_name if hasattr(s3_client.meta, 'region_name') else 'us-east-1'
-        return f"https://{AWS_S3_BUCKET_PLATFORM_LOGOS}.s3.{region}.amazonaws.com/{key}"
-    except ClientError:
+        url = f"https://{AWS_S3_BUCKET_PLATFORM_LOGOS}.s3.{region}.amazonaws.com/{key}"
+        print(f"Logo exists in S3 for {platform}: {url}")
+        return url
+    except ClientError as e:
+        print(f"Logo not found in S3 for {platform}: {str(e)}")
         return None
 
 
@@ -444,21 +448,27 @@ def upload_logo_to_s3(platform: str, s3_client) -> Optional[str]:
         S3 URL of uploaded logo or None
     """
     if not s3_client:
+        print(f"Logo upload skipped for {platform}: No S3 client available")
         return None
     
-    # Check if already exists
+    # Check if already exists (redundant check for safety)
     existing_url = check_logo_exists_in_s3(platform, s3_client)
     if existing_url:
+        print(f"Logo already exists for {platform}: {existing_url}")
         return existing_url
+    
+    print(f"Uploading new logo for platform: {platform}")
     
     # Fetch logo
     logo_bytes = fetch_logo_image(platform)
     if not logo_bytes:
+        print(f"Failed to fetch logo image for {platform}")
         return None
     
     # Convert to PNG
     png_bytes = convert_to_png(logo_bytes)
     if not png_bytes:
+        print(f"Failed to convert logo to PNG for {platform}")
         return None
     
     # Upload to S3
@@ -474,7 +484,9 @@ def upload_logo_to_s3(platform: str, s3_client) -> Optional[str]:
         
         # Construct S3 URL
         region = s3_client.meta.region_name if hasattr(s3_client.meta, 'region_name') else 'us-east-1'
-        return f"https://{AWS_S3_BUCKET_PLATFORM_LOGOS}.s3.{region}.amazonaws.com/{key}"
+        url = f"https://{AWS_S3_BUCKET_PLATFORM_LOGOS}.s3.{region}.amazonaws.com/{key}"
+        print(f"Successfully uploaded logo for {platform}: {url}")
+        return url
     except Exception as e:
         print(f"Error uploading logo to S3 for {platform}: {str(e)}")
         return None
@@ -581,6 +593,9 @@ def fetch_platforms(product_name: str) -> List[Dict]:
     # Get S3 client for logo uploads
     s3_client = get_s3_client()
     
+    # Cache for platform logos to avoid redundant S3 calls within the same request
+    logo_cache = {}  # platform -> logo_url
+    
     # Build final response with platform info and logos
     final_results = []
     for result in sorted_results:
@@ -598,10 +613,17 @@ def fetch_platforms(product_name: str) -> List[Dict]:
         
         platform_display_name = get_platform_display_name(platform)
         
-        # Get or upload logo
-        logo_url = check_logo_exists_in_s3(platform, s3_client)
-        if not logo_url:
-            logo_url = upload_logo_to_s3(platform, s3_client)
+        # Get logo URL from cache or fetch/upload it
+        if platform in logo_cache:
+            logo_url = logo_cache[platform]
+        else:
+            # Check if logo exists in S3, if not upload it
+            logo_url = check_logo_exists_in_s3(platform, s3_client)
+            if not logo_url:
+                logo_url = upload_logo_to_s3(platform, s3_client)
+            
+            # Cache the result (even if None, to avoid redundant S3 calls)
+            logo_cache[platform] = logo_url
         
         final_results.append({
             "platform": platform,
@@ -614,5 +636,6 @@ def fetch_platforms(product_name: str) -> List[Dict]:
         })
     
     print(f"Final results: {len(final_results)} platforms found")
+    print(f"Logo cache stats: {len(logo_cache)} platforms processed, {sum(1 for url in logo_cache.values() if url)}/{len(logo_cache)} logos available")
     return final_results
 
