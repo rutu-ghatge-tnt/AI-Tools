@@ -184,3 +184,5 @@ cleaning_checkpoint.json
 data/
 datasets/
 checkpoints/
+
+endpoint_timing_stats.xlsx

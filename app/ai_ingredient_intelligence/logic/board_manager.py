@@ -206,6 +206,23 @@ async def delete_board(user_id: str, board_id: str) -> Dict[str, Any]:
     }
 
 
+def _filter_platforms_for_list(platforms: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
+    """Filter platforms to only include fields needed for list display: title, logo_url, platform_display_name"""
+    if not platforms:
+        return None
+    
+    filtered = []
+    for platform in platforms:
+        if isinstance(platform, dict):
+            filtered.append({
+                "title": platform.get("title", ""),
+                "logo_url": platform.get("logo_url"),
+                "platform_display_name": platform.get("platform_display_name", platform.get("platform", ""))
+            })
+    
+    return filtered if filtered else None
+
+
 async def _format_product_summary(product_doc: Dict[str, Any]) -> Dict[str, Any]:
     """Format product document as summary (excludes large decoded_data)"""
     decoded_data = product_doc.get("decoded_data") if product_doc.get("decoded") else None
@@ -226,6 +243,10 @@ async def _format_product_summary(product_doc: Dict[str, Any]) -> Dict[str, Any]
     if product_type == "formulation":
         # Use emoji for formulations instead of real images
         image = "✨"
+    
+    # Filter platforms to only include title, logo_url, and platform_display_name for list display
+    platforms_raw = product_doc.get("platforms")
+    platforms_filtered = _filter_platforms_for_list(platforms_raw)
     
     return {
         "product_id": str(product_doc["_id"]),
@@ -253,7 +274,10 @@ async def _format_product_summary(product_doc: Dict[str, Any]) -> Dict[str, Any]
         "estimated_cost": estimated_cost,
         # New fields for feature integration
         "product_type": product_doc.get("product_type"),
-        "history_link": product_doc.get("history_link")
+        "history_link": product_doc.get("history_link"),
+        # Platform links filtered for list display (only title, logo_url, platform_display_name)
+        "platforms": platforms_filtered,
+        "platforms_fetched_at": product_doc.get("platforms_fetched_at")
     }
 
 
