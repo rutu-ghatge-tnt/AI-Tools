@@ -351,6 +351,7 @@ async def get_market_research_history_detail(
             primary_category = item_meta.get("primary_category") or research_result.get("primary_category")
             subcategory = item_meta.get("subcategory") or research_result.get("subcategory")
             category_confidence = item_meta.get("category_confidence") or research_result.get("category_confidence")
+            ai_interpretation = item_meta.get("ai_interpretation") or research_result.get("ai_interpretation")
             
             # Build analysis object
             processing_time = research_result.get("processing_time", 0)
@@ -361,6 +362,7 @@ async def get_market_research_history_detail(
                     "subcategory": subcategory or None,
                     "confidence": category_confidence or None
                 },
+                "ai_interpretation": ai_interpretation,
                 "structured_analysis": item_meta.get("structured_analysis"),
                 "selected_keywords": item_meta.get("selected_keywords"),
                 "available_keywords": item_meta.get("available_keywords")
@@ -441,6 +443,7 @@ async def get_market_research_history_detail(
         primary_category = item_meta.get("primary_category") or research_result.get("primary_category")
         subcategory = item_meta.get("subcategory") or research_result.get("subcategory")
         category_confidence = item_meta.get("category_confidence") or research_result.get("category_confidence")
+        ai_interpretation = item_meta.get("ai_interpretation") or research_result.get("ai_interpretation")
         
         # Build analysis object
         processing_time = research_result.get("processing_time", 0)
@@ -451,6 +454,7 @@ async def get_market_research_history_detail(
                 "subcategory": subcategory or None,
                 "confidence": category_confidence or None
             },
+            "ai_interpretation": ai_interpretation,
             "structured_analysis": item_meta.get("structured_analysis"),
             "selected_keywords": item_meta.get("selected_keywords"),
             "available_keywords": item_meta.get("available_keywords")
