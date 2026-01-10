@@ -17,7 +17,7 @@ class ProductHistoryLink(BaseModel):
     feature_type: str = Field(..., description="Feature type: market_research, make_wish, formulation_decode, product_comparison")
     history_id: str = Field(..., description="History ID from the feature's collection")
     source_description: str = Field(..., description="Brief description of the source data")
-
+    board_id: str = Field(..., description="Board ID from the feature's collection")
 
 class ProductTypeInfo(BaseModel):
     """Product type configuration"""

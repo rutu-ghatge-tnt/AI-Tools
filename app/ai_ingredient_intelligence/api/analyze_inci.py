@@ -552,7 +552,11 @@ async def extract_ingredients_from_url(
         print(f"Extracted {len(ingredients)} ingredients from {platform} (estimated: {is_estimated})")
         
         # Clean up scraper
-        await scraper.close()
+        if scraper:
+            try:
+                await scraper.close()
+            except:
+                pass
         
         return ExtractIngredientsResponse(
             ingredients=ingredients,
