@@ -1469,9 +1469,9 @@ Return the JSON object now:"""
                 detail=f"Claude report generation failed: Error code: 404 - Model '{claude_model}' not found. Please check your CLAUDE_MODEL environment variable or use a valid model name."
             )
         elif isinstance(e, json.JSONDecodeError):
-        print(f"❌ Failed to parse Claude response as JSON: {e}")
-        print(f"Response text: {response_text[:500]}")
-        raise HTTPException(status_code=500, detail=f"Failed to parse Claude response as JSON: {str(e)}")
+            print(f"❌ Failed to parse Claude response as JSON: {e}")
+            print(f"Response text: {response_text[:500]}")
+            raise HTTPException(status_code=500, detail=f"Failed to parse Claude response as JSON: {str(e)}")
     except Exception as e:
         error_msg = str(e)
         print(f"❌ Error generating Presenton prompt: {type(e).__name__}: {error_msg}")

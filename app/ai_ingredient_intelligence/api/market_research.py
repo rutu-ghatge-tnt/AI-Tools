@@ -184,6 +184,7 @@ async def get_market_research_history(
                 "input_data": 1,
                 "notes": 1,
                 "created_at": 1,
+                "status": 1,
                 "research_result": 1  # Check if exists, but don't return full data
             }
         ).sort("created_at", -1).skip(skip).limit(limit)
@@ -225,6 +226,7 @@ async def get_market_research_history(
                 "input_data": input_data,
                 "notes": item.get("notes"),
                 "created_at": item.get("created_at"),
+                "status": item.get("status"),
                 "has_research": research_result is not None,
                 "total_products": total_products
             }
@@ -1842,13 +1844,18 @@ async def market_research(
                 if existing_history_item:
                     history_id = str(existing_history_item["_id"])
                     print(f"[AUTO-SAVE] Found existing history item with same input_data, reusing history_id: {history_id}")
+                    # Update status to in_progress if reusing existing item
+                    await market_research_history_col.update_one(
+                        {"_id": existing_history_item["_id"]},
+                        {"$set": {"status": "in_progress"}}
+                    )
                 else:
                     # Name is required - already validated above
                     # Truncate if too long
                     if len(name) > 100:
                         name = name[:100]
                     
-                    # Save initial state
+                    # Save initial state with "in_progress" status
                     history_doc = {
                         "user_id": user_id_value,
                         "name": name,
@@ -1856,11 +1863,12 @@ async def market_research(
                         "input_type": input_type,
                         "input_data": input_data_value,
                         "notes": notes,
+                        "status": "in_progress",
                         "created_at": (datetime.now(timezone(timedelta(hours=5, minutes=30)))).isoformat()
                     }
                     result = await market_research_history_col.insert_one(history_doc)
                     history_id = str(result.inserted_id)
-                    print(f"[AUTO-SAVE] Saved initial state with history_id: {history_id}")
+                    print(f"[AUTO-SAVE] Saved initial state with history_id: {history_id} (status: in_progress)")
             except Exception as e:
                 print(f"[AUTO-SAVE] Warning: Failed to save initial state: {e}")
                 import traceback
@@ -2712,7 +2720,8 @@ async def market_research(
                     "ai_interpretation": ai_interpretation,
                     "primary_category": primary_category,
                     "subcategory": subcategory,
-                    "category_confidence": category_confidence
+                    "category_confidence": category_confidence,
+                    "status": "completed"
                 }
                 
                 # Add structured_analysis and keywords if available from history
@@ -2736,7 +2745,7 @@ async def market_research(
                         {"_id": ObjectId(history_id), "user_id": user_id_value},
                         {"$set": update_doc}
                     )
-                    print(f"[AUTO-SAVE] Updated history {history_id} with research results (saved {len(matched_products)} total products)")
+                    print(f"[AUTO-SAVE] Updated history {history_id} with research results (saved {len(matched_products)} total products, status: completed)")
                 elif name:
                     # Check if a history item with the same input_data already exists for this user
                     existing_history_item = await market_research_history_col.find_one({
@@ -2752,7 +2761,7 @@ async def market_research(
                             {"_id": existing_history_item["_id"]},
                             {"$set": update_doc}
                         )
-                        print(f"[AUTO-SAVE] Updated existing history {history_id} with research results (saved {len(matched_products)} total products)")
+                        print(f"[AUTO-SAVE] Updated existing history {history_id} with research results (saved {len(matched_products)} total products, status: completed)")
                     else:
                         # Create new history item
                         history_doc = {
@@ -2762,12 +2771,13 @@ async def market_research(
                             "input_type": input_type,
                             "input_data": input_data_value,
                             "notes": notes,
+                            "status": "completed",
                             "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat(),
                             **update_doc
                         }
                         result = await market_research_history_col.insert_one(history_doc)
                         history_id = str(result.inserted_id)
-                        print(f"[AUTO-SAVE] Created new history {history_id} with research results (saved {len(matched_products)} total products)")
+                        print(f"[AUTO-SAVE] Created new history {history_id} with research results (saved {len(matched_products)} total products, status: completed)")
             except Exception as e:
                 print(f"[AUTO-SAVE] Warning: Failed to save/update history: {e}")
                 import traceback
@@ -2788,6 +2798,18 @@ async def market_research(
         print(f"Error in market research: {e}")
         import traceback
         traceback.print_exc()
+        
+        # 🔹 Auto-save: Update status to "failed" if history_id exists
+        if user_id_value and history_id:
+            try:
+                await market_research_history_col.update_one(
+                    {"_id": ObjectId(history_id), "user_id": user_id_value},
+                    {"$set": {"status": "failed"}}
+                )
+                print(f"[AUTO-SAVE] Updated history {history_id} status to 'failed'")
+            except Exception as update_error:
+                print(f"[AUTO-SAVE] Warning: Failed to update status to 'failed': {update_error}")
+        
         raise HTTPException(
             status_code=500,
             detail=f"Failed to perform market research: {str(e)}"
@@ -3037,13 +3059,18 @@ async def market_research_products(
                 if existing_history_item:
                     history_id = str(existing_history_item["_id"])
                     print(f"[AUTO-SAVE] Found existing history item with same input_data, reusing history_id: {history_id}")
+                    # Update status to in_progress if reusing existing item
+                    await market_research_history_col.update_one(
+                        {"_id": existing_history_item["_id"]},
+                        {"$set": {"status": "in_progress"}}
+                    )
                 else:
                     # Name is required - already validated above
                     # Truncate if too long
                     if len(name) > 100:
                         name = name[:100]
                     
-                    # Save initial state
+                    # Save initial state with "in_progress" status
                     history_doc = {
                         "user_id": user_id_value,
                         "name": name,
@@ -3051,11 +3078,12 @@ async def market_research_products(
                         "input_type": input_type,
                         "input_data": input_data_value,
                         "notes": notes,
+                        "status": "in_progress",
                         "created_at": (datetime.now(timezone(timedelta(hours=5, minutes=30)))).isoformat()
                     }
                     result = await market_research_history_col.insert_one(history_doc)
                     history_id = str(result.inserted_id)
-                    print(f"[AUTO-SAVE] Saved initial state with history_id: {history_id}")
+                    print(f"[AUTO-SAVE] Saved initial state with history_id: {history_id} (status: in_progress)")
             except Exception as e:
                 print(f"[AUTO-SAVE] Warning: Failed to save initial state: {e}")
                 import traceback
@@ -3550,7 +3578,8 @@ async def market_research_products(
                     "ai_interpretation": ai_interpretation,
                     "primary_category": primary_category,
                     "subcategory": subcategory,
-                    "category_confidence": category_confidence
+                    "category_confidence": category_confidence,
+                    "status": "completed"
                 }
                 
                 # Add structured_analysis and keywords if available from history
@@ -3574,7 +3603,7 @@ async def market_research_products(
                         {"_id": ObjectId(history_id), "user_id": user_id_value},
                         {"$set": update_doc}
                     )
-                    print(f"[AUTO-SAVE] Updated history {history_id} with research results (saved {len(matched_products)} total products)")
+                    print(f"[AUTO-SAVE] Updated history {history_id} with research results (saved {len(matched_products)} total products, status: completed)")
                 elif name:
                     # Check if a history item with the same input_data already exists for this user
                     existing_history_item = await market_research_history_col.find_one({
@@ -3590,7 +3619,7 @@ async def market_research_products(
                             {"_id": existing_history_item["_id"]},
                             {"$set": update_doc}
                         )
-                        print(f"[AUTO-SAVE] Updated existing history {history_id} with research results (saved {len(matched_products)} total products)")
+                        print(f"[AUTO-SAVE] Updated existing history {history_id} with research results (saved {len(matched_products)} total products, status: completed)")
                     else:
                         # Create new history item
                         history_doc = {
@@ -3600,12 +3629,13 @@ async def market_research_products(
                             "input_type": input_type,
                             "input_data": input_data_value,
                             "notes": notes,
+                            "status": "completed",
                             "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat(),
                             **update_doc
                         }
                         result = await market_research_history_col.insert_one(history_doc)
                         history_id = str(result.inserted_id)
-                        print(f"[AUTO-SAVE] Created new history {history_id} with research results (saved {len(matched_products)} total products)")
+                        print(f"[AUTO-SAVE] Created new history {history_id} with research results (saved {len(matched_products)} total products, status: completed)")
             except Exception as e:
                 print(f"[AUTO-SAVE] Warning: Failed to save/update history: {e}")
                 import traceback
@@ -3626,6 +3656,18 @@ async def market_research_products(
         print(f"Error in market research products: {e}")
         import traceback
         traceback.print_exc()
+        
+        # 🔹 Auto-save: Update status to "failed" if history_id exists
+        if user_id_value and history_id:
+            try:
+                await market_research_history_col.update_one(
+                    {"_id": ObjectId(history_id), "user_id": user_id_value},
+                    {"$set": {"status": "failed"}}
+                )
+                print(f"[AUTO-SAVE] Updated history {history_id} status to 'failed'")
+            except Exception as update_error:
+                print(f"[AUTO-SAVE] Warning: Failed to update status to 'failed': {update_error}")
+        
         raise HTTPException(
             status_code=500,
             detail=f"Failed to perform market research: {str(e)}"

@@ -439,6 +439,7 @@ class MarketResearchHistoryItemSummary(BaseModel):
     input_data: Optional[str] = Field(None, description="Input data preview (truncated for list view)")
     notes: Optional[str] = Field(None, description="User notes for this research")
     created_at: Optional[str] = Field(None, description="Creation timestamp")
+    status: Optional[str] = Field(None, description="Status: 'in_progress', 'completed', or 'failed'")
     # Summary fields from research_result (if available)
     has_research: bool = Field(False, description="Whether research_result exists")
     total_products: Optional[int] = Field(None, description="Total number of products found (if available)")
@@ -462,6 +463,7 @@ class MarketResearchHistoryItem(BaseModel):
     category_confidence: Optional[str] = Field(None, description="Confidence level of category determination (high, medium, low)")
     notes: Optional[str] = Field(None, description="User notes for this research")
     created_at: Optional[str] = Field(None, description="Creation timestamp")
+    status: Optional[str] = Field(None, description="Status: 'in_progress', 'completed', or 'failed'")
     # New fields for enhanced flow
     structured_analysis: Optional[Dict] = Field(None, description="Structured analysis data (ProductStructuredAnalysis as dict)")
     selected_keywords: Optional[Dict] = Field(None, description="Selected keywords (ProductKeywords as dict)")
