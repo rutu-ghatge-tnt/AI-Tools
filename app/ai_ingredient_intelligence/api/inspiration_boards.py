@@ -204,11 +204,15 @@ async def add_product_from_url_endpoint(
     board_id: str,
     request: AddProductFromURLRequest,
     background_tasks: BackgroundTasks,
-    user_id: str = Query(..., description="User ID"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """Add product to board from URL - requires pre-fetched data from /fetch-product endpoint"""
     try:
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
+        
         # This endpoint should ONLY add products, NOT scrape
         # Pre-fetched data MUST be provided from /fetch-product endpoint
         if not request.fetched_data:
@@ -276,11 +280,15 @@ async def add_product_manual_endpoint(
     board_id: str,
     request: AddProductManualRequest,
     background_tasks: BackgroundTasks,
-    current_user: dict = Depends(verify_jwt_token),  # JWT token validation
-    user_id: str = Query(..., description="User ID")
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """Add product to board manually"""
     try:
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
+        
         # Validate tags
         if request.tags:
             tag_validation = await validate_tags(request.tags)
@@ -311,11 +319,16 @@ async def add_product_manual_endpoint(
 @router.get("/products/{product_id}", response_model=ProductResponse)
 async def get_product_endpoint(
     product_id: str,
-    user_id: str = Query(..., description="User ID"),
-    include_feature_data: bool = Query(False, description="Include full feature history data")
+    include_feature_data: bool = Query(False, description="Include full feature history data"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """Get product details with optional feature data"""
     try:
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
+        
         result = await get_product(user_id, product_id)
         if not result:
             raise HTTPException(status_code=404, detail="Product not found")
@@ -342,11 +355,15 @@ async def update_product_endpoint(
     product_id: str,
     request: UpdateProductRequest,
     background_tasks: BackgroundTasks,
-    current_user: dict = Depends(verify_jwt_token),  # JWT token validation
-    user_id: str = Query(..., description="User ID")
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """Update product (notes, tags, myRating)"""
     try:
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
+        
         # Validate tags if provided
         if request.tags:
             tag_validation = await validate_tags(request.tags)
@@ -374,11 +391,15 @@ async def update_product_endpoint(
 @router.delete("/products/{product_id}")
 async def delete_product_endpoint(
     product_id: str,
-    user_id: str = Query(..., description="User ID"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """Delete product"""
     try:
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
+        
         result = await delete_product(user_id, product_id)
         if not result.get("deleted"):
             raise HTTPException(status_code=404, detail=result.get("error", "Product not found"))
@@ -414,11 +435,15 @@ async def fetch_product_endpoint(
 @router.post("/analyze", response_model=AnalysisResponse)
 async def analyze_competitors_endpoint(
     request: AnalysisRequest,
-    user_id: str = Query(..., description="User ID"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """Generate competitor analysis"""
     try:
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
+        
         # Verify all products belong to user
         from app.ai_ingredient_intelligence.db.collections import inspiration_products_col
         from bson import ObjectId
@@ -460,11 +485,15 @@ async def analyze_competitors_endpoint(
 async def export_to_board_endpoint(
     request: ExportToBoardRequest,
     background_tasks: BackgroundTasks,
-    user_id: str = Query(..., description="User ID"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """Export products from multiple features to an inspiration board"""
     try:
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
+        
         # Verify board exists and belongs to user
         board_detail = await get_board_detail(user_id, request.board_id)
         if not board_detail:

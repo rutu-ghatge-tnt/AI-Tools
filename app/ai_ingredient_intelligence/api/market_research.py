@@ -78,11 +78,16 @@ router = APIRouter(tags=["Market Research"])
 @router.post("/export-to-inspiration-board")
 async def export_market_research_to_board(
     request: dict,
-    user_id: str = Query(..., description="User ID"),
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """Export market research results to inspiration board"""
     try:
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
+        
         board_id = request.get("board_id")
         history_ids = request.get("history_ids", [])
         
@@ -96,12 +101,6 @@ async def export_market_research_to_board(
         from app.ai_ingredient_intelligence.models.inspiration_boards_schemas import (
             ExportToBoardRequest, ExportItemRequest
         )
-        from app.ai_ingredient_intelligence.logic.board_manager import get_board_detail
-        
-        # Verify board exists and belongs to user
-        board_detail = await get_board_detail(user_id, board_id)
-        if not board_detail:
-            raise HTTPException(status_code=404, detail="Board not found or access denied")
         
         # Create export request
         export_request = ExportToBoardRequest(
@@ -116,7 +115,7 @@ async def export_market_research_to_board(
         
         # Call the inspiration boards export endpoint
         from app.ai_ingredient_intelligence.api.inspiration_boards import export_to_board_endpoint
-        result = await export_to_board_endpoint(export_request, user_id, current_user)
+        result = await export_to_board_endpoint(export_request, background_tasks, current_user)
         
         return result
         
