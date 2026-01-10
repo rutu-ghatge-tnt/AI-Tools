@@ -151,6 +151,11 @@ async def fetch_product_from_url(url: str, force_refresh: bool = False) -> Dict[
             "benefits": benefits,
             "tags": tags,
             "target_audience": target_audience,
+            "extracted_text": extracted_text,  # Store extracted_text for other features
+            "product_name": product_name,  # Store product_name for compatibility
+            "product_image": product_image,  # Store product_image for compatibility
+            "is_estimated": result.get("is_estimated", False),
+            "source": result.get("source", "url_extraction"),
             "success": True,
             "message": None,
             "scraped_at": datetime.utcnow().isoformat(),
@@ -191,6 +196,111 @@ async def fetch_product_from_url(url: str, force_refresh: bool = False) -> Dict[
             "success": False,
             "message": error_message,
             "from_cache": False
+        }
+
+
+# ============================================================================
+# CACHED INGREDIENT EXTRACTION FUNCTION
+# ============================================================================
+
+async def extract_ingredients_from_url_cached(url: str, force_refresh: bool = False) -> Dict[str, Any]:
+    """
+    Extract ingredients from URL with caching support.
+    This function provides the same interface as URLScraper.extract_ingredients_from_url()
+    but uses the URL cache to avoid redundant scraping.
+    
+    Args:
+        url: E-commerce product URL
+        force_refresh: If True, bypass cache and scrape fresh data
+        
+    Returns:
+        Dict with 'ingredients' (List[str]), 'extracted_text' (str), 'platform' (str),
+        'is_estimated' (bool), 'source' (str), 'product_name' (str), 'product_image' (str)
+    """
+    # Check cache first (unless force refresh)
+    if not force_refresh:
+        cached_data = await get_cached_url_data(url)
+        if cached_data:
+            # Convert cached product data to extraction result format
+            print(f"✅ Using cached data for ingredient extraction: {url}")
+            return {
+                "ingredients": cached_data.get("ingredients", []),
+                "extracted_text": cached_data.get("extracted_text", ""),
+                "platform": cached_data.get("platform", "unknown"),
+                "url": url,
+                "is_estimated": cached_data.get("is_estimated", False),
+                "source": cached_data.get("source", "url_extraction"),
+                "product_name": cached_data.get("product_name") or cached_data.get("name"),
+                "product_image": cached_data.get("product_image") or cached_data.get("image", "🧴")
+            }
+    
+    # Cache miss or force refresh - scrape normally
+    print(f"🔄 {'Force refreshing' if force_refresh else 'Cache miss for'} ingredient extraction: {url} - scraping...")
+    
+    scraper = URLScraper()
+    
+    try:
+        # Extract ingredients and basic info
+        result = await scraper.extract_ingredients_from_url(url)
+        
+        # Cache the result for future use
+        # Convert extraction result to cacheable format
+        extracted_text = result.get("extracted_text", "")
+        ingredients = result.get("ingredients", [])
+        product_name = result.get("product_name")
+        product_image = result.get("product_image", "🧴")
+        platform = result.get("platform", _detect_platform(url))
+        
+        # Check if we should cache this result
+        has_ingredients = ingredients and len(ingredients) > 0
+        has_product_data = product_name and product_name != "Unknown Product"
+        
+        if has_ingredients or has_product_data:
+            # Create cacheable data structure
+            cache_data = {
+                "name": product_name or "Unknown Product",
+                "brand": "Unknown Brand",  # Will be extracted if needed
+                "url": url,
+                "platform": platform,
+                "price": 0.0,
+                "size": 0.0,
+                "unit": "ml",
+                "category": None,
+                "image": product_image,
+                "ingredients": ingredients,
+                "benefits": [],
+                "tags": [],
+                "target_audience": [],
+                "extracted_text": extracted_text,
+                "product_name": product_name,
+                "product_image": product_image,
+                "is_estimated": result.get("is_estimated", False),
+                "source": result.get("source", "url_extraction"),
+                "success": True,
+                "message": None,
+                "scraped_at": datetime.utcnow().isoformat(),
+                "from_cache": False
+            }
+            
+            await cache_url_data(url, cache_data)
+            print(f"💾 Cached extraction result for {url} ({len(ingredients)} ingredients)")
+        
+        return result
+        
+    except Exception as e:
+        error_message = f"Failed to extract ingredients from {url}: {str(e)}"
+        print(f"❌ {error_message}")
+        
+        # Return error format matching URLScraper.extract_ingredients_from_url()
+        return {
+            "ingredients": [],
+            "extracted_text": f"Error: {error_message}",
+            "platform": _detect_platform(url),
+            "url": url,
+            "is_estimated": False,
+            "source": "error",
+            "product_name": None,
+            "product_image": "🧴"
         }
 
 

@@ -452,6 +452,7 @@ class MarketResearchHistoryItem(BaseModel):
     tag: Optional[str] = Field(None, description="Tag for categorization")
     input_type: str = Field(..., description="Input type: 'inci' or 'url'")
     input_data: str = Field(..., description="Input data (INCI list or URL)")
+    input_url: Optional[str] = Field(None, description="URL if provided separately (when both URL and INCI are provided)")
     research_result: Optional[Dict] = Field(None, description="Full market research result")
     ai_analysis: Optional[str] = Field(None, description="AI analysis message (when no actives found)")
     ai_reasoning: Optional[str] = Field(None, description="AI reasoning (when no actives found)")
@@ -494,6 +495,42 @@ class GetMarketResearchHistoryResponse(BaseModel):
 class MarketResearchHistoryDetailResponse(BaseModel):
     """Response schema for getting market research history detail (returns full data)"""
     item: MarketResearchHistoryItem = Field(..., description="Full history item with all data")
+
+
+class MarketResearchDetailResearch(BaseModel):
+    """Research section in detail response"""
+    id: str = Field(..., description="History item ID")
+    user_id: Optional[str] = Field(None, description="User ID")
+    name: str = Field(..., description="Name for this market research")
+    tag: Optional[str] = Field(None, description="Tag for categorization")
+    input_type: str = Field(..., description="Input type: 'inci' or 'url'")
+    input_data: List[str] = Field(..., description="Input data as array (INCI list)")
+    input_url: Optional[str] = Field(None, description="URL if provided separately")
+    analysis: Dict = Field(..., description="Analysis data including processing_time, category, structured_analysis, keywords")
+    notes: Optional[str] = Field(None, description="User notes")
+    created_at: str = Field(..., description="Creation timestamp")
+
+
+class MarketResearchDetailPagination(BaseModel):
+    """Pagination metadata"""
+    page: int = Field(..., description="Current page number")
+    page_size: int = Field(..., description="Items per page")
+    total_pages: int = Field(..., description="Total number of pages")
+    total_items: int = Field(..., description="Total number of items")
+    platforms: Optional[List[Dict]] = Field(None, description="Platform links")
+    platforms_fetched_at: Optional[str] = Field(None, description="Timestamp when platforms were fetched")
+
+
+class MarketResearchDetailProducts(BaseModel):
+    """Products section in detail response"""
+    data: List[Dict] = Field(..., description="List of products")
+    pagination: MarketResearchDetailPagination = Field(..., description="Pagination metadata")
+
+
+class MarketResearchDetailResponseV2(BaseModel):
+    """New response schema for market research detail (restructured format)"""
+    research: MarketResearchDetailResearch = Field(..., description="Research data")
+    products: MarketResearchDetailProducts = Field(..., description="Products data with pagination")
 
 
 # ============================================================================
@@ -611,7 +648,7 @@ class MarketResearchWithKeywordsRequest(BaseModel):
 
 
 class MarketResearchPaginatedResponse(BaseModel):
-    """Response schema for paginated market research"""
+    """Response schema for paginated market research - includes metadata only on page 1"""
     products: List[MarketResearchProduct] = Field(default_factory=list, description="List of matched products")
     total_matched: int = Field(0, description="Total number of matched products")
     page: int = Field(1, description="Current page number")
@@ -620,13 +657,14 @@ class MarketResearchPaginatedResponse(BaseModel):
     sort_by: str = Field(..., description="Current sort method")
     filters_applied: Dict[str, Any] = Field(default_factory=dict, description="Applied filters")
     processing_time: float = Field(..., description="Time taken for processing")
-    extracted_ingredients: List[str] = Field(default_factory=list, description="Extracted ingredients list")
-    input_type: str = Field(..., description="Type of input processed")
-    ai_interpretation: Optional[str] = Field(None, description="AI interpretation")
-    primary_category: Optional[str] = Field(None, description="Primary category")
-    subcategory: Optional[str] = Field(None, description="Subcategory")
-    category_confidence: Optional[str] = Field(None, description="Category confidence")
-    history_id: Optional[str] = Field(None, description="History item ID if saved")
+    # Metadata fields - only included on page 1
+    extracted_ingredients: Optional[List[str]] = Field(None, description="Extracted ingredients list (only on page 1)")
+    input_type: Optional[str] = Field(None, description="Type of input processed (only on page 1)")
+    ai_interpretation: Optional[str] = Field(None, description="AI interpretation (only on page 1)")
+    primary_category: Optional[str] = Field(None, description="Primary category (only on page 1)")
+    subcategory: Optional[str] = Field(None, description="Subcategory (only on page 1)")
+    category_confidence: Optional[str] = Field(None, description="Category confidence (only on page 1)")
+    history_id: Optional[str] = Field(None, description="History item ID if saved (only on page 1)")
     # Credit-based pagination fields
     page_requires_credit: bool = Field(False, description="Whether current page requires credits (pages > 2)")
     is_unlocked: bool = Field(True, description="Whether current page is unlocked (always true for pages <= 2)")

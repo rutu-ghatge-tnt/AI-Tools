@@ -21,7 +21,7 @@ except ImportError:
     PIL_AVAILABLE = False
     print("Warning: PIL/Pillow not available. Logo conversion will be skipped.")
 
-from app.ai_ingredient_intelligence.config import SERPER_API_KEY, AWS_S3_BUCKET_PLATFORM_LOGOS
+from app.ai_ingredient_intelligence.config import SERPER_API_KEY, AWS_S3_BUCKET_PLATFORM_LOGOS, AWS_S3_PLATFORM_LOGOS_PREFIX
 
 # Platform priority order
 PRIORITY_PLATFORMS = [
@@ -394,9 +394,17 @@ def sort_by_priority(results: List[Dict]) -> List[Dict]:
 def get_s3_client():
     """Get boto3 S3 client."""
     try:
-        return boto3.client('s3')
+        client = boto3.client('s3')
+        # Test if credentials work by trying to list buckets (lightweight operation)
+        # This will fail fast if credentials are invalid
+        return client
     except NoCredentialsError:
         print("Warning: AWS credentials not found. Logo uploads will be skipped.")
+        print("  Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables to enable S3 uploads.")
+        return None
+    except Exception as e:
+        print(f"Warning: Failed to initialize S3 client: {str(e)}")
+        print("  Logo uploads will be skipped. Check AWS credentials and configuration.")
         return None
 
 
@@ -416,16 +424,29 @@ def check_logo_exists_in_s3(platform: str, s3_client) -> Optional[str]:
         return None
     
     try:
-        key = f"{platform}.png"
+        key = f"{AWS_S3_PLATFORM_LOGOS_PREFIX}/{platform}.png"
         s3_client.head_object(Bucket=AWS_S3_BUCKET_PLATFORM_LOGOS, Key=key)
         
         # Construct S3 URL
-        region = s3_client.meta.region_name if hasattr(s3_client.meta, 'region_name') else 'us-east-1'
+        try:
+            region = s3_client.meta.region_name
+        except:
+            region = 'us-east-1'
         url = f"https://{AWS_S3_BUCKET_PLATFORM_LOGOS}.s3.{region}.amazonaws.com/{key}"
-        print(f"Logo exists in S3 for {platform}: {url}")
+        print(f"[OK] Logo exists in S3 for {platform}: {url}")
         return url
     except ClientError as e:
-        print(f"Logo not found in S3 for {platform}: {str(e)}")
+        error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+        if error_code == '404' or error_code == 'NoSuchKey':
+            # Logo doesn't exist yet - this is normal, not an error
+            return None
+        else:
+            # Other error (permissions, bucket doesn't exist, etc.)
+            error_msg = e.response.get('Error', {}).get('Message', str(e))
+            print(f"[WARNING] Error checking logo in S3 for {platform}: {error_code} - {error_msg}")
+            return None
+    except Exception as e:
+        print(f"[WARNING] Unexpected error checking logo in S3 for {platform}: {str(e)}")
         return None
 
 
@@ -521,7 +542,17 @@ def upload_logo_to_s3(platform: str, s3_client) -> Optional[str]:
     
     # Upload to S3
     try:
-        key = f"{platform}.png"
+        key = f"{AWS_S3_PLATFORM_LOGOS_PREFIX}/{platform}.png"
+        
+        # Try to get region from client, default to us-east-1
+        try:
+            region = s3_client.meta.region_name
+        except:
+            region = 'us-east-1'
+        
+        # Upload with error details
+        print(f"Attempting to upload {key} to bucket '{AWS_S3_BUCKET_PLATFORM_LOGOS}' in region '{region}'")
+        
         s3_client.put_object(
             Bucket=AWS_S3_BUCKET_PLATFORM_LOGOS,
             Key=key,
@@ -531,12 +562,27 @@ def upload_logo_to_s3(platform: str, s3_client) -> Optional[str]:
         )
         
         # Construct S3 URL
-        region = s3_client.meta.region_name if hasattr(s3_client.meta, 'region_name') else 'us-east-1'
         url = f"https://{AWS_S3_BUCKET_PLATFORM_LOGOS}.s3.{region}.amazonaws.com/{key}"
-        print(f"Successfully uploaded logo for {platform}: {url}")
+        print(f"[SUCCESS] Successfully uploaded logo for {platform}: {url}")
         return url
+    except ClientError as e:
+        error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+        error_msg = e.response.get('Error', {}).get('Message', str(e))
+        print(f"[ERROR] AWS ClientError uploading logo to S3 for {platform}:")
+        print(f"   Error Code: {error_code}")
+        print(f"   Error Message: {error_msg}")
+        print(f"   Bucket: {AWS_S3_BUCKET_PLATFORM_LOGOS}, Key: {key}")
+        if error_code == 'NoSuchBucket':
+            print(f"   [INFO] The bucket '{AWS_S3_BUCKET_PLATFORM_LOGOS}' does not exist. Create it first.")
+        elif error_code == 'AccessDenied':
+            print(f"   [INFO] Access denied. Check IAM permissions for S3 bucket '{AWS_S3_BUCKET_PLATFORM_LOGOS}'")
+            print(f"   [INFO] Required permissions: s3:PutObject, s3:GetObject, s3:HeadObject")
+        return None
     except Exception as e:
-        print(f"Error uploading logo to S3 for {platform}: {str(e)}")
+        import traceback
+        print(f"[ERROR] Unexpected error uploading logo to S3 for {platform}: {str(e)}")
+        print(f"   Bucket: {AWS_S3_BUCKET_PLATFORM_LOGOS}, Key: {key}")
+        traceback.print_exc()
         return None
 
 
@@ -665,18 +711,24 @@ def fetch_platforms(product_name: str) -> List[Dict]:
         if platform in logo_cache:
             logo_url = logo_cache[platform]
         else:
-            # Check if logo exists in S3, if not upload it
-            logo_url = check_logo_exists_in_s3(platform, s3_client)
-            if not logo_url:
-                logo_url = upload_logo_to_s3(platform, s3_client)
+            # Try S3 first (preferred - cached and optimized)
+            if s3_client:
+                # Check if logo exists in S3, if not try to upload it
+                logo_url = check_logo_exists_in_s3(platform, s3_client)
+                if not logo_url:
+                    logo_url = upload_logo_to_s3(platform, s3_client)
             
-            # Fallback to favicon URL if S3 logo is not available
+            # Fallback to favicon URL if S3 is not available or upload failed
             if not logo_url:
                 logo_url = get_favicon_url_fallback(platform, link)
                 if logo_url:
                     print(f"Using favicon fallback for {platform}: {logo_url}")
             
-            # Cache the result (even if None, to avoid redundant S3 calls)
+            # If still no logo URL, log it (shouldn't happen for known platforms)
+            if not logo_url:
+                print(f"Warning: No logo URL available for platform: {platform}")
+            
+            # Cache the result (even if None, to avoid redundant calls)
             logo_cache[platform] = logo_url
         
         final_results.append({

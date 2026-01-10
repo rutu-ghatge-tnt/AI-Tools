@@ -33,4 +33,5 @@ ALLOWED_PDF_TYPES = ["application/pdf"]
 
 #serper
 SERPER_API_KEY = os.getenv("SERPER_API")
-AWS_S3_BUCKET_PLATFORM_LOGOS = "platform_logos"
+AWS_S3_BUCKET_PLATFORM_LOGOS = "skinbb-main"
+AWS_S3_PLATFORM_LOGOS_PREFIX = "platform_logos"
