@@ -256,6 +256,11 @@ async def _format_product(product_doc: Dict[str, Any]) -> Dict[str, Any]:
         "decoded_data": decoded_data,
         "created_at": product_doc.get("created_at"),
         "updated_at": product_doc.get("updated_at", product_doc.get("created_at")),
+        # New fields for feature integration
+        "product_type": product_doc.get("product_type"),
+        "history_link": product_doc.get("history_link"),
+        "feature_data": None,  # Will be populated on demand
+        # Platform links fetched from Serper API
         "platforms": product_doc.get("platforms"),
         "platforms_fetched_at": product_doc.get("platforms_fetched_at")
     }

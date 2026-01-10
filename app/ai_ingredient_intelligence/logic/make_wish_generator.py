@@ -46,7 +46,7 @@ except ImportError:
     anthropic = None
 
 claude_api_key = os.getenv("CLAUDE_API_KEY")
-claude_model = os.getenv("CLAUDE_MODEL") or os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929"
+claude_model = "claude-opus-4-5-20251101"  # Hardcoded for Make a Wish
 
 if not claude_api_key:
     raise RuntimeError("CLAUDE_API_KEY is required for Make a Wish feature")

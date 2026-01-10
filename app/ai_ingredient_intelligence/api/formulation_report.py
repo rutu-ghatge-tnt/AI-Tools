@@ -35,6 +35,7 @@ class PPTGenerationRequest(BaseModel):
 # Initialize Claude client
 claude_api_key = os.getenv("CLAUDE_API_KEY")
 presenton_api_key = os.getenv("PRESENTON_API_KEY")
+claude_model = "claude-opus-4-5-20251101"  # Hardcoded for formulation report
 
 if not claude_api_key:
     print("⚠️ Warning: CLAUDE_API_KEY environment variable not set")
@@ -757,8 +758,8 @@ Return ONLY the reformatted cautions, one per line, numbered. If a fragment cann
 REFORMATTED CAUTIONS:"""
 
                         response = claude_client.messages.create(
-                            model=os.getenv("CLAUDE_MODEL") or os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929",
-                            max_tokens=4096,  # Maximum allowed for claude-3-opus-20240229
+                            model=claude_model,
+                            max_tokens=4096,
                             temperature=0.1,
                             messages=[{"role": "user", "content": reformat_prompt}]
                         )
@@ -903,8 +904,8 @@ REFORMATTED CAUTIONS:"""
             
             # Use Claude API to generate report
             message = claude_client.messages.create(
-                model="claude-3-opus-20240229",
-                max_tokens=4096,  # Maximum allowed for claude-3-opus-20240229
+                model=claude_model,
+                max_tokens=4096,
                 temperature=0.1,
                 system=SYSTEM_PROMPT,
                 messages=[
@@ -947,6 +948,28 @@ REFORMATTED CAUTIONS:"""
             return report_text
             
         except Exception as e:
+            error_msg = str(e)
+            # Check if it's a model not found error
+            if "404" in error_msg or "not_found_error" in error_msg.lower() or "model:" in error_msg.lower():
+                print(f"❌ Claude model error: {error_msg}")
+                raise HTTPException(
+                    status_code=500, 
+                    detail=f"Claude report generation failed: Error code: 404 - Model '{claude_model}' not found. Please check your CLAUDE_MODEL environment variable or use a valid model name."
+                )
+            # Check for API key errors
+            elif "401" in error_msg or "authentication" in error_msg.lower() or "api_key" in error_msg.lower():
+                print(f"❌ Claude authentication error: {error_msg}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Claude report generation failed: Authentication error. Please check your CLAUDE_API_KEY environment variable."
+                )
+            # Generic error
+            else:
+                print(f"❌ Claude API error: {error_msg}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Claude report generation failed: {error_msg}"
+                )
             print(f"❌ Claude failed: {type(e).__name__}: {e}")
             raise HTTPException(status_code=500, detail=f"Claude report generation failed: {str(e)}")
     
@@ -1267,8 +1290,8 @@ async def generate_report(
             if claude_client:
                 try:
                     retry_message = claude_client.messages.create(
-                        model="claude-3-opus-20240229",
-                        max_tokens=4096,  # Maximum allowed for claude-3-opus-20240229
+                        model=claude_model,
+                        max_tokens=4096,
                         temperature=0.1,
                         system=SYSTEM_PROMPT,
                         messages=[
@@ -1277,8 +1300,16 @@ async def generate_report(
                     )
                     report_text = retry_message.content[0].text
                 except Exception as e:
-                    print(f"❌ Claude retry failed: {type(e).__name__}: {e}")
-                    raise HTTPException(status_code=500, detail=f"Claude retry failed: {str(e)}")
+                    error_msg = str(e)
+                    print(f"❌ Claude retry failed: {type(e).__name__}: {error_msg}")
+                    # Check if it's a model not found error
+                    if "404" in error_msg or "not_found_error" in error_msg.lower() or "model:" in error_msg.lower():
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Claude report generation failed: Error code: 404 - Model '{claude_model}' not found. Please check your CLAUDE_MODEL environment variable or use a valid model name."
+                        )
+                    else:
+                        raise HTTPException(status_code=500, detail=f"Claude retry failed: {error_msg}")
             else:
                 raise HTTPException(status_code=500, detail="Claude API not available for retry")
             
@@ -1398,8 +1429,8 @@ Return the JSON object now:"""
     try:
         print("🤖 Generating Presenton prompt with Claude...")
         message = claude_client.messages.create(
-            model="claude-3-opus-20240229",
-            max_tokens=4096,  # Maximum allowed for claude-3-opus-20240229
+            model=claude_model,
+            max_tokens=4096,
             temperature=0.3,
             messages=[
                 {"role": "user", "content": claude_prompt}
@@ -1428,12 +1459,28 @@ Return the JSON object now:"""
         print("✅ Presenton prompt generated successfully")
         return presenton_prompt
         
-    except json.JSONDecodeError as e:
-        print(f"❌ Failed to parse Claude response as JSON: {e}")
-        print(f"Response text: {response_text[:500]}")
-        raise HTTPException(status_code=500, detail=f"Failed to parse Claude response as JSON: {str(e)}")
     except Exception as e:
-        print(f"❌ Error generating Presenton prompt: {type(e).__name__}: {e}")
+        error_msg = str(e)
+        print(f"❌ Claude API error in Presenton prompt generation: {error_msg}")
+        # Check if it's a model not found error
+        if "404" in error_msg or "not_found_error" in error_msg.lower() or "model:" in error_msg.lower():
+            raise HTTPException(
+                status_code=500,
+                detail=f"Claude report generation failed: Error code: 404 - Model '{claude_model}' not found. Please check your CLAUDE_MODEL environment variable or use a valid model name."
+            )
+        elif isinstance(e, json.JSONDecodeError):
+            print(f"❌ Failed to parse Claude response as JSON: {e}")
+            print(f"Response text: {response_text[:500]}")
+            raise HTTPException(status_code=500, detail=f"Failed to parse Claude response as JSON: {str(e)}")
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ Error generating Presenton prompt: {type(e).__name__}: {error_msg}")
+        # Check if it's a model not found error
+        if "404" in error_msg or "not_found_error" in error_msg.lower() or "model:" in error_msg.lower():
+            raise HTTPException(
+                status_code=500,
+                detail=f"Claude report generation failed: Error code: 404 - Model '{claude_model}' not found. Please check your CLAUDE_MODEL environment variable or use a valid model name."
+            )
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error generating Presenton prompt: {str(e)}")

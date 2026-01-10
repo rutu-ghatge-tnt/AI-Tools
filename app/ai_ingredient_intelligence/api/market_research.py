@@ -184,6 +184,7 @@ async def get_market_research_history(
                 "input_data": 1,
                 "notes": 1,
                 "created_at": 1,
+                "status": 1,
                 "research_result": 1  # Check if exists, but don't return full data
             }
         ).sort("created_at", -1).skip(skip).limit(limit)
@@ -225,6 +226,7 @@ async def get_market_research_history(
                 "input_data": input_data,
                 "notes": item.get("notes"),
                 "created_at": item.get("created_at"),
+                "status": item.get("status"),
                 "has_research": research_result is not None,
                 "total_products": total_products
             }
@@ -252,6 +254,7 @@ async def get_market_research_history_detail(
     history_id: str,
     page: int = Query(1, ge=1, description="Page number (starts from 1)"),
     page_size: int = Query(10, ge=1, le=100, description="Number of products per page (max 100)"),
+    unlock_page: bool = Query(False, description="Flag to unlock page after credits are deducted (frontend should set this to true after calling credit deduction API)"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
@@ -264,6 +267,13 @@ async def get_market_research_history_detail(
     Query Parameters:
     - page: Page number (default: 1)
     - page_size: Number of products per page (default: 10, max: 100)
+    - unlock_page: Flag to unlock page after credits are deducted (frontend should set this to true after calling credit deduction API)
+    
+    Credit-Based Pagination:
+    - Pages 1-2 are free (automatically unlocked)
+    - Pages 3+ require credits (must be unlocked via unlock_page flag)
+    - Frontend should call credit deduction API first, then call this endpoint with unlock_page=true
+    - Once a page is unlocked, it remains unlocked for that history_id
     
     Pagination:
     - Only the "products" array in research_result is paginated
@@ -315,6 +325,7 @@ async def get_market_research_history_detail(
                 "available_keywords": 1,
                 "platforms": 1,
                 "platforms_fetched_at": 1,
+                "accessed_pages": 1,  # Include accessed_pages for credit-based pagination
                 "research_result.total_matched": 1,  # Get total count
                 "research_result.extracted_ingredients": 1,
                 "research_result.processing_time": 1,
@@ -334,6 +345,47 @@ async def get_market_research_history_detail(
         # Get total products count
         research_result = item_meta.get("research_result", {})
         total_products = research_result.get("total_matched", 0)
+        
+        # ========================================================================
+        # CREDIT-BASED PAGINATION LOGIC
+        # ========================================================================
+        # Get accessed_pages from history (pages user has unlocked)
+        accessed_pages = item_meta.get("accessed_pages", [])
+        
+        # Pages 1-2 are free
+        FREE_PAGES_LIMIT = 2
+        
+        # Check if page requires credit
+        page_requires_credit = page > FREE_PAGES_LIMIT
+        is_page_unlocked = page in accessed_pages
+        
+        # Handle credit-based access control
+        if page_requires_credit and not is_page_unlocked:
+            # Page requires credit but is not unlocked
+            if unlock_page:
+                # Frontend has deducted credits - unlock the page
+                await market_research_history_col.update_one(
+                    {"_id": ObjectId(history_id)},
+                    {"$addToSet": {"accessed_pages": page}}  # $addToSet prevents duplicates
+                )
+                # Update accessed_pages for response
+                accessed_pages.append(page)
+                is_page_unlocked = True
+            else:
+                # Page not unlocked and no unlock flag - return error
+                raise HTTPException(
+                    status_code=402,
+                    detail=f"This page requires credits. Please unlock it first. Page {page} requires payment. Unlocked pages: {sorted(accessed_pages)}"
+                )
+        elif not page_requires_credit:
+            # Free page - add to accessed_pages if not already there (for tracking)
+            if page not in accessed_pages:
+                await market_research_history_col.update_one(
+                    {"_id": ObjectId(history_id)},
+                    {"$addToSet": {"accessed_pages": page}}
+                )
+                accessed_pages.append(page)
+        # ========================================================================
         
         # If no products, return early with new format
         if total_products == 0:
@@ -1842,13 +1894,18 @@ async def market_research(
                 if existing_history_item:
                     history_id = str(existing_history_item["_id"])
                     print(f"[AUTO-SAVE] Found existing history item with same input_data, reusing history_id: {history_id}")
+                    # Update status to in_progress if reusing existing item
+                    await market_research_history_col.update_one(
+                        {"_id": existing_history_item["_id"]},
+                        {"$set": {"status": "in_progress"}}
+                    )
                 else:
                     # Name is required - already validated above
                     # Truncate if too long
                     if len(name) > 100:
                         name = name[:100]
                     
-                    # Save initial state
+                    # Save initial state with "in_progress" status
                     history_doc = {
                         "user_id": user_id_value,
                         "name": name,
@@ -1856,11 +1913,12 @@ async def market_research(
                         "input_type": input_type,
                         "input_data": input_data_value,
                         "notes": notes,
+                        "status": "in_progress",
                         "created_at": (datetime.now(timezone(timedelta(hours=5, minutes=30)))).isoformat()
                     }
                     result = await market_research_history_col.insert_one(history_doc)
                     history_id = str(result.inserted_id)
-                    print(f"[AUTO-SAVE] Saved initial state with history_id: {history_id}")
+                    print(f"[AUTO-SAVE] Saved initial state with history_id: {history_id} (status: in_progress)")
             except Exception as e:
                 print(f"[AUTO-SAVE] Warning: Failed to save initial state: {e}")
                 import traceback
@@ -2712,7 +2770,8 @@ async def market_research(
                     "ai_interpretation": ai_interpretation,
                     "primary_category": primary_category,
                     "subcategory": subcategory,
-                    "category_confidence": category_confidence
+                    "category_confidence": category_confidence,
+                    "status": "completed"
                 }
                 
                 # Add structured_analysis and keywords if available from history
@@ -2736,7 +2795,7 @@ async def market_research(
                         {"_id": ObjectId(history_id), "user_id": user_id_value},
                         {"$set": update_doc}
                     )
-                    print(f"[AUTO-SAVE] Updated history {history_id} with research results (saved {len(matched_products)} total products)")
+                    print(f"[AUTO-SAVE] Updated history {history_id} with research results (saved {len(matched_products)} total products, status: completed)")
                 elif name:
                     # Check if a history item with the same input_data already exists for this user
                     existing_history_item = await market_research_history_col.find_one({
@@ -2752,7 +2811,7 @@ async def market_research(
                             {"_id": existing_history_item["_id"]},
                             {"$set": update_doc}
                         )
-                        print(f"[AUTO-SAVE] Updated existing history {history_id} with research results (saved {len(matched_products)} total products)")
+                        print(f"[AUTO-SAVE] Updated existing history {history_id} with research results (saved {len(matched_products)} total products, status: completed)")
                     else:
                         # Create new history item
                         history_doc = {
@@ -2762,12 +2821,13 @@ async def market_research(
                             "input_type": input_type,
                             "input_data": input_data_value,
                             "notes": notes,
+                            "status": "completed",
                             "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat(),
                             **update_doc
                         }
                         result = await market_research_history_col.insert_one(history_doc)
                         history_id = str(result.inserted_id)
-                        print(f"[AUTO-SAVE] Created new history {history_id} with research results (saved {len(matched_products)} total products)")
+                        print(f"[AUTO-SAVE] Created new history {history_id} with research results (saved {len(matched_products)} total products, status: completed)")
             except Exception as e:
                 print(f"[AUTO-SAVE] Warning: Failed to save/update history: {e}")
                 import traceback
@@ -2788,6 +2848,18 @@ async def market_research(
         print(f"Error in market research: {e}")
         import traceback
         traceback.print_exc()
+        
+        # 🔹 Auto-save: Update status to "failed" if history_id exists
+        if user_id_value and history_id:
+            try:
+                await market_research_history_col.update_one(
+                    {"_id": ObjectId(history_id), "user_id": user_id_value},
+                    {"$set": {"status": "failed"}}
+                )
+                print(f"[AUTO-SAVE] Updated history {history_id} status to 'failed'")
+            except Exception as update_error:
+                print(f"[AUTO-SAVE] Warning: Failed to update status to 'failed': {update_error}")
+        
         raise HTTPException(
             status_code=500,
             detail=f"Failed to perform market research: {str(e)}"
@@ -3037,13 +3109,18 @@ async def market_research_products(
                 if existing_history_item:
                     history_id = str(existing_history_item["_id"])
                     print(f"[AUTO-SAVE] Found existing history item with same input_data, reusing history_id: {history_id}")
+                    # Update status to in_progress if reusing existing item
+                    await market_research_history_col.update_one(
+                        {"_id": existing_history_item["_id"]},
+                        {"$set": {"status": "in_progress"}}
+                    )
                 else:
                     # Name is required - already validated above
                     # Truncate if too long
                     if len(name) > 100:
                         name = name[:100]
                     
-                    # Save initial state
+                    # Save initial state with "in_progress" status
                     history_doc = {
                         "user_id": user_id_value,
                         "name": name,
@@ -3051,11 +3128,12 @@ async def market_research_products(
                         "input_type": input_type,
                         "input_data": input_data_value,
                         "notes": notes,
+                        "status": "in_progress",
                         "created_at": (datetime.now(timezone(timedelta(hours=5, minutes=30)))).isoformat()
                     }
                     result = await market_research_history_col.insert_one(history_doc)
                     history_id = str(result.inserted_id)
-                    print(f"[AUTO-SAVE] Saved initial state with history_id: {history_id}")
+                    print(f"[AUTO-SAVE] Saved initial state with history_id: {history_id} (status: in_progress)")
             except Exception as e:
                 print(f"[AUTO-SAVE] Warning: Failed to save initial state: {e}")
                 import traceback
@@ -3550,7 +3628,8 @@ async def market_research_products(
                     "ai_interpretation": ai_interpretation,
                     "primary_category": primary_category,
                     "subcategory": subcategory,
-                    "category_confidence": category_confidence
+                    "category_confidence": category_confidence,
+                    "status": "completed"
                 }
                 
                 # Add structured_analysis and keywords if available from history
@@ -3574,7 +3653,7 @@ async def market_research_products(
                         {"_id": ObjectId(history_id), "user_id": user_id_value},
                         {"$set": update_doc}
                     )
-                    print(f"[AUTO-SAVE] Updated history {history_id} with research results (saved {len(matched_products)} total products)")
+                    print(f"[AUTO-SAVE] Updated history {history_id} with research results (saved {len(matched_products)} total products, status: completed)")
                 elif name:
                     # Check if a history item with the same input_data already exists for this user
                     existing_history_item = await market_research_history_col.find_one({
@@ -3590,7 +3669,7 @@ async def market_research_products(
                             {"_id": existing_history_item["_id"]},
                             {"$set": update_doc}
                         )
-                        print(f"[AUTO-SAVE] Updated existing history {history_id} with research results (saved {len(matched_products)} total products)")
+                        print(f"[AUTO-SAVE] Updated existing history {history_id} with research results (saved {len(matched_products)} total products, status: completed)")
                     else:
                         # Create new history item
                         history_doc = {
@@ -3600,12 +3679,13 @@ async def market_research_products(
                             "input_type": input_type,
                             "input_data": input_data_value,
                             "notes": notes,
+                            "status": "completed",
                             "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat(),
                             **update_doc
                         }
                         result = await market_research_history_col.insert_one(history_doc)
                         history_id = str(result.inserted_id)
-                        print(f"[AUTO-SAVE] Created new history {history_id} with research results (saved {len(matched_products)} total products)")
+                        print(f"[AUTO-SAVE] Created new history {history_id} with research results (saved {len(matched_products)} total products, status: completed)")
             except Exception as e:
                 print(f"[AUTO-SAVE] Warning: Failed to save/update history: {e}")
                 import traceback
@@ -3626,6 +3706,18 @@ async def market_research_products(
         print(f"Error in market research products: {e}")
         import traceback
         traceback.print_exc()
+        
+        # 🔹 Auto-save: Update status to "failed" if history_id exists
+        if user_id_value and history_id:
+            try:
+                await market_research_history_col.update_one(
+                    {"_id": ObjectId(history_id), "user_id": user_id_value},
+                    {"$set": {"status": "failed"}}
+                )
+                print(f"[AUTO-SAVE] Updated history {history_id} status to 'failed'")
+            except Exception as update_error:
+                print(f"[AUTO-SAVE] Warning: Failed to update status to 'failed': {update_error}")
+        
         raise HTTPException(
             status_code=500,
             detail=f"Failed to perform market research: {str(e)}"
