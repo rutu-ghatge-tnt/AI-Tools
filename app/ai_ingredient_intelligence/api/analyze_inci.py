@@ -22,6 +22,7 @@ from app.ai_ingredient_intelligence.logic.bis_rag import (
     BIS_CHROMA_DB_PATH
 )
 from app.ai_ingredient_intelligence.logic.url_scraper import URLScraper
+from app.ai_ingredient_intelligence.logic.url_fetcher import extract_ingredients_from_url_cached
 from app.ai_ingredient_intelligence.logic.cas_api import get_synonyms_batch, get_synonyms_for_ingredient
 # Import extracted logic functions
 from app.ai_ingredient_intelligence.logic.analysis_core import analyze_ingredients_core
@@ -520,12 +521,9 @@ async def extract_ingredients_from_url(
         if not url.startswith(("http://", "https://")):
             raise HTTPException(status_code=400, detail="Invalid URL format. Must start with http:// or https://")
         
-        # Initialize URL scraper
-        scraper = URLScraper()
-        
-        # Extract ingredients from URL
+        # Extract ingredients from URL with caching
         print(f"Scraping URL: {url}")
-        extraction_result = await scraper.extract_ingredients_from_url(url)
+        extraction_result = await extract_ingredients_from_url_cached(url)
         
         ingredients = extraction_result["ingredients"]
         extracted_text = extraction_result["extracted_text"]
@@ -1154,12 +1152,9 @@ async def analyze_url(
                 print(f"[AUTO-SAVE] Warning: Failed to save initial state: {e}")
                 # Continue with analysis even if saving fails
         
-        # Initialize URL scraper
-        scraper = URLScraper()
-        
-        # Extract ingredients from URL
+        # Extract ingredients from URL with caching
         print(f"Scraping URL: {url}")
-        extraction_result = await scraper.extract_ingredients_from_url(url)
+        extraction_result = await extract_ingredients_from_url_cached(url)
         
         ingredients = extraction_result["ingredients"]
         extracted_text = extraction_result["extracted_text"]
@@ -2320,7 +2315,7 @@ async def compare_products(
                 if not product_input.startswith(("http://", "https://")):
                     raise HTTPException(status_code=400, detail=f"Product {product_num} must be a valid URL when input_type is 'url'")
                 product_data["url_context"] = product_input  # Store URL for Claude
-                extraction_result = await product_scraper.extract_ingredients_from_url(product_input)
+                extraction_result = await extract_ingredients_from_url_cached(product_input)
                 product_data["text"] = extraction_result.get("extracted_text", "")
                 product_data["inci"] = extraction_result.get("ingredients", [])
                 product_data["product_name"] = extraction_result.get("product_name")

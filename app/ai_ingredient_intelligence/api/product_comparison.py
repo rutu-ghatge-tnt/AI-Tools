@@ -17,6 +17,7 @@ from bson import ObjectId
 
 from app.ai_ingredient_intelligence.auth import verify_jwt_token
 from app.ai_ingredient_intelligence.logic.url_scraper import URLScraper
+from app.ai_ingredient_intelligence.logic.url_fetcher import extract_ingredients_from_url_cached
 from app.ai_ingredient_intelligence.utils.inci_parser import parse_inci_string
 from app.ai_ingredient_intelligence.db.collections import compare_history_col
 from app.ai_ingredient_intelligence.models.schemas import (
@@ -136,7 +137,7 @@ async def compare_products(
                 if not product_input.startswith(("http://", "https://")):
                     raise HTTPException(status_code=400, detail=f"Product {product_num} must be a valid URL when input_type is 'url'")
                 product_data["url_context"] = product_input  # Store URL for Claude
-                extraction_result = await product_scraper.extract_ingredients_from_url(product_input)
+                extraction_result = await extract_ingredients_from_url_cached(product_input)
                 product_data["text"] = extraction_result.get("extracted_text", "")
                 product_data["inci"] = extraction_result.get("ingredients", [])
                 product_data["product_name"] = extraction_result.get("product_name")

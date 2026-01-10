@@ -22,6 +22,7 @@ from datetime import datetime, timezone, timedelta
 
 from app.ai_ingredient_intelligence.auth import verify_jwt_token
 from app.ai_ingredient_intelligence.logic.url_scraper import URLScraper
+from app.ai_ingredient_intelligence.logic.url_fetcher import extract_ingredients_from_url_cached
 from app.ai_ingredient_intelligence.logic.ai_analysis import (
     analyze_formulation_and_suggest_matching_with_ai,
     analyze_product_categories_with_ai,
@@ -50,6 +51,7 @@ from app.ai_ingredient_intelligence.models.schemas import (
     MarketResearchOverviewResponse,
     GetMarketResearchHistoryResponse,
     MarketResearchHistoryDetailResponse,
+    MarketResearchDetailResponseV2,
     MarketResearchHistoryItem,
     MarketResearchHistoryItemSummary,
     ProductAnalysisRequest,
@@ -76,11 +78,16 @@ router = APIRouter(tags=["Market Research"])
 @router.post("/export-to-inspiration-board")
 async def export_market_research_to_board(
     request: dict,
-    user_id: str = Query(..., description="User ID"),
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """Export market research results to inspiration board"""
     try:
+        # Extract user_id from JWT token (already verified by verify_jwt_token)
+        user_id = current_user.get("user_id") or current_user.get("_id")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
+        
         board_id = request.get("board_id")
         history_ids = request.get("history_ids", [])
         
@@ -94,12 +101,6 @@ async def export_market_research_to_board(
         from app.ai_ingredient_intelligence.models.inspiration_boards_schemas import (
             ExportToBoardRequest, ExportItemRequest
         )
-        from app.ai_ingredient_intelligence.logic.board_manager import get_board_detail
-        
-        # Verify board exists and belongs to user
-        board_detail = await get_board_detail(user_id, board_id)
-        if not board_detail:
-            raise HTTPException(status_code=404, detail="Board not found or access denied")
         
         # Create export request
         export_request = ExportToBoardRequest(
@@ -114,7 +115,7 @@ async def export_market_research_to_board(
         
         # Call the inspiration boards export endpoint
         from app.ai_ingredient_intelligence.api.inspiration_boards import export_to_board_endpoint
-        result = await export_to_board_endpoint(export_request, user_id, current_user)
+        result = await export_to_board_endpoint(export_request, background_tasks, current_user)
         
         return result
         
@@ -246,7 +247,7 @@ async def get_market_research_history(
         )
 
 
-@router.get("/market-research-history/{history_id}/details", response_model=MarketResearchHistoryDetailResponse)
+@router.get("/market-research-history/{history_id}/details", response_model=MarketResearchDetailResponseV2)
 async def get_market_research_history_detail(
     history_id: str,
     page: int = Query(1, ge=1, description="Page number (starts from 1)"),
@@ -300,6 +301,7 @@ async def get_market_research_history_detail(
                 "tag": 1,
                 "input_type": 1,
                 "input_data": 1,
+                "input_url": 1,
                 "ai_analysis": 1,
                 "ai_reasoning": 1,
                 "ai_interpretation": 1,
@@ -308,6 +310,11 @@ async def get_market_research_history_detail(
                 "category_confidence": 1,
                 "notes": 1,
                 "created_at": 1,
+                "structured_analysis": 1,
+                "selected_keywords": 1,
+                "available_keywords": 1,
+                "platforms": 1,
+                "platforms_fetched_at": 1,
                 "research_result.total_matched": 1,  # Get total count
                 "research_result.extracted_ingredients": 1,
                 "research_result.processing_time": 1,
@@ -328,32 +335,72 @@ async def get_market_research_history_detail(
         research_result = item_meta.get("research_result", {})
         total_products = research_result.get("total_matched", 0)
         
-        # If no products, return early
+        # If no products, return early with new format
         if total_products == 0:
-            item_meta["id"] = str(item_meta["_id"])
-            del item_meta["_id"]
-            
-            # Handle input_data - convert list to string if needed (for backward compatibility with old data)
+            # Handle input_data - convert to array format
             input_data_raw = item_meta.get("input_data", "")
             if isinstance(input_data_raw, list):
-                item_meta["input_data"] = ", ".join(str(x) for x in input_data_raw if x)
-            elif not isinstance(input_data_raw, str):
-                item_meta["input_data"] = str(input_data_raw) if input_data_raw else ""
+                input_data_array = [str(x) for x in input_data_raw if x]
+            elif isinstance(input_data_raw, str):
+                # Split comma-separated string into array
+                input_data_array = [x.strip() for x in input_data_raw.split(",") if x.strip()]
+            else:
+                input_data_array = [str(input_data_raw)] if input_data_raw else ""
             
-            item_meta["research_result"] = {
-                **research_result,
-                "products": [],
+            # Get category info
+            primary_category = item_meta.get("primary_category") or research_result.get("primary_category")
+            subcategory = item_meta.get("subcategory") or research_result.get("subcategory")
+            category_confidence = item_meta.get("category_confidence") or research_result.get("category_confidence")
+            
+            # Build analysis object
+            processing_time = research_result.get("processing_time", 0)
+            analysis_data = {
+                "processing_time": processing_time,
+                "category": {
+                    "primary": primary_category or None,
+                    "subcategory": subcategory or None,
+                    "confidence": category_confidence or None
+                },
+                "structured_analysis": item_meta.get("structured_analysis"),
+                "selected_keywords": item_meta.get("selected_keywords"),
+                "available_keywords": item_meta.get("available_keywords")
+            }
+            
+            # Build research section
+            research_section = {
+                "id": str(item_meta["_id"]),
+                "user_id": str(item_meta.get("user_id", "")),
+                "name": item_meta.get("name", ""),
+                "tag": item_meta.get("tag"),
+                "input_type": item_meta.get("input_type", ""),
+                "input_data": input_data_array,
+                "input_url": item_meta.get("input_url"),
+                "analysis": analysis_data,
+                "notes": item_meta.get("notes"),
+                "created_at": item_meta.get("created_at", "")
+            }
+            
+            # Build products section with empty data
+            platforms = item_meta.get("platforms")
+            platforms_fetched_at = item_meta.get("platforms_fetched_at")
+            
+            pagination_section = {
                 "page": page,
                 "page_size": page_size,
                 "total_pages": 0,
-                "total_matched": 0
+                "total_items": 0,
+                "platforms": platforms,
+                "platforms_fetched_at": platforms_fetched_at
             }
-            # Ensure all fields
-            for field in ["ai_analysis", "ai_reasoning", "ai_interpretation", "primary_category", "subcategory", "category_confidence"]:
-                if field not in item_meta:
-                    item_meta[field] = None
-            return MarketResearchHistoryDetailResponse(
-                item=MarketResearchHistoryItem(**item_meta)
+            
+            products_section = {
+                "data": [],
+                "pagination": pagination_section
+            }
+            
+            return MarketResearchDetailResponseV2(
+                research=research_section,
+                products=products_section
             )
         
         # Use aggregation to slice products array at DB level
@@ -380,50 +427,72 @@ async def get_market_research_history_detail(
         # Calculate pagination metadata
         total_pages = (total_products + page_size - 1) // page_size
         
-        # Handle input_data - convert list to string if needed (for backward compatibility with old data)
+        # Handle input_data - convert to array format
         input_data_raw = item_meta.get("input_data", "")
         if isinstance(input_data_raw, list):
-            input_data = ", ".join(str(x) for x in input_data_raw if x)
+            input_data_array = [str(x) for x in input_data_raw if x]
         elif isinstance(input_data_raw, str):
-            input_data = input_data_raw
+            # Split comma-separated string into array
+            input_data_array = [x.strip() for x in input_data_raw.split(",") if x.strip()]
         else:
-            input_data = str(input_data_raw) if input_data_raw else ""
+            input_data_array = [str(input_data_raw)] if input_data_raw else []
         
-        # Build complete item
-        item = {
-            "id": str(item_meta["_id"]),
-            "user_id": item_meta.get("user_id"),
-            "name": item_meta.get("name"),
-            "tag": item_meta.get("tag"),
-            "input_type": item_meta.get("input_type"),
-            "input_data": input_data,
-            "ai_analysis": item_meta.get("ai_analysis"),
-            "ai_reasoning": item_meta.get("ai_reasoning"),
-            "ai_interpretation": item_meta.get("ai_interpretation"),
-            "primary_category": item_meta.get("primary_category"),
-            "subcategory": item_meta.get("subcategory"),
-            "category_confidence": item_meta.get("category_confidence"),
-            "notes": item_meta.get("notes"),
-            "created_at": item_meta.get("created_at"),
-            "research_result": {
-                **research_result,
-                "products": paginated_products,  # Only paginated products
-                "page": page,
-                "page_size": page_size,
-                "total_pages": total_pages,
-                "total_matched": total_products
-            }
+        # Get category info (prefer from top level, fallback to research_result)
+        primary_category = item_meta.get("primary_category") or research_result.get("primary_category")
+        subcategory = item_meta.get("subcategory") or research_result.get("subcategory")
+        category_confidence = item_meta.get("category_confidence") or research_result.get("category_confidence")
+        
+        # Build analysis object
+        processing_time = research_result.get("processing_time", 0)
+        analysis_data = {
+            "processing_time": processing_time,
+            "category": {
+                "primary": primary_category or None,
+                "subcategory": subcategory or None,
+                "confidence": category_confidence or None
+            },
+            "structured_analysis": item_meta.get("structured_analysis"),
+            "selected_keywords": item_meta.get("selected_keywords"),
+            "available_keywords": item_meta.get("available_keywords")
         }
         
-        # Ensure all fields have defaults
-        for field in ["ai_analysis", "ai_reasoning", "ai_interpretation", "primary_category", "subcategory", "category_confidence"]:
-            if item.get(field) is None:
-                item[field] = None
+        # Build research section
+        research_section = {
+            "id": str(item_meta["_id"]),
+            "user_id": str(item_meta.get("user_id", "")),
+            "name": item_meta.get("name", ""),
+            "tag": item_meta.get("tag"),
+            "input_type": item_meta.get("input_type", ""),
+            "input_data": input_data_array,
+            "input_url": item_meta.get("input_url"),
+            "analysis": analysis_data,
+            "notes": item_meta.get("notes"),
+            "created_at": item_meta.get("created_at", "")
+        }
+        
+        # Build products section with pagination
+        platforms = item_meta.get("platforms")
+        platforms_fetched_at = item_meta.get("platforms_fetched_at")
+        
+        pagination_section = {
+            "page": page,
+            "page_size": page_size,
+            "total_pages": total_pages,
+            "total_items": total_products,
+            "platforms": platforms,
+            "platforms_fetched_at": platforms_fetched_at
+        }
+        
+        products_section = {
+            "data": paginated_products,
+            "pagination": pagination_section
+        }
         
         print(f"[DB PAGINATION] History {history_id}: Page {page}/{total_pages}, Showing {len(paginated_products)}/{total_products} products (DB-level slice)")
         
-        return MarketResearchHistoryDetailResponse(
-            item=MarketResearchHistoryItem(**item)
+        return MarketResearchDetailResponseV2(
+            research=research_section,
+            products=products_section
         )
         
     except HTTPException:
@@ -839,11 +908,16 @@ async def market_research_analyze(
     Request body:
     {
         "input_type": "url" | "inci",
-        "url": "https://..." (required if input_type is "url"),
-        "inci": "Water, Glycerin, ..." (required if input_type is "inci"),
+        "url": "https://..." (required if input_type is "url", optional if inci provided),
+        "inci": ["Water", "Glycerin", ...] (required if input_type is "inci"),
         "name": "Product Name" (optional, for auto-saving),
-        "tag": "optional-tag" (optional)
+        "tag": "optional-tag" (optional),
+        "notes": "User notes" (optional),
+        "history_id": "existing_history_id" (optional, if frontend already created history item)
     }
+    
+    Note: If both url and inci are provided, the URL will be saved but extraction will be skipped.
+    The provided INCI list will be used for analysis instead.
     
     Returns structured analysis with keywords organized by:
     - product_formulation: Form-related keywords
@@ -861,10 +935,49 @@ async def market_research_analyze(
         if not user_id:
             raise HTTPException(status_code=400, detail="User ID not found in JWT token")
         
+        # Extract optional fields
+        name = payload.get("name", "").strip()
+        tag = payload.get("tag")
+        notes = payload.get("notes", "")
+        
+        # 🔹 Check if history_id is provided (frontend may have already created a history item)
+        provided_history_id = payload.get("history_id")
+        if provided_history_id:
+            # Validate the provided history_id
+            try:
+                if ObjectId.is_valid(provided_history_id):
+                    # Verify the history item exists and belongs to the user
+                    existing_history = await market_research_history_col.find_one({
+                        "_id": ObjectId(provided_history_id),
+                        "user_id": user_id
+                    })
+                    if existing_history:
+                        history_id = provided_history_id
+                        print(f"[AUTO-SAVE] Using existing history_id: {history_id}")
+                    else:
+                        print(f"[AUTO-SAVE] Warning: Provided history_id {provided_history_id} not found or doesn't belong to user, will create new one")
+                        provided_history_id = None  # Reset to None so we create a new one
+                else:
+                    print(f"[AUTO-SAVE] Warning: Invalid history_id format: {provided_history_id}, will create new one")
+                    provided_history_id = None
+            except Exception as e:
+                print(f"[AUTO-SAVE] Warning: Error validating history_id: {e}, will create new one")
+                provided_history_id = None
+        
         # Validate payload
         input_type = payload.get("input_type", "").lower()
         if input_type not in ["url", "inci"]:
             raise HTTPException(status_code=400, detail="input_type must be 'url' or 'inci'")
+        
+        # Check if both URL and INCI are provided
+        url = payload.get("url", "").strip() if payload.get("url") else ""
+        inci = payload.get("inci")
+        url_provided = bool(url and url.startswith(("http://", "https://")))
+        inci_provided = bool(inci and isinstance(inci, list) and len(inci) > 0)
+        
+        # Determine if we should use URL extraction or provided INCI
+        use_url_extraction = False
+        input_url = None
         
         ingredients = []
         extracted_text = ""
@@ -872,56 +985,69 @@ async def market_research_analyze(
         scraped_price = None
         
         if input_type == "url":
-            url = payload.get("url", "").strip()
-            if not url:
+            if not url_provided:
                 raise HTTPException(status_code=400, detail="url is required when input_type is 'url'")
             
             if not url.startswith(("http://", "https://")):
                 raise HTTPException(status_code=400, detail="Invalid URL format")
             
-            # Scrape URL
-            scraper = URLScraper()
-            extraction_result = await scraper.extract_ingredients_from_url(url)
-            
-            ingredients_raw = extraction_result.get("ingredients", [])
-            extracted_text = extraction_result.get("extracted_text", "")
-            product_name = extraction_result.get("product_name", "")
-            
-            # Try to extract price from scraped text
-            if extracted_text:
-                import re
-                price_patterns = [
-                    r'₹\s*(\d+(?:,\d+)*(?:\.\d+)?)',
-                    r'Rs\.?\s*(\d+(?:,\d+)*(?:\.\d+)?)',
-                    r'INR\s*(\d+(?:,\d+)*(?:\.\d+)?)',
-                ]
-                for pattern in price_patterns:
-                    matches = re.findall(pattern, extracted_text)
-                    if matches:
-                        try:
-                            scraped_price = float(matches[0].replace(',', ''))
-                            break
-                        except:
-                            pass
-            
-            # Parse ingredients
-            if isinstance(ingredients_raw, str):
-                ingredients = parse_inci_string(ingredients_raw)
-            elif isinstance(ingredients_raw, list):
-                ingredients = ingredients_raw
+            # If INCI is also provided, save URL but use provided INCI (skip extraction)
+            if inci_provided:
+                input_url = url  # Save URL separately
+                # Use provided INCI instead of extracting
+                if not isinstance(inci, list):
+                    raise HTTPException(status_code=400, detail="inci must be an array of strings")
+                
+                ingredients = parse_inci_string(inci)
+                if not ingredients:
+                    raise HTTPException(status_code=400, detail="No valid ingredients found in INCI list")
+                
+                input_data_value = ", ".join(inci)
+                print(f"[ANALYZE] URL provided but using provided INCI list (skipping extraction)")
             else:
-                ingredients = []
-            
-            if not ingredients:
-                raise HTTPException(
-                    status_code=404,
-                    detail="No ingredients found on the product page"
-                )
-            
-            input_data_value = url
+                # Extract from URL
+                use_url_extraction = True
+                extraction_result = await extract_ingredients_from_url_cached(url)
+                
+                ingredients_raw = extraction_result.get("ingredients", [])
+                extracted_text = extraction_result.get("extracted_text", "")
+                product_name = extraction_result.get("product_name", "")
+                
+                # Try to extract price from scraped text
+                if extracted_text:
+                    import re
+                    price_patterns = [
+                        r'₹\s*(\d+(?:,\d+)*(?:\.\d+)?)',
+                        r'Rs\.?\s*(\d+(?:,\d+)*(?:\.\d+)?)',
+                        r'INR\s*(\d+(?:,\d+)*(?:\.\d+)?)',
+                    ]
+                    for pattern in price_patterns:
+                        matches = re.findall(pattern, extracted_text)
+                        if matches:
+                            try:
+                                scraped_price = float(matches[0].replace(',', ''))
+                                break
+                            except:
+                                pass
+                
+                # Parse ingredients
+                if isinstance(ingredients_raw, str):
+                    ingredients = parse_inci_string(ingredients_raw)
+                elif isinstance(ingredients_raw, list):
+                    ingredients = ingredients_raw
+                else:
+                    ingredients = []
+                
+                if not ingredients:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="No ingredients found on the product page"
+                    )
+                
+                input_data_value = url
         else:
-            inci = payload.get("inci")
-            if not inci:
+            # input_type is "inci"
+            if not inci_provided:
                 raise HTTPException(status_code=400, detail="inci is required when input_type is 'inci'")
             
             # Validate that inci is a list
@@ -935,6 +1061,11 @@ async def market_research_analyze(
             ingredients = parse_inci_string(inci)
             if not ingredients:
                 raise HTTPException(status_code=400, detail="No valid ingredients found in INCI list")
+            
+            # If URL is also provided, save it separately
+            if url_provided:
+                input_url = url
+                print(f"[ANALYZE] INCI type with URL provided - saving URL separately")
             
             # Store as comma-separated string for history
             input_data_value = ", ".join(inci)
@@ -991,8 +1122,31 @@ async def market_research_analyze(
             mrp_source=structured_data.get("mrp_source")
         )
         
-        # Auto-save to history if name provided
-        if payload.get("name"):
+        # 🔹 Auto-save to history ONLY AFTER analysis is complete and we have history_id
+        # If history_id was provided, update it. Otherwise, create new one if name provided.
+        if history_id:
+            # Update existing history with new analysis data
+            try:
+                update_data = {
+                    "structured_analysis": structured_analysis.model_dump(),
+                    "available_keywords": keywords.model_dump_exclude_empty(),
+                    "name": name if name else None,  # Update name in case it changed
+                    "tag": tag,  # Update tag in case it changed
+                    "notes": notes  # Update notes
+                }
+                # Add input_url if provided
+                if input_url:
+                    update_data["input_url"] = input_url
+                
+                await market_research_history_col.update_one(
+                    {"_id": ObjectId(history_id), "user_id": user_id},
+                    {"$set": update_data}
+                )
+                print(f"✅ Updated existing history item: {history_id}")
+            except Exception as e:
+                print(f"⚠️  Error updating history: {e}")
+        elif name:
+            # Create new history item only if name is provided
             try:
                 # Check if a history item with the same input_data already exists for this user
                 existing_history_item = await market_research_history_col.find_one({
@@ -1001,34 +1155,83 @@ async def market_research_analyze(
                     "input_data": input_data_value
                 }, sort=[("created_at", -1)])  # Get the most recent one
                 
+                # 🔹 IMPORTANT: Only update if ingredients also match (to prevent updating wrong card when URL is same but INCI differs)
+                should_update_existing = False
                 if existing_history_item:
+                    if input_type == "inci":
+                        # For INCI type, input_data already contains the INCI list, so if input_data matches, it's the same INCI
+                        should_update_existing = True
+                    else:
+                        # For URL type, compare ingredients to ensure they match
+                        # Compare active ingredients from structured analysis
+                        existing_structured_analysis = existing_history_item.get("structured_analysis", {})
+                        existing_active_ingredients = existing_structured_analysis.get("active_ingredients", [])
+                        current_active_ingredients = structured_analysis.active_ingredients
+                        
+                        # Normalize ingredient names for comparison (case-insensitive, sorted)
+                        existing_ingredient_names = sorted([ai.get("name", "").lower().strip() for ai in existing_active_ingredients if ai.get("name")])
+                        current_ingredient_names = sorted([ai.name.lower().strip() for ai in current_active_ingredients if ai.name])
+                        
+                        # Also compare the full ingredient list if available in history (for more accurate comparison)
+                        # Check if we can compare extracted ingredients from response
+                        existing_extracted = existing_history_item.get("extracted_ingredients")
+                        if existing_extracted and isinstance(existing_extracted, list):
+                            # Compare full ingredient lists
+                            existing_full_ingredients = sorted([ing.lower().strip() for ing in existing_extracted if ing])
+                            current_full_ingredients = sorted([ing.lower().strip() for ing in ingredients if ing])
+                            if existing_full_ingredients == current_full_ingredients and len(existing_full_ingredients) > 0:
+                                should_update_existing = True
+                            else:
+                                should_update_existing = False
+                        elif existing_ingredient_names == current_ingredient_names and len(existing_ingredient_names) > 0:
+                            # Fallback to active ingredients comparison
+                            should_update_existing = True
+                        else:
+                            # Ingredients differ or no ingredients to compare - create new entry to be safe
+                            should_update_existing = False
+                
+                if existing_history_item and should_update_existing:
                     history_id = str(existing_history_item["_id"])
                     # Update existing history with new analysis data
+                    update_data = {
+                        "structured_analysis": structured_analysis.model_dump(),
+                        "available_keywords": keywords.model_dump_exclude_empty(),
+                        "name": name,  # Update name in case it changed
+                        "tag": tag,  # Update tag in case it changed
+                        "notes": notes  # Update notes
+                    }
+                    # Add input_url if provided
+                    if input_url:
+                        update_data["input_url"] = input_url
+                    
                     await market_research_history_col.update_one(
                         {"_id": existing_history_item["_id"]},
-                        {"$set": {
-                            "structured_analysis": structured_analysis.model_dump(),
-                            "available_keywords": keywords.model_dump_exclude_empty(),
-                            "name": payload.get("name", ""),  # Update name in case it changed
-                            "tag": payload.get("tag")  # Update tag in case it changed
-                        }}
+                        {"$set": update_data}
                     )
                     print(f"✅ Updated existing history item: {history_id}")
                 else:
+                    # Create new history item (either no existing item found, or ingredients differ)
                     history_doc = {
                         "user_id": user_id,
-                        "name": payload.get("name", ""),
-                        "tag": payload.get("tag"),
+                        "name": name,
+                        "tag": tag,
+                        "notes": notes,
                         "input_type": input_type,
                         "input_data": input_data_value,
                         "structured_analysis": structured_analysis.model_dump(),
                         "available_keywords": keywords.model_dump_exclude_empty(),
                         "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
                     }
+                    # Add input_url if provided
+                    if input_url:
+                        history_doc["input_url"] = input_url
                     
                     result = await market_research_history_col.insert_one(history_doc)
                     history_id = str(result.inserted_id)
-                    print(f"✅ Auto-saved analysis to history: {history_id}")
+                    if existing_history_item:
+                        print(f"✅ Created new history item (ingredients differ from existing): {history_id}")
+                    else:
+                        print(f"✅ Auto-saved analysis to history: {history_id}")
             except Exception as e:
                 print(f"⚠️  Error auto-saving to history: {e}")
         
@@ -1371,28 +1574,56 @@ async def market_research_products_paginated(
         next_page_requires_credit = next_page > FREE_PAGES_LIMIT
         next_page_unlocked = next_page in accessed_pages if next_page_requires_credit else True
         
-        return MarketResearchPaginatedResponse(
-            products=paginated_products,
-            total_matched=total_matched,
-            page=page,
-            page_size=page_size,
-            total_pages=total_pages,
-            sort_by=sort_by,
-            filters_applied=filters_applied,
-            processing_time=processing_time,
-            extracted_ingredients=extracted_ingredients,
-            input_type=history_item.get("input_type", "inci"),
-            ai_interpretation=history_item.get("ai_interpretation"),
-            primary_category=available_keywords.main_category if available_keywords else history_item.get("primary_category"),
-            subcategory=available_keywords.subcategory if available_keywords else history_item.get("subcategory"),
-            category_confidence=history_item.get("category_confidence"),
-            history_id=history_id,
-            page_requires_credit=page_requires_credit,
-            is_unlocked=is_page_unlocked if page_requires_credit else True,
-            unlocked_pages=sorted(accessed_pages),
-            next_page_requires_credit=next_page_requires_credit,
-            next_page_unlocked=next_page_unlocked
-        )
+        # 🔹 Return metadata only on page 1, subsequent pages return only products + pagination
+        if page == 1:
+            # Page 1: Return full response with metadata
+            return MarketResearchPaginatedResponse(
+                products=paginated_products,
+                total_matched=total_matched,
+                page=page,
+                page_size=page_size,
+                total_pages=total_pages,
+                sort_by=sort_by,
+                filters_applied=filters_applied,
+                processing_time=processing_time,
+                extracted_ingredients=extracted_ingredients,
+                input_type=history_item.get("input_type", "inci"),
+                ai_interpretation=history_item.get("ai_interpretation"),
+                primary_category=available_keywords.main_category if available_keywords else history_item.get("primary_category"),
+                subcategory=available_keywords.subcategory if available_keywords else history_item.get("subcategory"),
+                category_confidence=history_item.get("category_confidence"),
+                history_id=history_id,
+                page_requires_credit=page_requires_credit,
+                is_unlocked=is_page_unlocked if page_requires_credit else True,
+                unlocked_pages=sorted(accessed_pages),
+                next_page_requires_credit=next_page_requires_credit,
+                next_page_unlocked=next_page_unlocked
+            )
+        else:
+            # Page > 1: Return only products and pagination info (no metadata)
+            return MarketResearchPaginatedResponse(
+                products=paginated_products,
+                total_matched=total_matched,
+                page=page,
+                page_size=page_size,
+                total_pages=total_pages,
+                sort_by=sort_by,
+                filters_applied=filters_applied,
+                processing_time=processing_time,
+                # Metadata fields set to None for pages > 1
+                extracted_ingredients=None,
+                input_type=None,
+                ai_interpretation=None,
+                primary_category=None,
+                subcategory=None,
+                category_confidence=None,
+                history_id=None,
+                page_requires_credit=page_requires_credit,
+                is_unlocked=is_page_unlocked if page_requires_credit else True,
+                unlocked_pages=sorted(accessed_pages),
+                next_page_requires_credit=next_page_requires_credit,
+                next_page_unlocked=next_page_unlocked
+            )
         
     except HTTPException:
         raise
@@ -1515,10 +1746,9 @@ async def market_research(
             if not url.startswith(("http://", "https://")):
                 raise HTTPException(status_code=400, detail="Invalid URL format. Must start with http:// or https://")
             
-            # Initialize URL scraper and extract ingredients
-            scraper = URLScraper()
+            # Extract ingredients with caching
             print(f"Scraping URL for market research: {url}")
-            extraction_result = await scraper.extract_ingredients_from_url(url)
+            extraction_result = await extract_ingredients_from_url_cached(url)
             
             # Get ingredients - could be list or string, ensure it's a list
             ingredients_raw = extraction_result.get("ingredients", [])
@@ -2698,10 +2928,9 @@ async def market_research_products(
                 if not url.startswith(("http://", "https://")):
                     raise HTTPException(status_code=400, detail="Invalid URL format. Must start with http:// or https://")
                 
-                # Initialize URL scraper and extract ingredients
-                scraper = URLScraper()
+                # Extract ingredients with caching
                 print(f"Scraping URL for market research products: {url}")
-                extraction_result = await scraper.extract_ingredients_from_url(url)
+                extraction_result = await extract_ingredients_from_url_cached(url)
                 
                 # Get ingredients - could be list or string, ensure it's a list
                 ingredients_raw = extraction_result.get("ingredients", [])
@@ -3509,9 +3738,8 @@ async def market_research_overview(
                 if not url.startswith(("http://", "https://")):
                     raise HTTPException(status_code=400, detail="Invalid URL format. Must start with http:// or https://")
                 
-                scraper = URLScraper()
                 print(f"Scraping URL for market research overview: {url}")
-                extraction_result = await scraper.extract_ingredients_from_url(url)
+                extraction_result = await extract_ingredients_from_url_cached(url)
                 
                 ingredients_raw = extraction_result.get("ingredients", [])
                 extracted_text = extraction_result.get("extracted_text", "")
