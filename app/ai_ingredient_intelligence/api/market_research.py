@@ -254,6 +254,7 @@ async def get_market_research_history_detail(
     history_id: str,
     page: int = Query(1, ge=1, description="Page number (starts from 1)"),
     page_size: int = Query(10, ge=1, le=100, description="Number of products per page (max 100)"),
+    unlock_page: bool = Query(False, description="Flag to unlock page after credits are deducted (frontend should set this to true after calling credit deduction API)"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
@@ -266,6 +267,13 @@ async def get_market_research_history_detail(
     Query Parameters:
     - page: Page number (default: 1)
     - page_size: Number of products per page (default: 10, max: 100)
+    - unlock_page: Flag to unlock page after credits are deducted (frontend should set this to true after calling credit deduction API)
+    
+    Credit-Based Pagination:
+    - Pages 1-2 are free (automatically unlocked)
+    - Pages 3+ require credits (must be unlocked via unlock_page flag)
+    - Frontend should call credit deduction API first, then call this endpoint with unlock_page=true
+    - Once a page is unlocked, it remains unlocked for that history_id
     
     Pagination:
     - Only the "products" array in research_result is paginated
@@ -317,6 +325,7 @@ async def get_market_research_history_detail(
                 "available_keywords": 1,
                 "platforms": 1,
                 "platforms_fetched_at": 1,
+                "accessed_pages": 1,  # Include accessed_pages for credit-based pagination
                 "research_result.total_matched": 1,  # Get total count
                 "research_result.extracted_ingredients": 1,
                 "research_result.processing_time": 1,
@@ -336,6 +345,47 @@ async def get_market_research_history_detail(
         # Get total products count
         research_result = item_meta.get("research_result", {})
         total_products = research_result.get("total_matched", 0)
+        
+        # ========================================================================
+        # CREDIT-BASED PAGINATION LOGIC
+        # ========================================================================
+        # Get accessed_pages from history (pages user has unlocked)
+        accessed_pages = item_meta.get("accessed_pages", [])
+        
+        # Pages 1-2 are free
+        FREE_PAGES_LIMIT = 2
+        
+        # Check if page requires credit
+        page_requires_credit = page > FREE_PAGES_LIMIT
+        is_page_unlocked = page in accessed_pages
+        
+        # Handle credit-based access control
+        if page_requires_credit and not is_page_unlocked:
+            # Page requires credit but is not unlocked
+            if unlock_page:
+                # Frontend has deducted credits - unlock the page
+                await market_research_history_col.update_one(
+                    {"_id": ObjectId(history_id)},
+                    {"$addToSet": {"accessed_pages": page}}  # $addToSet prevents duplicates
+                )
+                # Update accessed_pages for response
+                accessed_pages.append(page)
+                is_page_unlocked = True
+            else:
+                # Page not unlocked and no unlock flag - return error
+                raise HTTPException(
+                    status_code=402,
+                    detail=f"This page requires credits. Please unlock it first. Page {page} requires payment. Unlocked pages: {sorted(accessed_pages)}"
+                )
+        elif not page_requires_credit:
+            # Free page - add to accessed_pages if not already there (for tracking)
+            if page not in accessed_pages:
+                await market_research_history_col.update_one(
+                    {"_id": ObjectId(history_id)},
+                    {"$addToSet": {"accessed_pages": page}}
+                )
+                accessed_pages.append(page)
+        # ========================================================================
         
         # If no products, return early with new format
         if total_products == 0:
