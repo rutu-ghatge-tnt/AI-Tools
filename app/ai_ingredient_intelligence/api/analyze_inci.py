@@ -1427,15 +1427,21 @@ async def get_suppliers_paginated(skip: int = 0, limit: int = 50, search: Option
         # Get total count
         total = await suppliers_collection.count_documents(query)
         
-        # Get paginated results
-        cursor = suppliers_collection.find(query, {"supplierName": 1, "_id": 0}).skip(skip).limit(limit)
+        # Get paginated results - include _id for supplierId
+        cursor = suppliers_collection.find(query, {"supplierName": 1, "_id": 1}).skip(skip).limit(limit)
         suppliers = await cursor.to_list(length=None)
         
-        # Extract supplier names
-        supplier_names = [s.get("supplierName", "") for s in suppliers if s.get("supplierName")]
+        # Map to objects with supplierId and supplierName
+        supplier_objects = [
+            {
+                "supplierId": str(s["_id"]),
+                "supplierName": s.get("supplierName", "")
+            }
+            for s in suppliers if s.get("supplierName")
+        ]
         
         return {
-            "suppliers": supplier_names,
+            "suppliers": supplier_objects,
             "total": total,
             "skip": skip,
             "limit": limit,

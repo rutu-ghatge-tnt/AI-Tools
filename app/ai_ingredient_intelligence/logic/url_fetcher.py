@@ -109,20 +109,67 @@ async def fetch_product_from_url(url: str, force_refresh: bool = False) -> Dict[
         if not product_name:
             product_name = "Unknown Product"
         
+        # IMPORTANT: Extract prices BEFORE AI validation, because validation removes price information
+        # Store original extracted_text for price extraction
+        original_extracted_text = extracted_text
+        
+        # Extract MRP FIRST (before selling price) to ensure it's prioritized
+        mrp = _extract_mrp_from_text(original_extracted_text)
+        if mrp is None:
+            mrp = None  # MRP is optional
+        
+        # Extract selling price (excludes MRP) - AFTER MRP extraction
+        price = _extract_price_from_text(original_extracted_text)
+        if price is None:
+            price = 0.0
+        
+        # Debug logging for price extraction
+        print(f"💰 Price extraction results (before validation):")
+        print(f"   MRP: {mrp}")
+        print(f"   Selling Price: {price}")
+        if mrp and price:
+            print(f"   Price difference: ₹{mrp - price}")
+        
         # Final AI validation of all extracted data before returning
+        # NOTE: This may modify extracted_text and remove price information, but we've already extracted prices above
         try:
-            print("🔍 Running final AI validation on all extracted data...")
+            print("🔍 Running final AI validation on all extracted data (including price validation)...")
             validated = await scraper.validate_extracted_data_with_ai(
                 ingredients=ingredients,
                 extracted_text=extracted_text,
                 product_name=product_name,
-                product_image=product_image
+                product_image=product_image,
+                url=url,
+                mrp=mrp,
+                selling_price=price
             )
             
             # Use validated data
             ingredients = validated.get("ingredients", ingredients)
             extracted_text = validated.get("extracted_text", extracted_text)
             product_name = validated.get("product_name", product_name) or "Unknown Product"
+            
+            # Use validated prices (always returned from validation function)
+            validated_mrp = validated.get("mrp")
+            validated_selling_price = validated.get("selling_price")
+            
+            # Update MRP
+            if validated_mrp is not None:
+                if mrp != validated_mrp:
+                    print(f"💰 MRP corrected by AI: ₹{mrp} → ₹{validated_mrp}")
+                mrp = validated_mrp
+            elif mrp is not None:  # AI set to None (not found on page)
+                print(f"💰 AI validation: MRP removed (was ₹{mrp}, not found on page)")
+                mrp = None
+            
+            # Update selling price
+            if validated_selling_price is not None:
+                if price != validated_selling_price:
+                    print(f"💰 Selling price corrected by AI: ₹{price} → ₹{validated_selling_price}")
+                price = validated_selling_price
+            elif price is not None:  # AI set to None (not found on page)
+                print(f"💰 AI validation: Selling price removed (was ₹{price}, not found on page)")
+                price = None
             
             if validated.get("validation_notes"):
                 print(f"✅ Validation notes: {validated['validation_notes']}")
@@ -141,15 +188,22 @@ async def fetch_product_from_url(url: str, force_refresh: bool = False) -> Dict[
             print(f"⚠️ Warning: Failed to extract brand: {e}")
             brand = "Unknown Brand"
         
-        # Extract selling price (excludes MRP)
-        price = _extract_price_from_text(extracted_text)
-        if price is None:
-            price = 0.0
-        
-        # Extract MRP separately
-        mrp = _extract_mrp_from_text(extracted_text)
-        if mrp is None:
-            mrp = None  # MRP is optional
+        # Additional debug logging if prices weren't found (use original_extracted_text, not validated text)
+        if not mrp and not price:
+            print(f"⚠️ No prices found in extracted text")
+            # Show a snippet of the original extracted text to debug
+            mrp_snippet = original_extracted_text[:1000] if len(original_extracted_text) > 1000 else original_extracted_text
+            print(f"   Original text snippet (first 500 chars): {mrp_snippet[:500]}")
+            # Try to find MRP patterns manually for debugging
+            mrp_patterns = [
+                r'(?:M\.R\.P\.?|MRP)[:\s]*₹\s*(\d+(?:,\d+)*)',
+                r'M\.R\.P\.?\s*\([^)]*\)[:\s]*₹\s*(\d+(?:,\d+)*)',
+            ]
+            for pattern in mrp_patterns:
+                match = re.search(pattern, original_extracted_text, re.IGNORECASE)
+                if match:
+                    print(f"   Found MRP pattern match in original text: ₹{match.group(1)}")
+                    break
         
         # Extract size and unit
         size = _extract_size_from_text(extracted_text)
@@ -183,12 +237,16 @@ async def fetch_product_from_url(url: str, force_refresh: bool = False) -> Dict[
             target_audience = []
         
         # Build standardized response
+        # Price field: Use MRP if available, otherwise use selling price
+        # This ensures the main price field shows the higher value (MRP) when available
+        display_price = mrp if mrp is not None else price
+        
         response_data = {
             "name": product_name,
             "brand": brand,
             "url": url,
             "platform": platform,
-            "price": price,
+            "price": display_price,  # MRP if available, otherwise selling price
             "mrp": mrp,  # MRP (Maximum Retail Price) - optional
             "size": size,
             "unit": unit,
@@ -674,33 +732,52 @@ def _extract_price_from_text(text: str) -> Optional[float]:
 def _extract_mrp_from_text(text: str) -> Optional[float]:
     """Extract MRP (Maximum Retail Price) from text"""
     import re
-    # Look for explicit MRP patterns first
+    # Look for explicit MRP patterns first - prioritize these
+    # IMPORTANT: Handle "M.R.P.: ₹345" format (with colon after M.R.P.)
     mrp_patterns = [
         r'MRP:\s*₹\s*(\d+(?:,\d+)*(?:\.\d+)?)',  # MRP: ₹649
+        r'M\.R\.P\.?\s*:\s*₹\s*(\d+(?:,\d+)*(?:\.\d+)?)',  # M.R.P.: ₹345 (with colon)
+        r'M\.R\.P\.?\s*[:\s]*₹\s*(\d+(?:,\d+)*(?:\.\d+)?)',  # M.R.P. ₹649 or M.R.P: ₹649 (without colon)
+        r'M\.R\.P\.?\s*\([^)]*\)[:\s]*₹\s*(\d+(?:,\d+)*(?:\.\d+)?)',  # M.R.P. (Maximum Retail Price): ₹649
         r'MRP:\s*Rs\.?\s*(\d+(?:,\d+)*(?:\.\d+)?)',  # MRP: Rs.649
         r'MRP:\s*(\d+(?:,\d+)*(?:\.\d+)?)',  # MRP: 649
-        r'M\.R\.P\.?[:\s]*₹\s*(\d+(?:,\d+)*(?:\.\d+)?)',  # M.R.P: ₹649
         r'Maximum\s+Retail\s+Price[:\s]*₹\s*(\d+(?:,\d+)*(?:\.\d+)?)',  # Maximum Retail Price: ₹649
     ]
     
     for pattern in mrp_patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
+        matches = list(re.finditer(pattern, text, re.IGNORECASE))
+        for match in matches:
             mrp_str = match.group(1).replace(',', '')
             try:
-                return float(mrp_str)
+                mrp_value = float(mrp_str)
+                # Validate it's a reasonable price (not too low)
+                if mrp_value > 10:  # MRP should be at least ₹10
+                    print(f"✅ Found MRP using pattern '{pattern}': ₹{mrp_value}")
+                    return mrp_value
             except:
                 pass
     
     # If no explicit MRP found, look for price pairs where higher is MRP
-    # Pattern: ₹649 ₹292 (MRP then selling price)
-    price_pair_pattern = r'₹\s*(\d+(?:,\d+)*)\s+₹\s*(\d+(?:,\d+)*)'
-    match = re.search(price_pair_pattern, text)
-    if match:
-        price1 = float(match.group(1).replace(',', ''))
-        price2 = float(match.group(2).replace(',', ''))
-        # Higher price is usually MRP
-        return max(price1, price2)
+    # Pattern: ₹649 ₹292 (MRP then selling price) or vice versa
+    # Look for patterns where prices appear close together
+    price_pair_patterns = [
+        r'₹\s*(\d+(?:,\d+)*)\s+₹\s*(\d+(?:,\d+)*)',  # ₹445 ₹356
+        r'₹\s*(\d+(?:,\d+)*)\s*\(.*\)\s*₹\s*(\d+(?:,\d+)*)',  # ₹445 (strikethrough) ₹356
+    ]
+    
+    for pattern in price_pair_patterns:
+        matches = re.finditer(pattern, text)
+        for match in matches:
+            try:
+                price1 = float(match.group(1).replace(',', ''))
+                price2 = float(match.group(2).replace(',', ''))
+                # Higher price is usually MRP
+                if price1 > price2 and price1 > 10:
+                    return price1
+                elif price2 > price1 and price2 > 10:
+                    return price2
+            except:
+                continue
     
     return None
 

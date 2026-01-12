@@ -1,7 +1,7 @@
 """Ingredient Search API - Autocomplete for ingredient names"""
 
-from fastapi import APIRouter, HTTPException, Depends
-from typing import List, Dict
+from fastapi import APIRouter, HTTPException, Depends, Query
+from typing import List, Dict, Optional
 
 # Import authentication
 from app.ai_ingredient_intelligence.auth import verify_jwt_token
@@ -353,9 +353,11 @@ async def get_ingredients_by_supplier(
 @router.get("/by-supplier-id/{supplier_id}")
 async def get_ingredients_by_supplier_id(
     supplier_id: str,
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(50, ge=1, le=1000, description="Maximum number of records to return"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
-    """Get all ingredients for a specific supplier by supplier ID"""
+    """Get all ingredients for a specific supplier by supplier ID with pagination"""
     try:
         from bson import ObjectId
         
@@ -385,6 +387,11 @@ async def get_ingredients_by_supplier_id(
                 {"supplier_id": str(supplier_object_id)}  # String match
             ]
         }
+        
+        # Get total count for pagination
+        total = await branded_ingredients_col.count_documents(query)
+        
+        # Get paginated results
         cursor = branded_ingredients_col.find(
             query,
             {
@@ -395,16 +402,21 @@ async def get_ingredients_by_supplier_id(
                 "category_decided": 1,
                 "supplier_id": 1
             }
-        )
+        ).skip(skip).limit(limit)
         
-        # Collect all ingredient documents first
+        # Collect paginated ingredient documents
         all_docs = await cursor.to_list(length=None)
         
         if not all_docs:
             return {
                 "supplier_id": str(supplier_object_id),
-                "supplier": supplier_doc.get("supplierName", ""),
+                "supplier_name": supplier_doc.get("supplierName", ""),
+                "supplier": supplier_doc.get("supplierName", ""),  # For backward compatibility
                 "ingredients": [],
+                "total": total,
+                "skip": skip,
+                "limit": limit,
+                "hasMore": False,
                 "count": 0
             }
         
@@ -536,20 +548,24 @@ async def get_ingredients_by_supplier_id(
                     cost_per_kg = 500
             
             result_item = {
-                "id": ing_id,
-                "name": ing_name,
-                "inci": inci_name or (inci_names[0] if inci_names else ""),
-                "all_inci": inci_names if inci_names else ([inci_name] if inci_name else []),
+                "ingredient_id": ing_id,
+                "ingredient_name": ing_name,
+                "original_inci_name": inci_name or (inci_names[0] if inci_names else ""),
                 "category": category or "Other",
-                "cost_per_kg": cost_per_kg
+                "supplier_id": str(supplier_object_id)
             }
             results.append(result_item)
         
         return {
             "supplier_id": str(supplier_object_id),
-            "supplier": supplier_doc.get("supplierName", ""),
+            "supplier_name": supplier_doc.get("supplierName", ""),  # Optional for backward compatibility
+            "supplier": supplier_doc.get("supplierName", ""),  # Actual field name from API
             "ingredients": results,
-            "count": len(results)
+            "total": total,
+            "skip": skip,
+            "limit": limit,
+            "hasMore": (skip + limit) < total,
+            "count": len(results)  # Some responses include count
         }
     except HTTPException:
         raise
