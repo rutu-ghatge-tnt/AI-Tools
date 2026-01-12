@@ -2964,12 +2964,16 @@ async def market_research_products(
             if input_type_from_history == "url":
                 market_research_payload["url"] = input_data
             elif input_type_from_history == "inci":
-                # input_data might be a string or already parsed
+                # input_data is stored as comma-separated string, convert to array for market_research endpoint
                 if isinstance(input_data, str):
+                    # Split comma-separated string into array of strings
+                    market_research_payload["inci"] = [ing.strip() for ing in input_data.split(",") if ing.strip()]
+                elif isinstance(input_data, list):
+                    # Already an array, use as-is
                     market_research_payload["inci"] = input_data
                 else:
-                    # If it's already a list or dict, convert to string
-                    market_research_payload["inci"] = ", ".join(input_data) if isinstance(input_data, list) else str(input_data)
+                    # Fallback: convert to string then split
+                    market_research_payload["inci"] = [str(input_data)]
             
             # Add name/tag if available
             if history_item.get("name"):

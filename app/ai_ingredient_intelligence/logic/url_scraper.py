@@ -881,18 +881,21 @@ class URLScraper:
             
             def scrape():
                 import time
+                wait = WebDriverWait(driver, 10)
                 text_parts = []
                 product_info = []
                 
                 # FIRST: Extract main product information (name, price, MRP, brand)
                 try:
-                    # Get product name
+                    # Get product name - use multiple selectors
                     product_name_selectors = [
                         "span.B_NuCI",
-                        ".yhB1nd",
+                        "h1 span",
                         "h1",
+                        ".yhB1nd",
                         "[class*='product-name']",
-                        "[class*='ProductName']"
+                        "[class*='ProductName']",
+                        "span[class*='B_NuCI']"
                     ]
                     
                     for selector in product_name_selectors:
@@ -908,91 +911,258 @@ class URLScraper:
                     # Get price information - IMPORTANT: Extract MRP separately from selling price
                     # Flipkart shows MRP (strikethrough) and selling price separately
                     try:
-                        # MRP (usually strikethrough or in a different element)
-                        mrp_selectors = [
-                            "._3I9_wc._2p6lqe",  # MRP with strikethrough
-                            "._3I9_wc",  # MRP class
-                            "[class*='price'] [class*='strike']",
-                            ".a-price.a-text-price"
-                        ]
-                        
                         mrp_found = False
-                        for selector in mrp_selectors:
-                            try:
-                                elements = driver.find_elements(By.CSS_SELECTOR, selector)
-                                for elem in elements:
-                                    text = elem.text.strip()
-                                    if '₹' in text or any(c.isdigit() for c in text):
-                                        price_text = text.replace(',', '').strip()
-                                        # Verify it's MRP by checking if it has strikethrough styling
-                                        try:
-                                            style = elem.get_attribute('style') or ''
-                                            class_attr = elem.get_attribute('class') or ''
-                                            if 'strike' in class_attr.lower() or 'line-through' in style.lower():
-                                                product_info.append(f"MRP: {price_text}")
-                                                mrp_found = True
-                                                break
-                                        except:
-                                            # If we can't check style, assume first price element with this class is MRP
-                                            if not mrp_found:
-                                                product_info.append(f"MRP: {price_text}")
-                                                mrp_found = True
-                                                break
-                                if mrp_found:
-                                    break
-                            except:
-                                continue
-                        
-                        # Selling price (current price, not strikethrough)
-                        price_selectors = [
-                            "._30jeq3._16Jk6d",  # Current selling price
-                            "._30jeq3",  # Price class
-                            "[class*='price']:not([class*='strike'])",
-                            ".a-price-whole"
-                        ]
-                        
                         selling_price_found = False
-                        for selector in price_selectors:
-                            try:
-                                elements = driver.find_elements(By.CSS_SELECTOR, selector)
-                                for elem in elements:
-                                    # Skip if this is the MRP element
-                                    class_attr = elem.get_attribute('class') or ''
-                                    if 'strike' in class_attr.lower() or '_3I9_wc' in class_attr:
+                        
+                        # Method 1: Use JavaScript to check computed styles for strikethrough (most reliable)
+                        try:
+                            # First, find ALL price elements
+                            price_elements = driver.find_elements(By.XPATH, "//*[contains(text(), '₹')]")
+                            
+                            mrp_candidates = []
+                            price_candidates = []
+                            
+                            for elem in price_elements:
+                                try:
+                                    text = elem.text.strip()
+                                    if not text or '₹' not in text or len(text) > 50:
                                         continue
                                     
-                                    text = elem.text.strip()
-                                    if '₹' in text or any(c.isdigit() for c in text):
-                                        price_text = text.replace(',', '').strip()
-                                        if not selling_price_found:
-                                            product_info.append(f"Price: {price_text}")
-                                            selling_price_found = True
-                                            break
-                                if selling_price_found:
-                                    break
-                            except:
-                                continue
+                                    # Skip if it contains percentage or discount text
+                                    if any(word in text.lower() for word in ['off', '%', 'discount', 'save']):
+                                        continue
+                                    
+                                    # Extract price value
+                                    price_match = re.search(r'₹\s*(\d+(?:,\d+)*)', text)
+                                    if not price_match:
+                                        continue
+                                    
+                                    price_value = price_match.group(1).replace(',', '')
+                                    price_text = '₹' + price_value
+                                    
+                                    # Use JavaScript to check computed style for strikethrough
+                                    try:
+                                        # Check element's computed style
+                                        is_strikethrough = driver.execute_script("""
+                                            var elem = arguments[0];
+                                            var style = window.getComputedStyle(elem);
+                                            return style.textDecorationLine === 'line-through' || 
+                                                   style.textDecoration === 'line-through' ||
+                                                   style.textDecorationStyle === 'line-through';
+                                        """, elem)
+                                        
+                                        # Also check parent
+                                        if not is_strikethrough:
+                                            try:
+                                                parent = elem.find_element(By.XPATH, "./..")
+                                                is_strikethrough = driver.execute_script("""
+                                                    var elem = arguments[0];
+                                                    var style = window.getComputedStyle(elem);
+                                                    return style.textDecorationLine === 'line-through' || 
+                                                           style.textDecoration === 'line-through' ||
+                                                           style.textDecorationStyle === 'line-through';
+                                                """, parent)
+                                            except:
+                                                pass
+                                        
+                                        # Also check class attributes as fallback
+                                        if not is_strikethrough:
+                                            class_attr = elem.get_attribute('class') or ''
+                                            if 'strike' in class_attr.lower() or '_2p6lqe' in class_attr or '_3I9_wc' in class_attr:
+                                                is_strikethrough = True
+                                        
+                                        # Also check parent class
+                                        if not is_strikethrough:
+                                            try:
+                                                parent = elem.find_element(By.XPATH, "./..")
+                                                parent_class = parent.get_attribute('class') or ''
+                                                if 'strike' in parent_class.lower() or '_2p6lqe' in parent_class or '_3I9_wc' in parent_class:
+                                                    is_strikethrough = True
+                                            except:
+                                                pass
+                                        
+                                        if is_strikethrough:
+                                            mrp_candidates.append((price_text, price_value))
+                                        else:
+                                            price_candidates.append((price_text, price_value))
+                                    except:
+                                        # Fallback: check class attributes only
+                                        class_attr = elem.get_attribute('class') or ''
+                                        if 'strike' in class_attr.lower() or '_2p6lqe' in class_attr or '_3I9_wc' in class_attr:
+                                            mrp_candidates.append((price_text, price_value))
+                                        else:
+                                            price_candidates.append((price_text, price_value))
+                                except:
+                                    continue
+                            
+                            # Prioritize MRP: Use the highest price from strikethrough candidates (usually MRP is higher)
+                            if mrp_candidates:
+                                # Sort by price value (descending) and take the highest
+                                mrp_candidates.sort(key=lambda x: int(x[1]), reverse=True)
+                                mrp_text, _ = mrp_candidates[0]
+                                product_info.append(f"MRP: {mrp_text}")
+                                mrp_found = True
+                                print(f"Found Flipkart MRP: {mrp_text}")
+                            
+                            # Use selling price from non-strikethrough candidates
+                            if price_candidates:
+                                # Sort by price value (ascending) and take the lowest (selling price is usually lower)
+                                price_candidates.sort(key=lambda x: int(x[1]))
+                                price_text, _ = price_candidates[0]
+                                product_info.append(f"Price: {price_text}")
+                                selling_price_found = True
+                                print(f"Found Flipkart Selling Price: {price_text}")
+                                
+                        except Exception as e:
+                            print(f"Error in price extraction method 1: {e}")
                         
-                        # Also try XPath to find price elements
+                        # Method 2: Use CSS selectors (fallback) - PRIORITIZE MRP FIRST
+                        if not mrp_found or not selling_price_found:
+                            # FIRST: Find MRP (strikethrough elements) - prioritize this
+                            if not mrp_found:
+                                mrp_selectors = [
+                                    "._3I9_wc._2p6lqe",  # MRP with strikethrough
+                                    "._3I9_wc",  # MRP class
+                                    "[class*='_3I9_wc'][class*='_2p6lqe']",  # Both classes
+                                    "[class*='_3I9_wc']",
+                                    "div[class*='strike']",
+                                    "span[class*='strike']",
+                                    "*[class*='_2p6lqe']"  # Strikethrough class
+                                ]
+                                
+                                mrp_candidates = []
+                                for selector in mrp_selectors:
+                                    try:
+                                        elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                                        for elem in elements:
+                                            text = elem.text.strip()
+                                            if '₹' in text and len(text) < 50:
+                                                price_match = re.search(r'₹\s*(\d+(?:,\d+)*)', text)
+                                                if price_match:
+                                                    price_value = price_match.group(1).replace(',', '')
+                                                    price_text = '₹' + price_value
+                                                    # Skip if it's clearly not MRP (too low or contains discount text)
+                                                    if not any(word in text.lower() for word in ['off', '%', 'discount', 'save']):
+                                                        mrp_candidates.append((price_text, int(price_value)))
+                                    except:
+                                        continue
+                                
+                                # If we found MRP candidates, use the highest one (MRP is usually higher)
+                                if mrp_candidates:
+                                    mrp_candidates.sort(key=lambda x: x[1], reverse=True)
+                                    mrp_text, _ = mrp_candidates[0]
+                                    product_info.append(f"MRP: {mrp_text}")
+                                    mrp_found = True
+                                    print(f"Found Flipkart MRP via CSS selectors: {mrp_text}")
+                            
+                            # THEN: Find selling price (non-strikethrough elements)
+                            if not selling_price_found:
+                                price_selectors = [
+                                    "._30jeq3._16Jk6d",  # Current selling price
+                                    "._30jeq3",  # Price class
+                                    "[class*='_30jeq3']",
+                                    "div[class*='price']:not([class*='strike']):not([class*='_3I9_wc'])"
+                                ]
+                                
+                                price_candidates = []
+                                for selector in price_selectors:
+                                    try:
+                                        elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                                        for elem in elements:
+                                            # Skip if this is the MRP element
+                                            class_attr = elem.get_attribute('class') or ''
+                                            if 'strike' in class_attr.lower() or '_3I9_wc' in class_attr or '_2p6lqe' in class_attr:
+                                                continue
+                                            
+                                            text = elem.text.strip()
+                                            if '₹' in text and len(text) < 50:
+                                                price_match = re.search(r'₹\s*(\d+(?:,\d+)*)', text)
+                                                if price_match:
+                                                    price_value = price_match.group(1).replace(',', '')
+                                                    price_text = '₹' + price_value
+                                                    # Skip if it contains discount text
+                                                    if not any(word in text.lower() for word in ['off', '%', 'discount', 'save']):
+                                                        price_candidates.append((price_text, int(price_value)))
+                                    except:
+                                        continue
+                                
+                                # Use the lowest price from candidates (selling price is usually lower than MRP)
+                                if price_candidates:
+                                    price_candidates.sort(key=lambda x: x[1])
+                                    price_text, _ = price_candidates[0]
+                                    product_info.append(f"Price: {price_text}")
+                                    selling_price_found = True
+                                    print(f"Found Flipkart Selling Price via CSS selectors: {price_text}")
+                        
+                        # Method 3: Extract from visible text (last resort) - PRIORITIZE MRP
                         if not mrp_found or not selling_price_found:
                             try:
-                                price_elements = driver.find_elements(By.XPATH, "//div[contains(@class, 'price')]//text()[contains(., '₹')]")
-                                for elem in price_elements[:10]:
-                                    parent = elem.find_element(By.XPATH, "./..")
-                                    text = parent.text.strip()
-                                    if '₹' in text and len(text) < 50:
-                                        price_text = text.replace(',', '').strip()
-                                        # Check if parent has strikethrough
-                                        class_attr = parent.get_attribute('class') or ''
-                                        if 'strike' in class_attr.lower() and not mrp_found:
+                                body_text = driver.find_element(By.TAG_NAME, "body").text
+                                
+                                # FIRST: Look for MRP patterns explicitly
+                                if not mrp_found:
+                                    mrp_patterns = [
+                                        r'(?:MRP|M\.R\.P\.?)[:\s]*₹\s*(\d+(?:,\d+)*)',
+                                        r'₹\s*(\d+(?:,\d+)*)\s*\(.*strike.*\)',  # Price with strikethrough mention
+                                        r'₹\s*(\d+(?:,\d+)*)\s*₹\s*\d+',  # Pattern: ₹649 ₹292 (MRP then price)
+                                    ]
+                                    
+                                    for pattern in mrp_patterns:
+                                        mrp_match = re.search(pattern, body_text, re.IGNORECASE)
+                                        if mrp_match:
+                                            price_value = mrp_match.group(1).replace(',', '')
+                                            price_text = '₹' + price_value
                                             product_info.append(f"MRP: {price_text}")
                                             mrp_found = True
-                                        elif 'strike' not in class_attr.lower() and not selling_price_found:
+                                            print(f"Found Flipkart MRP via text pattern: {price_text}")
+                                            break
+                                    
+                                    # If no explicit MRP found, look for price pairs (higher is usually MRP)
+                                    if not mrp_found:
+                                        # Find all prices in the text
+                                        all_prices = re.findall(r'₹\s*(\d+(?:,\d+)*)', body_text)
+                                        if len(all_prices) >= 2:
+                                            # Convert to integers and sort
+                                            price_values = [int(p.replace(',', '')) for p in all_prices]
+                                            price_values = sorted(set(price_values), reverse=True)  # Remove duplicates, sort descending
+                                            if len(price_values) >= 2:
+                                                # Highest price is likely MRP
+                                                mrp_value = price_values[0]
+                                                price_text = '₹' + str(mrp_value)
+                                                product_info.append(f"MRP: {price_text}")
+                                                mrp_found = True
+                                                print(f"Found Flipkart MRP as highest price: {price_text}")
+                                
+                                # THEN: Look for selling price patterns
+                                if not selling_price_found:
+                                    price_patterns = [
+                                        r'(?:Special\s+price|Selling\s+price|Price)[:\s]*₹\s*(\d+(?:,\d+)*)',
+                                        r'₹\s*(\d+(?:,\d+)*)\s*(?:Special|Selling)',
+                                    ]
+                                    
+                                    for pattern in price_patterns:
+                                        price_match = re.search(pattern, body_text, re.IGNORECASE)
+                                        if price_match:
+                                            price_value = price_match.group(1).replace(',', '')
+                                            price_text = '₹' + price_value
                                             product_info.append(f"Price: {price_text}")
                                             selling_price_found = True
-                                        if mrp_found and selling_price_found:
+                                            print(f"Found Flipkart Selling Price via text pattern: {price_text}")
                                             break
-                            except:
+                                    
+                                    # If no explicit selling price found, use the lower price from pairs
+                                    if not selling_price_found and len(all_prices) >= 2:
+                                        price_values = [int(p.replace(',', '')) for p in all_prices]
+                                        price_values = sorted(set(price_values))  # Remove duplicates, sort ascending
+                                        if len(price_values) >= 2:
+                                            # Lowest price is likely selling price
+                                            selling_value = price_values[0]
+                                            price_text = '₹' + str(selling_value)
+                                            product_info.append(f"Price: {price_text}")
+                                            selling_price_found = True
+                                            print(f"Found Flipkart Selling Price as lowest price: {price_text}")
+                            except Exception as e:
+                                print(f"Error in Method 3 price extraction: {e}")
                                 pass
                     except Exception as e:
                         print(f"Error extracting Flipkart prices: {e}")
@@ -1000,8 +1170,8 @@ class URLScraper:
                     # Get brand name
                     brand_selectors = [
                         "._2NKxJv",
-                        "[class*='brand']",
                         "a[href*='/brand/']",
+                        "[class*='brand']",
                         ".product-brand"
                     ]
                     
@@ -1030,14 +1200,22 @@ class URLScraper:
                     print(f"Could not extract main product info from Flipkart: {e}")
                 
                 # SECOND: Extract product description and ingredients
+                # Scroll down to load more content
+                try:
+                    driver.execute_script("window.scrollBy(0, 500);")
+                    time.sleep(1)
+                except:
+                    pass
+                
                 selectors = [
-                    ".product-description",
-                    "._2418kt",
-                    "[data-id='product-description']",
-                    "._1mXcCf",
-                    ".product-details",
+                    "._2418kt",  # Product description
+                    "._1mXcCf",  # Product details
                     "._1AN87F",  # Product details section
-                    "[class*='description']"
+                    ".product-description",
+                    "[data-id='product-description']",
+                    ".product-details",
+                    "[class*='description']",
+                    "[class*='product-details']"
                 ]
                 
                 for selector in selectors:
@@ -1050,10 +1228,13 @@ class URLScraper:
                     except:
                         continue
                 
-                # Scroll down to load more content
+                # Also get visible text from body for comprehensive extraction
                 try:
-                    driver.execute_script("window.scrollBy(0, 500);")
-                    time.sleep(1)
+                    body_text = driver.find_element(By.TAG_NAME, "body").text
+                    # Extract first 5000 chars which usually contains product info
+                    visible_text = body_text[:5000]
+                    if visible_text and visible_text not in "\n".join(text_parts):
+                        text_parts.append(f"Additional Page Content:\n{visible_text}")
                 except:
                     pass
                 
@@ -1717,9 +1898,51 @@ class URLScraper:
                             pass
                     
                     elif platform == "myntra":
-                        # Myntra-specific image extraction - prioritize .desktop-image-zoom-primary-image
+                        # Myntra-specific image extraction - prioritize div.image-grid-image with background-image
                         try:
+                            # First, try to get image from div.image-grid-image background-image style
                             myntra_image_selectors = [
+                                'div.image-grid-image',
+                                '.image-grid-image',
+                                'div[class*="image-grid-image"]'
+                            ]
+                            
+                            for selector in myntra_image_selectors:
+                                try:
+                                    divs = driver.find_elements(By.CSS_SELECTOR, selector)
+                                    for div in divs[:3]:  # Limit to first 3 matches
+                                        # Skip if in recommendation section
+                                        if is_in_recommendation_section(div):
+                                            continue
+                                        
+                                        # Get style attribute which contains background-image
+                                        style = div.get_attribute('style') or ''
+                                        
+                                        if style and 'background-image' in style.lower():
+                                            # Extract URL from background-image: url("...")
+                                            # Pattern: background-image: url("https://...")
+                                            url_match = re.search(r'background-image:\s*url\(["\']?([^"\']+)["\']?\)', style, re.IGNORECASE)
+                                            if url_match:
+                                                img_url = url_match.group(1).strip()
+                                                
+                                                # Normalize protocol-relative URLs
+                                                if img_url.startswith('//'):
+                                                    img_url = 'https:' + img_url
+                                                
+                                                # Clean URL (remove query params but keep path)
+                                                clean_url = img_url.split('?')[0]
+                                                
+                                                # Verify it's a Myntra image
+                                                if 'myntassets.com' in clean_url.lower() or 'myntra.com' in clean_url.lower():
+                                                    if clean_url and clean_url not in image_urls:
+                                                        image_urls.add(clean_url)
+                                                        print(f"Found Myntra product image from background-image: {clean_url}")
+                                                        return clean_url
+                                except Exception as e:
+                                    continue
+                            
+                            # Fallback: Try img tags with Myntra-specific selectors
+                            myntra_img_selectors = [
                                 '.desktop-image-zoom-primary-image',
                                 'img.desktop-image-zoom-primary-image',
                                 '[class*="desktop-image-zoom"] img',
@@ -1727,7 +1950,7 @@ class URLScraper:
                                 '[class*="product-image"] img'
                             ]
                             
-                            for selector in myntra_image_selectors:
+                            for selector in myntra_img_selectors:
                                 try:
                                     imgs = driver.find_elements(By.CSS_SELECTOR, selector)
                                     for img in imgs[:3]:  # Limit to first 3 matches
@@ -1749,12 +1972,74 @@ class URLScraper:
                                             if 'myntassets.com' in clean_url.lower() or 'myntra.com' in clean_url.lower():
                                                 if clean_url and clean_url not in image_urls:
                                                     image_urls.add(clean_url)
-                                                    print(f"Found Myntra product image: {clean_url}")
+                                                    print(f"Found Myntra product image from img tag: {clean_url}")
                                                     return clean_url
                                 except:
                                     continue
                         except Exception as e:
                             print(f"Error in Myntra-specific image extraction: {e}")
+                            pass
+                    
+                    elif platform == "flipkart":
+                        # Flipkart-specific image extraction - prioritize main product image
+                        try:
+                            # Flipkart uses dynamic classes, so we'll use multiple strategies
+                            flipkart_image_selectors = [
+                                # Try to find images in the main product image container
+                                'img[src*="rukminim2.flixkart.com"]',
+                                'img[src*="rukminim1.flixkart.com"]',
+                                'img[src*="flipkart.com/image"]',
+                                # Try common Flipkart image classes (dynamic but often contain these patterns)
+                                'img[class*="UCc1lI"]',
+                                'img[class*="XD43kG"]',
+                                'img[class*="GgrFN0"]',
+                                # Generic product image area
+                                '[class*="image-container"] img',
+                                '[class*="product-image"] img',
+                                '[class*="lWX0_T"] img'  # Container class from screenshot
+                            ]
+                            
+                            for selector in flipkart_image_selectors:
+                                try:
+                                    imgs = driver.find_elements(By.CSS_SELECTOR, selector)
+                                    for img in imgs[:3]:  # Limit to first 3 matches
+                                        # Skip if in recommendation section
+                                        if is_in_recommendation_section(img):
+                                            continue
+                                        
+                                        src = img.get_attribute('src') or img.get_attribute('data-src') or ''
+                                        srcset = img.get_attribute('srcset') or ''
+                                        
+                                        # Collect candidates from src and srcset
+                                        candidates = []
+                                        if src:
+                                            candidates.append(src)
+                                        if srcset:
+                                            # Parse srcset (format: "url1 2x, url2 1x")
+                                            for item in srcset.split(','):
+                                                url_part = item.strip().split(' ')[0]
+                                                if url_part:
+                                                    candidates.append(url_part)
+                                        
+                                        for candidate_url in candidates:
+                                            if candidate_url:
+                                                # Normalize protocol-relative URLs
+                                                if candidate_url.startswith('//'):
+                                                    candidate_url = 'https:' + candidate_url
+                                                
+                                                # Verify it's a Flipkart image
+                                                if 'rukminim' in candidate_url.lower() or 'flipkart.com/image' in candidate_url.lower():
+                                                    # Clean URL (remove query params but keep path)
+                                                    clean_url = candidate_url.split('?')[0]
+                                                    
+                                                    if clean_url and clean_url not in image_urls:
+                                                        image_urls.add(clean_url)
+                                                        print(f"Found Flipkart product image: {clean_url}")
+                                                        return clean_url
+                                except:
+                                    continue
+                        except Exception as e:
+                            print(f"Error in Flipkart-specific image extraction: {e}")
                             pass
                     
                     # Method 2: Generic product image selectors (for all platforms, including fallback)
@@ -1765,8 +2050,12 @@ class URLScraper:
                         '#imgBlkFront',
                         '[data-a-image-name="landingImage"]',
                         # Myntra specific (fallback)
+                        'div.image-grid-image',
                         '.desktop-image-zoom-primary-image',
-                        # Flipkart specific
+                        # Flipkart specific (fallback)
+                        'img[src*="rukminim2.flixkart.com"]',
+                        'img[src*="rukminim1.flixkart.com"]',
+                        'img[src*="flipkart.com/image"]',
                         'img[class*="_396cs4"]',
                         # Generic product image containers (exclude recommendation sections)
                         '[class*="product-gallery"]:not([class*="recommend"]):not([class*="also-viewed"]) img',
@@ -1780,26 +2069,40 @@ class URLScraper:
                     
                     for selector in product_image_selectors:
                         try:
-                            imgs = driver.find_elements(By.CSS_SELECTOR, selector)
-                            for img in imgs[:5]:  # Limit to first 5 matches per selector
+                            elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                            for element in elements[:5]:  # Limit to first 5 matches per selector
                                 try:
                                     # Skip if in recommendation section
-                                    if is_in_recommendation_section(img):
+                                    if is_in_recommendation_section(element):
                                         continue
                                     
-                                    src = img.get_attribute('src') or img.get_attribute('data-src') or ''
-                                    srcset = img.get_attribute('srcset') or ''
-                                    
-                                    # Collect all candidate URLs
                                     candidates = []
-                                    if src and src.startswith(('http://', 'https://', '//')):
-                                        candidates.append(src)
-                                    if srcset:
-                                        # Parse srcset (format: "url1 size1, url2 size2")
-                                        for item in srcset.split(','):
-                                            url_part = item.strip().split(' ')[0]
-                                            if url_part and url_part.startswith(('http://', 'https://', '//')):
-                                                candidates.append(url_part)
+                                    
+                                    # Check if it's a div with background-image (Myntra case)
+                                    tag_name = element.tag_name.lower()
+                                    if tag_name == 'div':
+                                        style = element.get_attribute('style') or ''
+                                        if style and 'background-image' in style.lower():
+                                            # Extract URL from background-image: url("...")
+                                            url_match = re.search(r'background-image:\s*url\(["\']?([^"\']+)["\']?\)', style, re.IGNORECASE)
+                                            if url_match:
+                                                img_url = url_match.group(1).strip()
+                                                if img_url.startswith(('http://', 'https://', '//')):
+                                                    candidates.append(img_url)
+                                    
+                                    # Otherwise, treat as img tag
+                                    if not candidates:
+                                        src = element.get_attribute('src') or element.get_attribute('data-src') or ''
+                                        srcset = element.get_attribute('srcset') or ''
+                                        
+                                        if src and src.startswith(('http://', 'https://', '//')):
+                                            candidates.append(src)
+                                        if srcset:
+                                            # Parse srcset (format: "url1 size1, url2 size2")
+                                            for item in srcset.split(','):
+                                                url_part = item.strip().split(' ')[0]
+                                                if url_part and url_part.startswith(('http://', 'https://', '//')):
+                                                    candidates.append(url_part)
                                     
                                     for candidate_url in candidates:
                                         if candidate_url:
@@ -1814,8 +2117,8 @@ class URLScraper:
                                             ]):
                                                 # Get image dimensions for prioritization
                                                 try:
-                                                    width = img.size.get('width', 0)
-                                                    height = img.size.get('height', 0)
+                                                    width = element.size.get('width', 0)
+                                                    height = element.size.get('height', 0)
                                                     area = width * height
                                                 except:
                                                     area = 0
