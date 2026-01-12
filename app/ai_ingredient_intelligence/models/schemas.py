@@ -521,6 +521,12 @@ class MarketResearchDetailPagination(BaseModel):
     total_items: int = Field(..., description="Total number of items")
     platforms: Optional[List[Dict]] = Field(None, description="Platform links")
     platforms_fetched_at: Optional[str] = Field(None, description="Timestamp when platforms were fetched")
+    # Credit-based pagination fields
+    page_requires_credit: bool = Field(False, description="Whether current page requires credits (pages > 2)")
+    is_unlocked: bool = Field(True, description="Whether current page is unlocked (always true for pages <= 2)")
+    unlocked_pages: List[int] = Field(default_factory=list, description="List of all unlocked pages for this history")
+    next_page_requires_credit: bool = Field(False, description="Whether next page requires credits")
+    next_page_unlocked: bool = Field(True, description="Whether next page is unlocked")
 
 
 class MarketResearchDetailProducts(BaseModel):
