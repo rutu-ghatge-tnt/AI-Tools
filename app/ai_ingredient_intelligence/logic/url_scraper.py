@@ -259,38 +259,192 @@ class URLScraper:
             return "generic"
     
     async def _scrape_amazon(self, driver: webdriver.Chrome) -> str:
-        """Scrape ingredients from Amazon product page"""
+        """Scrape ingredients and product details from Amazon product page"""
         try:
             loop = asyncio.get_event_loop()
             
             def scrape():
+                import time
                 wait = WebDriverWait(driver, 10)
                 
-                # Try multiple selectors for ingredients/description
+                text_parts = []
+                product_info = []
+                
+                # FIRST: Extract main product information (name, price, MRP, brand)
+                try:
+                    # Get product name
+                    product_name_selectors = [
+                        "#productTitle",
+                        "h1.a-size-large",
+                        "span#productTitle",
+                        "[data-feature-name='title']",
+                        "h1"
+                    ]
+                    
+                    for selector in product_name_selectors:
+                        try:
+                            element = driver.find_element(By.CSS_SELECTOR, selector)
+                            text = element.text.strip()
+                            if text and len(text) > 5 and len(text) < 300:
+                                product_info.append(f"Product Name: {text}")
+                                break
+                        except:
+                            continue
+                    
+                    # Get price information (MRP and selling price)
+                    price_selectors = [
+                        "span.a-price-whole",  # Selling price
+                        ".a-price.a-text-price",  # MRP (strikethrough)
+                        "span.a-price.a-text-price.a-size-medium",  # MRP
+                        ".a-price[data-a-color='base']",  # Current price
+                        "[data-a-color='price']",
+                    ]
+                    
+                    mrp_found = False
+                    selling_price_found = False
+                    
+                    for selector in price_selectors:
+                        try:
+                            elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                            for elem in elements:
+                                text = elem.text.strip()
+                                # Check if it's MRP (usually has strikethrough or specific class)
+                                is_mrp = 'a-text-price' in elem.get_attribute('class') or ''
+                                if '₹' in text or 'Rs.' in text or any(c.isdigit() for c in text):
+                                    price_text = text.replace(',', '').strip()
+                                    if is_mrp and not mrp_found:
+                                        product_info.append(f"MRP: {price_text}")
+                                        mrp_found = True
+                                    elif not is_mrp and not selling_price_found:
+                                        product_info.append(f"Price: {price_text}")
+                                        selling_price_found = True
+                                    if mrp_found and selling_price_found:
+                                        break
+                            if mrp_found and selling_price_found:
+                                break
+                        except:
+                            continue
+                    
+                    # Also try XPath to find price elements
+                    try:
+                        price_elements = driver.find_elements(By.XPATH, "//span[contains(@class, 'a-price')]")
+                        for elem in price_elements[:5]:
+                            text = elem.text.strip()
+                            if '₹' in text and len(text) < 50:
+                                price_text = text.replace(',', '').strip()
+                                # Check if MRP (strikethrough)
+                                try:
+                                    parent = elem.find_element(By.XPATH, "./ancestor::*[contains(@class, 'a-text-price')]")
+                                    if not mrp_found:
+                                        product_info.append(f"MRP: {price_text}")
+                                        mrp_found = True
+                                except:
+                                    if not selling_price_found:
+                                        product_info.append(f"Price: {price_text}")
+                                        selling_price_found = True
+                                if mrp_found and selling_price_found:
+                                    break
+                    except:
+                        pass
+                    
+                    # Get brand name
+                    brand_selectors = [
+                        "#brand",
+                        "a#brand",
+                        "[data-feature-name='bylineInfo']",
+                        "a[href*='/brand/']",
+                        ".po-brand .po-break-word"
+                    ]
+                    
+                    for selector in brand_selectors:
+                        try:
+                            element = driver.find_element(By.CSS_SELECTOR, selector)
+                            text = element.text.strip()
+                            if text and len(text) > 2 and len(text) < 100:
+                                # Clean brand name (remove "Visit the" prefix, etc.)
+                                text = re.sub(r'^Visit\s+the\s+', '', text, flags=re.IGNORECASE)
+                                text = re.sub(r'\s+Store.*$', '', text, flags=re.IGNORECASE)
+                                if text:
+                                    product_info.append(f"Brand: {text}")
+                                    break
+                        except:
+                            continue
+                    
+                    # Get page title as fallback
+                    try:
+                        page_title = driver.title
+                        if page_title and len(page_title) > 10:
+                            text_parts.append(f"Page Title: {page_title}")
+                    except:
+                        pass
+                    
+                    if product_info:
+                        text_parts.append("Product Information:\n" + "\n".join(product_info))
+                    
+                except Exception as e:
+                    print(f"Could not extract main product info from Amazon: {e}")
+                
+                # SECOND: Extract product description and ingredients
                 selectors = [
                     "#feature-bullets ul",
                     "#productDescription",
                     "#productDetails_techSpec_section_1",
                     ".a-unordered-list",
                     "[data-feature-name='productDescription']",
-                    "#productDescription_feature_div"
+                    "#productDescription_feature_div",
+                    "#productDetails_feature_specifications",
+                    ".product-facts-details"
                 ]
                 
-                text_parts = []
                 for selector in selectors:
                     try:
-                        elements = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, selector)))
+                        elements = driver.find_elements(By.CSS_SELECTOR, selector)
                         for element in elements:
                             text = element.text.strip()
                             if text and len(text) > 20:
                                 text_parts.append(text)
-                    except TimeoutException:
-                        continue
                     except:
                         continue
                 
+                # Scroll down to load more content
+                try:
+                    driver.execute_script("window.scrollBy(0, 500);")
+                    time.sleep(1)
+                except:
+                    pass
+                
+                # Try to find ingredients section
+                try:
+                    # Look for ingredients in product details
+                    ingredient_keywords = ['ingredient', 'inci', 'composition', 'formula']
+                    body_text = driver.find_element(By.TAG_NAME, "body").text
+                    lines = body_text.split('\n')
+                    
+                    in_ingredient_section = False
+                    ingredient_lines = []
+                    
+                    for line in lines:
+                        line_lower = line.lower()
+                        if any(keyword in line_lower for keyword in ingredient_keywords):
+                            in_ingredient_section = True
+                            ingredient_lines.append(line)
+                        elif in_ingredient_section:
+                            if line.strip():
+                                ingredient_lines.append(line)
+                                if len(ingredient_lines) > 50:  # Limit to avoid too much text
+                                    break
+                            else:
+                                # Empty line might indicate end of section
+                                if len(ingredient_lines) > 5:
+                                    break
+                    
+                    if ingredient_lines:
+                        text_parts.append("Ingredients:\n" + "\n".join(ingredient_lines))
+                except:
+                    pass
+                
                 if text_parts:
-                    return "\n".join(text_parts)
+                    return "\n\n".join(text_parts)
                 else:
                     # Fallback: get all text content
                     return driver.find_element(By.TAG_NAME, "body").text
@@ -719,22 +873,173 @@ class URLScraper:
             return ""
     
     async def _scrape_flipkart(self, driver: webdriver.Chrome) -> str:
-        """Scrape ingredients from Flipkart product page"""
+        """Scrape ingredients and product details from Flipkart product page"""
         try:
             await asyncio.sleep(2)  # Give JS time to render
             
             loop = asyncio.get_event_loop()
             
             def scrape():
+                import time
+                text_parts = []
+                product_info = []
+                
+                # FIRST: Extract main product information (name, price, MRP, brand)
+                try:
+                    # Get product name
+                    product_name_selectors = [
+                        "span.B_NuCI",
+                        ".yhB1nd",
+                        "h1",
+                        "[class*='product-name']",
+                        "[class*='ProductName']"
+                    ]
+                    
+                    for selector in product_name_selectors:
+                        try:
+                            element = driver.find_element(By.CSS_SELECTOR, selector)
+                            text = element.text.strip()
+                            if text and len(text) > 5 and len(text) < 300:
+                                product_info.append(f"Product Name: {text}")
+                                break
+                        except:
+                            continue
+                    
+                    # Get price information - IMPORTANT: Extract MRP separately from selling price
+                    # Flipkart shows MRP (strikethrough) and selling price separately
+                    try:
+                        # MRP (usually strikethrough or in a different element)
+                        mrp_selectors = [
+                            "._3I9_wc._2p6lqe",  # MRP with strikethrough
+                            "._3I9_wc",  # MRP class
+                            "[class*='price'] [class*='strike']",
+                            ".a-price.a-text-price"
+                        ]
+                        
+                        mrp_found = False
+                        for selector in mrp_selectors:
+                            try:
+                                elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                                for elem in elements:
+                                    text = elem.text.strip()
+                                    if '₹' in text or any(c.isdigit() for c in text):
+                                        price_text = text.replace(',', '').strip()
+                                        # Verify it's MRP by checking if it has strikethrough styling
+                                        try:
+                                            style = elem.get_attribute('style') or ''
+                                            class_attr = elem.get_attribute('class') or ''
+                                            if 'strike' in class_attr.lower() or 'line-through' in style.lower():
+                                                product_info.append(f"MRP: {price_text}")
+                                                mrp_found = True
+                                                break
+                                        except:
+                                            # If we can't check style, assume first price element with this class is MRP
+                                            if not mrp_found:
+                                                product_info.append(f"MRP: {price_text}")
+                                                mrp_found = True
+                                                break
+                                if mrp_found:
+                                    break
+                            except:
+                                continue
+                        
+                        # Selling price (current price, not strikethrough)
+                        price_selectors = [
+                            "._30jeq3._16Jk6d",  # Current selling price
+                            "._30jeq3",  # Price class
+                            "[class*='price']:not([class*='strike'])",
+                            ".a-price-whole"
+                        ]
+                        
+                        selling_price_found = False
+                        for selector in price_selectors:
+                            try:
+                                elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                                for elem in elements:
+                                    # Skip if this is the MRP element
+                                    class_attr = elem.get_attribute('class') or ''
+                                    if 'strike' in class_attr.lower() or '_3I9_wc' in class_attr:
+                                        continue
+                                    
+                                    text = elem.text.strip()
+                                    if '₹' in text or any(c.isdigit() for c in text):
+                                        price_text = text.replace(',', '').strip()
+                                        if not selling_price_found:
+                                            product_info.append(f"Price: {price_text}")
+                                            selling_price_found = True
+                                            break
+                                if selling_price_found:
+                                    break
+                            except:
+                                continue
+                        
+                        # Also try XPath to find price elements
+                        if not mrp_found or not selling_price_found:
+                            try:
+                                price_elements = driver.find_elements(By.XPATH, "//div[contains(@class, 'price')]//text()[contains(., '₹')]")
+                                for elem in price_elements[:10]:
+                                    parent = elem.find_element(By.XPATH, "./..")
+                                    text = parent.text.strip()
+                                    if '₹' in text and len(text) < 50:
+                                        price_text = text.replace(',', '').strip()
+                                        # Check if parent has strikethrough
+                                        class_attr = parent.get_attribute('class') or ''
+                                        if 'strike' in class_attr.lower() and not mrp_found:
+                                            product_info.append(f"MRP: {price_text}")
+                                            mrp_found = True
+                                        elif 'strike' not in class_attr.lower() and not selling_price_found:
+                                            product_info.append(f"Price: {price_text}")
+                                            selling_price_found = True
+                                        if mrp_found and selling_price_found:
+                                            break
+                            except:
+                                pass
+                    except Exception as e:
+                        print(f"Error extracting Flipkart prices: {e}")
+                    
+                    # Get brand name
+                    brand_selectors = [
+                        "._2NKxJv",
+                        "[class*='brand']",
+                        "a[href*='/brand/']",
+                        ".product-brand"
+                    ]
+                    
+                    for selector in brand_selectors:
+                        try:
+                            element = driver.find_element(By.CSS_SELECTOR, selector)
+                            text = element.text.strip()
+                            if text and len(text) > 2 and len(text) < 100:
+                                product_info.append(f"Brand: {text}")
+                                break
+                        except:
+                            continue
+                    
+                    # Get page title as fallback
+                    try:
+                        page_title = driver.title
+                        if page_title and len(page_title) > 10:
+                            text_parts.append(f"Page Title: {page_title}")
+                    except:
+                        pass
+                    
+                    if product_info:
+                        text_parts.append("Product Information:\n" + "\n".join(product_info))
+                    
+                except Exception as e:
+                    print(f"Could not extract main product info from Flipkart: {e}")
+                
+                # SECOND: Extract product description and ingredients
                 selectors = [
                     ".product-description",
                     "._2418kt",
                     "[data-id='product-description']",
                     "._1mXcCf",
-                    ".product-details"
+                    ".product-details",
+                    "._1AN87F",  # Product details section
+                    "[class*='description']"
                 ]
                 
-                text_parts = []
                 for selector in selectors:
                     try:
                         elements = driver.find_elements(By.CSS_SELECTOR, selector)
@@ -745,14 +1050,234 @@ class URLScraper:
                     except:
                         continue
                 
+                # Scroll down to load more content
+                try:
+                    driver.execute_script("window.scrollBy(0, 500);")
+                    time.sleep(1)
+                except:
+                    pass
+                
                 if text_parts:
-                    return "\n".join(text_parts)
+                    return "\n\n".join(text_parts)
                 else:
                     return driver.find_element(By.TAG_NAME, "body").text
             
             return await loop.run_in_executor(None, scrape)
         except Exception as e:
             print(f"Error scraping Flipkart: {e}")
+            if self.driver:
+                loop = asyncio.get_event_loop()
+                return await loop.run_in_executor(None, lambda: driver.find_element(By.TAG_NAME, "body").text)
+            return ""
+    
+    async def _scrape_myntra(self, driver: webdriver.Chrome) -> str:
+        """Scrape ingredients and product details from Myntra product page"""
+        try:
+            await asyncio.sleep(2)  # Give JS time to render
+            
+            loop = asyncio.get_event_loop()
+            
+            def scrape():
+                import time
+                wait = WebDriverWait(driver, 10)
+                
+                text_parts = []
+                product_info = []
+                
+                # FIRST: Extract main product information (name, price, MRP, brand)
+                try:
+                    # Get product name
+                    product_name_selectors = [
+                        "h1.pdp-name",
+                        "h1.pdp-product-name",
+                        ".pdp-product-name",
+                        "h1",
+                        "[class*='product-name']",
+                        "[class*='ProductName']"
+                    ]
+                    
+                    for selector in product_name_selectors:
+                        try:
+                            element = driver.find_element(By.CSS_SELECTOR, selector)
+                            text = element.text.strip()
+                            if text and len(text) > 5 and len(text) < 300:
+                                product_info.append(f"Product Name: {text}")
+                                break
+                        except:
+                            continue
+                    
+                    # Get price information (MRP and selling price)
+                    try:
+                        # MRP (usually shown with strikethrough)
+                        mrp_selectors = [
+                            ".pdp-price .pdp-mrp",
+                            ".pdp-price .strike",
+                            "[class*='mrp']",
+                            "[class*='MRP']",
+                            ".price-mrp"
+                        ]
+                        
+                        mrp_found = False
+                        for selector in mrp_selectors:
+                            try:
+                                elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                                for elem in elements:
+                                    text = elem.text.strip()
+                                    if '₹' in text or any(c.isdigit() for c in text):
+                                        price_text = text.replace(',', '').strip()
+                                        product_info.append(f"MRP: {price_text}")
+                                        mrp_found = True
+                                        break
+                                if mrp_found:
+                                    break
+                            except:
+                                continue
+                        
+                        # Selling price (current/discounted price)
+                        price_selectors = [
+                            ".pdp-price .pdp-price-details",
+                            ".pdp-price .pdp-selling-price",
+                            "[class*='selling-price']",
+                            "[class*='SellingPrice']",
+                            ".price-selling"
+                        ]
+                        
+                        selling_price_found = False
+                        for selector in price_selectors:
+                            try:
+                                elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                                for elem in elements:
+                                    text = elem.text.strip()
+                                    if '₹' in text or any(c.isdigit() for c in text):
+                                        price_text = text.replace(',', '').strip()
+                                        if not selling_price_found:
+                                            product_info.append(f"Price: {price_text}")
+                                            selling_price_found = True
+                                            break
+                                if selling_price_found:
+                                    break
+                            except:
+                                continue
+                        
+                        # Also try XPath to find price elements
+                        if not mrp_found or not selling_price_found:
+                            try:
+                                price_elements = driver.find_elements(By.XPATH, "//*[contains(@class, 'price')]//text()[contains(., '₹')]")
+                                for elem in price_elements[:10]:
+                                    parent = elem.find_element(By.XPATH, "./..")
+                                    text = parent.text.strip()
+                                    if '₹' in text and len(text) < 50:
+                                        price_text = text.replace(',', '').strip()
+                                        class_attr = parent.get_attribute('class') or ''
+                                        if 'mrp' in class_attr.lower() and not mrp_found:
+                                            product_info.append(f"MRP: {price_text}")
+                                            mrp_found = True
+                                        elif 'selling' in class_attr.lower() and not selling_price_found:
+                                            product_info.append(f"Price: {price_text}")
+                                            selling_price_found = True
+                                        if mrp_found and selling_price_found:
+                                            break
+                            except:
+                                pass
+                    except Exception as e:
+                        print(f"Error extracting Myntra prices: {e}")
+                    
+                    # Get brand name
+                    brand_selectors = [
+                        ".pdp-product-brand",
+                        "[class*='brand']",
+                        "a[href*='/brand/']",
+                        ".product-brand"
+                    ]
+                    
+                    for selector in brand_selectors:
+                        try:
+                            element = driver.find_element(By.CSS_SELECTOR, selector)
+                            text = element.text.strip()
+                            if text and len(text) > 2 and len(text) < 100:
+                                product_info.append(f"Brand: {text}")
+                                break
+                        except:
+                            continue
+                    
+                    # Get page title as fallback
+                    try:
+                        page_title = driver.title
+                        if page_title and len(page_title) > 10:
+                            text_parts.append(f"Page Title: {page_title}")
+                    except:
+                        pass
+                    
+                    if product_info:
+                        text_parts.append("Product Information:\n" + "\n".join(product_info))
+                    
+                except Exception as e:
+                    print(f"Could not extract main product info from Myntra: {e}")
+                
+                # SECOND: Extract product description and ingredients
+                # Scroll down to load content
+                try:
+                    driver.execute_script("window.scrollBy(0, 500);")
+                    time.sleep(1)
+                except:
+                    pass
+                
+                # Try to find and expand product details sections
+                try:
+                    # Look for accordion/tab elements that might contain ingredients
+                    detail_selectors = [
+                        "[class*='product-details']",
+                        "[class*='ProductDetails']",
+                        "[class*='description']",
+                        "[class*='ingredient']",
+                        ".pdp-product-description",
+                        ".pdp-productDetailsContainer"
+                    ]
+                    
+                    for selector in detail_selectors:
+                        try:
+                            elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                            for element in elements:
+                                # Try to click to expand if it's a collapsible section
+                                try:
+                                    if element.is_displayed():
+                                        driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", element)
+                                        time.sleep(0.5)
+                                        # Try clicking to expand
+                                        try:
+                                            driver.execute_script("arguments[0].click();", element)
+                                            time.sleep(1)
+                                        except:
+                                            pass
+                                except:
+                                    pass
+                                
+                                text = element.text.strip()
+                                if text and len(text) > 20:
+                                    text_parts.append(text)
+                        except:
+                            continue
+                except Exception as e:
+                    print(f"Error expanding Myntra product details: {e}")
+                
+                # Also get all visible text from body
+                try:
+                    body_text = driver.find_element(By.TAG_NAME, "body").text
+                    # Extract first 5000 chars which usually contains product info
+                    visible_text = body_text[:5000]
+                    if visible_text and visible_text not in "\n".join(text_parts):
+                        text_parts.append(f"Additional Page Content:\n{visible_text}")
+                except:
+                    pass
+                
+                if text_parts:
+                    return "\n\n".join(text_parts)
+                else:
+                    return driver.find_element(By.TAG_NAME, "body").text
+            
+            return await loop.run_in_executor(None, scrape)
+        except Exception as e:
+            print(f"Error scraping Myntra: {e}")
             if self.driver:
                 loop = asyncio.get_event_loop()
                 return await loop.run_in_executor(None, lambda: driver.find_element(By.TAG_NAME, "body").text)
@@ -977,6 +1502,8 @@ class URLScraper:
                 extracted_text = await self._scrape_nykaa(driver)
             elif platform == "flipkart":
                 extracted_text = await self._scrape_flipkart(driver)
+            elif platform == "myntra":
+                extracted_text = await self._scrape_myntra(driver)
             else:
                 extracted_text = await self._scrape_generic(driver)
             
@@ -1150,13 +1677,95 @@ class URLScraper:
                             print(f"Error in Nykaa image extraction: {e}")
                             pass
                     
-                    # Method 2: Generic product image selectors (for all platforms)
+                    elif platform == "amazon":
+                        # Amazon-specific image extraction - prioritize #landingImage
+                        try:
+                            # First try the main landing image selector
+                            landing_image_selectors = [
+                                '#landingImage',
+                                '#main-image',
+                                '#imgBlkFront',
+                                '[data-a-image-name="landingImage"]',
+                                'img#landingImage',
+                                '[id="landingImage"]'
+                            ]
+                            
+                            for selector in landing_image_selectors:
+                                try:
+                                    img = driver.find_element(By.CSS_SELECTOR, selector)
+                                    # Get src or data-old-hires (high-res version)
+                                    src = img.get_attribute('src') or img.get_attribute('data-old-hires') or img.get_attribute('data-src') or ''
+                                    
+                                    if src:
+                                        # Normalize protocol-relative URLs
+                                        if src.startswith('//'):
+                                            src = 'https:' + src
+                                        
+                                        # Clean URL (remove query params but keep path)
+                                        clean_url = src.split('?')[0]
+                                        
+                                        # Verify it's an Amazon image
+                                        if 'media-amazon.com' in clean_url.lower() or 'amazon.com' in clean_url.lower():
+                                            if clean_url and clean_url not in image_urls:
+                                                image_urls.add(clean_url)
+                                                print(f"Found Amazon product image: {clean_url}")
+                                                return clean_url
+                                except:
+                                    continue
+                        except Exception as e:
+                            print(f"Error in Amazon-specific image extraction: {e}")
+                            pass
+                    
+                    elif platform == "myntra":
+                        # Myntra-specific image extraction - prioritize .desktop-image-zoom-primary-image
+                        try:
+                            myntra_image_selectors = [
+                                '.desktop-image-zoom-primary-image',
+                                'img.desktop-image-zoom-primary-image',
+                                '[class*="desktop-image-zoom"] img',
+                                '.pdp-product-images img',
+                                '[class*="product-image"] img'
+                            ]
+                            
+                            for selector in myntra_image_selectors:
+                                try:
+                                    imgs = driver.find_elements(By.CSS_SELECTOR, selector)
+                                    for img in imgs[:3]:  # Limit to first 3 matches
+                                        # Skip if in recommendation section
+                                        if is_in_recommendation_section(img):
+                                            continue
+                                        
+                                        src = img.get_attribute('src') or img.get_attribute('data-src') or ''
+                                        
+                                        if src:
+                                            # Normalize protocol-relative URLs
+                                            if src.startswith('//'):
+                                                src = 'https:' + src
+                                            
+                                            # Clean URL
+                                            clean_url = src.split('?')[0]
+                                            
+                                            # Verify it's a Myntra image
+                                            if 'myntassets.com' in clean_url.lower() or 'myntra.com' in clean_url.lower():
+                                                if clean_url and clean_url not in image_urls:
+                                                    image_urls.add(clean_url)
+                                                    print(f"Found Myntra product image: {clean_url}")
+                                                    return clean_url
+                                except:
+                                    continue
+                        except Exception as e:
+                            print(f"Error in Myntra-specific image extraction: {e}")
+                            pass
+                    
+                    # Method 2: Generic product image selectors (for all platforms, including fallback)
                     product_image_selectors = [
-                        # Amazon specific
+                        # Amazon specific (fallback if Method 1 didn't work)
                         '#landingImage',
                         '#main-image',
                         '#imgBlkFront',
                         '[data-a-image-name="landingImage"]',
+                        # Myntra specific (fallback)
+                        '.desktop-image-zoom-primary-image',
                         # Flipkart specific
                         'img[class*="_396cs4"]',
                         # Generic product image containers (exclude recommendation sections)
