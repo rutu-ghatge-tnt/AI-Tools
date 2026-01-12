@@ -292,60 +292,544 @@ class URLScraper:
                             continue
                     
                     # Get price information (MRP and selling price)
-                    price_selectors = [
-                        "span.a-price-whole",  # Selling price
-                        ".a-price.a-text-price",  # MRP (strikethrough)
-                        "span.a-price.a-text-price.a-size-medium",  # MRP
-                        ".a-price[data-a-color='base']",  # Current price
-                        "[data-a-color='price']",
-                    ]
+                    # IMPORTANT: MRP selectors first to prioritize MRP extraction
+                    # CRITICAL: Only extract prices from main product area, exclude recommendation sections
                     
+                    def is_in_recommendation_section(elem):
+                        """Check if element is in a recommendation/related products section"""
+                        try:
+                            # Check element and its ancestors for recommendation section indicators
+                            current = elem
+                            for _ in range(5):  # Check up to 5 levels up
+                                try:
+                                    class_attr = current.get_attribute('class') or ''
+                                    id_attr = current.get_attribute('id') or ''
+                                    # Exclude recommendation sections
+                                    exclude_keywords = [
+                                        'fbt', 'frequently-bought', 'frequently_bought', 'together',
+                                        'recommend', 'recommendation', 'also-viewed', 'alsoviewed',
+                                        'similar', 'related', 'sponsored', 'p13n-desktop-sims'
+                                    ]
+                                    if any(keyword in class_attr.lower() or keyword in id_attr.lower() for keyword in exclude_keywords):
+                                        return True
+                                    # Move to parent
+                                    current = current.find_element(By.XPATH, "./..")
+                                except:
+                                    break
+                            return False
+                        except:
+                            return False
+                    
+                    # First, try to find prices in the main product info area (near product title)
                     mrp_found = False
                     selling_price_found = False
                     
-                    for selector in price_selectors:
-                        try:
-                            elements = driver.find_elements(By.CSS_SELECTOR, selector)
-                            for elem in elements:
-                                text = elem.text.strip()
-                                # Check if it's MRP (usually has strikethrough or specific class)
-                                is_mrp = 'a-text-price' in elem.get_attribute('class') or ''
-                                if '₹' in text or 'Rs.' in text or any(c.isdigit() for c in text):
-                                    price_text = text.replace(',', '').strip()
-                                    if is_mrp and not mrp_found:
-                                        product_info.append(f"MRP: {price_text}")
-                                        mrp_found = True
-                                    elif not is_mrp and not selling_price_found:
-                                        product_info.append(f"Price: {price_text}")
-                                        selling_price_found = True
-                                    if mrp_found and selling_price_found:
-                                        break
-                            if mrp_found and selling_price_found:
-                                break
-                        except:
-                            continue
-                    
-                    # Also try XPath to find price elements
+                    # Method 1: Look for MRP in main product area with specific selectors
                     try:
-                        price_elements = driver.find_elements(By.XPATH, "//span[contains(@class, 'a-price')]")
-                        for elem in price_elements[:5]:
-                            text = elem.text.strip()
-                            if '₹' in text and len(text) < 50:
-                                price_text = text.replace(',', '').strip()
-                                # Check if MRP (strikethrough)
+                        # Try to find main product container first
+                        main_product_selectors = [
+                            "#centerCol",  # Main product column
+                            "#dp-container",  # Product detail page container
+                            "[data-feature-name='buybox']",  # Buy box area
+                            "#ppd",  # Product page div
+                        ]
+                        
+                        main_container = None
+                        for container_selector in main_product_selectors:
+                            try:
+                                container = driver.find_element(By.CSS_SELECTOR, container_selector)
+                                main_container = container
+                                break
+                            except:
+                                continue
+                        
+                        # If we found main container, search within it; otherwise search entire page
+                        search_root = main_container if main_container else driver
+                        
+                        # NEW: First, look for elements containing "M.R.P.:" text (basisPrice class)
+                        # This is the most reliable way to find MRP on Amazon
+                        # HTML structure: <span class="basisPrice">M.R.P.: <span class="a-price a-text-price" data-a-strike="true">...</span></span>
+                        try:
+                            # Method 1a: Look for basisPrice class (most specific)
+                            try:
+                                basis_price_elements = search_root.find_elements(By.CSS_SELECTOR, ".basisPrice, span.basisPrice")
+                                for basis_elem in basis_price_elements:
+                                    if is_in_recommendation_section(basis_elem):
+                                        continue
+                                    
+                                    # Look for .a-price.a-text-price within basisPrice element
+                                    try:
+                                        price_elem = basis_elem.find_element(By.CSS_SELECTOR, ".a-price.a-text-price[data-a-strike='true'], .a-price.a-text-price")
+                                        
+                                        # Get price from .a-offscreen (most reliable - contains ₹595)
+                                        try:
+                                            offscreen = price_elem.find_element(By.CSS_SELECTOR, ".a-offscreen")
+                                            price_text = offscreen.text.strip()
+                                        except:
+                                            # Fallback: try aok-offscreen in parent
+                                            try:
+                                                parent = basis_elem.find_element(By.XPATH, "./ancestor::span[contains(@class, 'aok-relative')]")
+                                                offscreen = parent.find_element(By.CSS_SELECTOR, ".aok-offscreen")
+                                                price_text = offscreen.text.strip()
+                                            except:
+                                                # Final fallback: element text
+                                                price_text = price_elem.text.strip()
+                                        
+                                        # Extract price value
+                                        price_match = re.search(r'₹\s*(\d+(?:,\d+)*)', price_text)
+                                        if price_match:
+                                            price_value = price_match.group(1).replace(',', '')
+                                            price_text = '₹' + price_value
+                                            product_info.append(f"MRP: {price_text}")
+                                            mrp_found = True
+                                            print(f"✅ Found Amazon MRP via basisPrice class: {price_text}")
+                                            break
+                                    except:
+                                        # Try direct text extraction from basisPrice element
+                                        elem_text = basis_elem.text.strip()
+                                        mrp_match = re.search(r'M\.R\.P\.?\s*:\s*₹\s*(\d+(?:,\d+)*)', elem_text, re.IGNORECASE)
+                                        if mrp_match:
+                                            price_value = mrp_match.group(1).replace(',', '')
+                                            price_text = '₹' + price_value
+                                            product_info.append(f"MRP: {price_text}")
+                                            mrp_found = True
+                                            print(f"✅ Found Amazon MRP via basisPrice text: {price_text}")
+                                            break
+                                
+                                if mrp_found:
+                                    pass  # Skip to next method if found
+                            except Exception as e:
+                                print(f"Error searching for basisPrice: {e}")
+                            
+                            # Method 1b: Look for aok-offscreen containing "M.R.P.: ₹595.00"
+                            if not mrp_found:
                                 try:
-                                    parent = elem.find_element(By.XPATH, "./ancestor::*[contains(@class, 'a-text-price')]")
-                                    if not mrp_found:
-                                        product_info.append(f"MRP: {price_text}")
-                                        mrp_found = True
-                                except:
-                                    if not selling_price_found:
-                                        product_info.append(f"Price: {price_text}")
-                                        selling_price_found = True
-                                if mrp_found and selling_price_found:
+                                    offscreen_elements = search_root.find_elements(By.CSS_SELECTOR, ".aok-offscreen")
+                                    for offscreen_elem in offscreen_elements:
+                                        if is_in_recommendation_section(offscreen_elem):
+                                            continue
+                                        
+                                        text = offscreen_elem.text.strip()
+                                        mrp_match = re.search(r'M\.R\.P\.?\s*:\s*₹\s*(\d+(?:,\d+)*(?:\.\d+)?)', text, re.IGNORECASE)
+                                        if mrp_match:
+                                            price_value = mrp_match.group(1).replace(',', '').split('.')[0]  # Remove decimal
+                                            price_text = '₹' + price_value
+                                            product_info.append(f"MRP: {price_text}")
+                                            mrp_found = True
+                                            print(f"✅ Found Amazon MRP via aok-offscreen: {price_text}")
+                                            break
+                                except Exception as e:
+                                    print(f"Error searching for aok-offscreen: {e}")
+                            
+                            # Method 1c: Look for any element containing "M.R.P.:" text
+                            if not mrp_found:
+                                mrp_text_elements = search_root.find_elements(By.XPATH, 
+                                    ".//span[contains(text(), 'M.R.P.')] | " +
+                                    ".//*[contains(text(), 'M.R.P.')]"
+                                )
+                                
+                                for mrp_text_elem in mrp_text_elements:
+                                    if is_in_recommendation_section(mrp_text_elem):
+                                        continue
+                                    
+                                    # Try to find parent with aok-relative class
+                                    try:
+                                        parent = mrp_text_elem.find_element(By.XPATH, "./ancestor::span[contains(@class, 'aok-relative')]")
+                                        
+                                        # Look for .a-price.a-text-price within parent
+                                        price_elem = parent.find_element(By.CSS_SELECTOR, ".a-price.a-text-price[data-a-strike='true'], .a-price.a-text-price")
+                                        
+                                        # Get price from .a-offscreen
+                                        try:
+                                            offscreen = price_elem.find_element(By.CSS_SELECTOR, ".a-offscreen")
+                                            price_text = offscreen.text.strip()
+                                        except:
+                                            price_text = price_elem.text.strip()
+                                        
+                                        price_match = re.search(r'₹\s*(\d+(?:,\d+)*)', price_text)
+                                        if price_match:
+                                            price_value = price_match.group(1).replace(',', '')
+                                            price_text = '₹' + price_value
+                                            product_info.append(f"MRP: {price_text}")
+                                            mrp_found = True
+                                            print(f"✅ Found Amazon MRP via M.R.P. text + parent: {price_text}")
+                                            break
+                                    except:
+                                        # Try direct extraction from element text
+                                        elem_text = mrp_text_elem.text.strip()
+                                        mrp_match = re.search(r'M\.R\.P\.?\s*:\s*₹\s*(\d+(?:,\d+)*)', elem_text, re.IGNORECASE)
+                                        if mrp_match:
+                                            price_value = mrp_match.group(1).replace(',', '')
+                                            price_text = '₹' + price_value
+                                            product_info.append(f"MRP: {price_text}")
+                                            mrp_found = True
+                                            print(f"✅ Found Amazon MRP via M.R.P. text pattern: {price_text}")
+                                            break
+                        except Exception as e:
+                            print(f"Error in M.R.P. text element search: {e}")
+                            pass
+                        
+                        # Look for MRP with strikethrough attribute - prioritize this
+                        if not mrp_found:
+                            mrp_selectors = [
+                                ".a-price.a-text-price[data-a-strike='true']",  # MRP with strikethrough attribute
+                                ".a-price.a-text-price",  # MRP (strikethrough)
+                                "span.a-price.a-text-price.a-size-medium",  # MRP
+                            ]
+                        
+                        for selector in mrp_selectors:
+                            try:
+                                elements = search_root.find_elements(By.CSS_SELECTOR, selector)
+                                for elem in elements:
+                                    # Skip if in recommendation section
+                                    if is_in_recommendation_section(elem):
+                                        continue
+                                    
+                                    text = elem.text.strip()
+                                    # Extract price value using regex
+                                    price_match = re.search(r'₹\s*(\d+(?:,\d+)*)', text)
+                                    if not price_match:
+                                        # Try to get from child elements
+                                        try:
+                                            offscreen = elem.find_element(By.CSS_SELECTOR, ".a-offscreen")
+                                            text = offscreen.text.strip()
+                                            price_match = re.search(r'₹\s*(\d+(?:,\d+)*)', text)
+                                        except:
+                                            pass
+                                    
+                                    if price_match:
+                                        price_value = price_match.group(1).replace(',', '')
+                                        price_text = '₹' + price_value
+                                        if not mrp_found:
+                                            product_info.append(f"MRP: {price_text}")
+                                            mrp_found = True
+                                            break
+                                if mrp_found:
                                     break
+                            except:
+                                continue
                     except:
                         pass
+                    
+                    # Method 2: If MRP not found, try broader search but still exclude recommendations
+                    if not mrp_found:
+                        price_selectors = [
+                            ".a-price.a-text-price",  # MRP (strikethrough)
+                            "span.a-price.a-text-price.a-size-medium",  # MRP
+                        ]
+                        
+                        for selector in price_selectors:
+                            try:
+                                elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                                for elem in elements:
+                                    # Skip if in recommendation section
+                                    if is_in_recommendation_section(elem):
+                                        continue
+                                    
+                                    text = elem.text.strip()
+                                    is_mrp = 'a-text-price' in (elem.get_attribute('class') or '')
+                                    if is_mrp and ('₹' in text or 'Rs.' in text or any(c.isdigit() for c in text)):
+                                        price_match = re.search(r'₹\s*(\d+(?:,\d+)*)', text)
+                                        if not price_match:
+                                            try:
+                                                offscreen = elem.find_element(By.CSS_SELECTOR, ".a-offscreen")
+                                                text = offscreen.text.strip()
+                                                price_match = re.search(r'₹\s*(\d+(?:,\d+)*)', text)
+                                            except:
+                                                pass
+                                        
+                                        if price_match:
+                                            price_value = price_match.group(1).replace(',', '')
+                                            price_text = '₹' + price_value
+                                            if not mrp_found:
+                                                product_info.append(f"MRP: {price_text}")
+                                                mrp_found = True
+                                                break
+                                if mrp_found:
+                                    break
+                            except:
+                                continue
+                    
+                    # Method 3: Extract selling price (non-strikethrough) - also exclude recommendations
+                    if not selling_price_found:
+                        price_selectors = [
+                            "span.a-price-whole",  # Selling price
+                            ".a-price[data-a-color='base']",  # Current price
+                            "[data-a-color='price']",
+                        ]
+                        
+                        for selector in price_selectors:
+                            try:
+                                elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                                for elem in elements:
+                                    # Skip if in recommendation section
+                                    if is_in_recommendation_section(elem):
+                                        continue
+                                    
+                                    text = elem.text.strip()
+                                    is_mrp = 'a-text-price' in (elem.get_attribute('class') or '')
+                                    if not is_mrp and ('₹' in text or 'Rs.' in text or any(c.isdigit() for c in text)):
+                                        price_text = text.replace(',', '').strip()
+                                        if not selling_price_found:
+                                            product_info.append(f"Price: {price_text}")
+                                            selling_price_found = True
+                                            break
+                                if selling_price_found:
+                                    break
+                            except:
+                                continue
+                    
+                    # Method 4: XPath fallback - exclude recommendations
+                    if not mrp_found or not selling_price_found:
+                        try:
+                            price_elements = driver.find_elements(By.XPATH, "//span[contains(@class, 'a-price')]")
+                            for elem in price_elements[:10]:  # Check more elements
+                                # Skip if in recommendation section
+                                if is_in_recommendation_section(elem):
+                                    continue
+                                
+                                text = elem.text.strip()
+                                if '₹' in text and len(text) < 50:
+                                    price_text = text.replace(',', '').strip()
+                                    # Check if MRP (strikethrough)
+                                    try:
+                                        parent = elem.find_element(By.XPATH, "./ancestor::*[contains(@class, 'a-text-price')]")
+                                        if not mrp_found:
+                                            product_info.append(f"MRP: {price_text}")
+                                            mrp_found = True
+                                    except:
+                                        if not selling_price_found:
+                                            product_info.append(f"Price: {price_text}")
+                                            selling_price_found = True
+                                    if mrp_found and selling_price_found:
+                                        break
+                        except:
+                            pass
+                    
+                    # Method 5: Search for elements containing "M.R.P." text explicitly
+                    # Amazon often displays MRP as "M.R.P. ₹1,500" in a span or div
+                    if not mrp_found:
+                        try:
+                            # Look for elements containing MRP text - use more flexible XPath
+                            mrp_text_selectors = [
+                                "//*[contains(text(), 'M.R.P.')]",  # Any element containing M.R.P.
+                                "//*[contains(text(), 'MRP')]",  # Any element containing MRP
+                                "//*[contains(text(), 'Maximum Retail Price')]",  # Full text
+                                "//span[contains(., 'M.R.P.')]",  # Span containing M.R.P.
+                                "//div[contains(., 'M.R.P.')]",  # Div containing M.R.P.
+                            ]
+                            
+                            for xpath_selector in mrp_text_selectors:
+                                try:
+                                    elements = driver.find_elements(By.XPATH, xpath_selector)
+                                    for elem in elements:
+                                        # Skip if in recommendation section
+                                        if is_in_recommendation_section(elem):
+                                            continue
+                                        
+                                        # Get full text of element and its children
+                                        text = elem.text.strip()
+                                        
+                                        # Look for price pattern near MRP text - improved regex
+                                        mrp_patterns = [
+                                            r'(?:M\.R\.P\.?|MRP)[:\s]*₹\s*(\d+(?:,\d+)*)',  # M.R.P. ₹1,500
+                                            r'(?:M\.R\.P\.?|MRP)[:\s]*(\d+(?:,\d+)*)',  # M.R.P. 1,500
+                                            r'Maximum\s+Retail\s+Price[:\s]*₹\s*(\d+(?:,\d+)*)',  # Maximum Retail Price: ₹1,500
+                                        ]
+                                        
+                                        for pattern in mrp_patterns:
+                                            mrp_match = re.search(pattern, text, re.IGNORECASE)
+                                            if mrp_match:
+                                                price_value = mrp_match.group(1).replace(',', '')
+                                                # Verify it's a reasonable price
+                                                if int(price_value) > 10:
+                                                    price_text = '₹' + price_value
+                                                    product_info.append(f"MRP: {price_text}")
+                                                    mrp_found = True
+                                                    print(f"Found Amazon MRP via element text: {price_text}")
+                                                    break
+                                        
+                                        if mrp_found:
+                                            break
+                                        
+                                        # Also check parent and sibling elements for price
+                                        try:
+                                            # Check parent element
+                                            parent = elem.find_element(By.XPATH, "./..")
+                                            parent_text = parent.text.strip()
+                                            
+                                            # Look for MRP pattern in parent
+                                            for pattern in mrp_patterns:
+                                                mrp_match = re.search(pattern, parent_text, re.IGNORECASE)
+                                                if mrp_match:
+                                                    price_value = mrp_match.group(1).replace(',', '')
+                                                    if int(price_value) > 10:
+                                                        price_text = '₹' + price_value
+                                                        product_info.append(f"MRP: {price_text}")
+                                                        mrp_found = True
+                                                        print(f"Found Amazon MRP via parent element: {price_text}")
+                                                        break
+                                            
+                                            if not mrp_found:
+                                                # Check for price near MRP text in parent (within 50 chars)
+                                                mrp_text_pos = parent_text.lower().find('m.r.p')
+                                                if mrp_text_pos >= 0:
+                                                    # Extract text around MRP
+                                                    start = max(0, mrp_text_pos - 10)
+                                                    end = min(len(parent_text), mrp_text_pos + 50)
+                                                    context = parent_text[start:end]
+                                                    price_match = re.search(r'₹\s*(\d+(?:,\d+)*)', context)
+                                                    if price_match:
+                                                        price_value = price_match.group(1).replace(',', '')
+                                                        if int(price_value) > 10:
+                                                            price_text = '₹' + price_value
+                                                            product_info.append(f"MRP: {price_text}")
+                                                            mrp_found = True
+                                                            print(f"Found Amazon MRP near M.R.P. text: {price_text}")
+                                                            break
+                                        except:
+                                            pass
+                                    
+                                    if mrp_found:
+                                        break
+                                except:
+                                    continue
+                        except Exception as e:
+                            print(f"Error in MRP text element search: {e}")
+                            pass
+                    
+                    # Method 6: Text-based extraction - look for explicit "M.R.P." patterns in page text
+                    # This is important because Amazon sometimes displays MRP as plain text "M.R.P. ₹1,500"
+                    if not mrp_found:
+                        try:
+                            # Get text from main product area first (more reliable)
+                            try:
+                                main_product_area = driver.find_element(By.CSS_SELECTOR, "#centerCol, #dp-container, [data-feature-name='buybox']")
+                                body_text = main_product_area.text
+                            except:
+                                # Fallback to full body text
+                                body_text = driver.find_element(By.TAG_NAME, "body").text
+                            
+                            # Look for explicit MRP patterns in text - improved patterns
+                            mrp_patterns = [
+                                r'(?:M\.R\.P\.?|MRP)[:\s]*₹\s*(\d+(?:,\d+)*)',  # M.R.P. ₹1,500 or MRP: ₹1,500
+                                r'(?:M\.R\.P\.?|MRP)\s*\([^)]*\)[:\s]*₹\s*(\d+(?:,\d+)*)',  # M.R.P. (Maximum Retail Price): ₹1,500
+                                r'Maximum\s+Retail\s+Price[:\s]*₹\s*(\d+(?:,\d+)*)',  # Maximum Retail Price: ₹1,500
+                                r'₹\s*(\d+(?:,\d+)*)\s*\(.*M\.?R\.?P.*\)',  # ₹1,500 (M.R.P.)
+                            ]
+                            
+                            for pattern in mrp_patterns:
+                                mrp_match = re.search(pattern, body_text, re.IGNORECASE)
+                                if mrp_match:
+                                    price_value = mrp_match.group(1).replace(',', '')
+                                    # Verify it's a reasonable price
+                                    if int(price_value) > 10:
+                                        price_text = '₹' + price_value
+                                        product_info.append(f"MRP: {price_text}")
+                                        mrp_found = True
+                                        print(f"Found Amazon MRP via text pattern: {price_text}")
+                                        break
+                            
+                            # If no explicit MRP pattern found, look for price pairs where higher is MRP
+                            # Pattern: ₹1,500 ₹649 (MRP then selling price) or vice versa
+                            if not mrp_found:
+                                # Look for price pairs in the same line or nearby lines
+                                lines = body_text.split('\n')
+                                for i, line in enumerate(lines):
+                                    # Check current line and next few lines for price pairs
+                                    context_lines = '\n'.join(lines[max(0, i-1):min(len(lines), i+3)])
+                                    
+                                    # Pattern: ₹1,500 ₹649 or ₹649 ₹1,500
+                                    price_pair_pattern = r'₹\s*(\d+(?:,\d+)*)\s+₹\s*(\d+(?:,\d+)*)'
+                                    price_pairs = re.findall(price_pair_pattern, context_lines)
+                                    
+                                    for price1_str, price2_str in price_pairs:
+                                        try:
+                                            price1 = int(price1_str.replace(',', ''))
+                                            price2 = int(price2_str.replace(',', ''))
+                                            
+                                            # Higher price is usually MRP (and should be significantly higher)
+                                            if price1 > price2 and price1 > 100:
+                                                price_text = '₹' + price1_str
+                                                product_info.append(f"MRP: {price_text}")
+                                                mrp_found = True
+                                                print(f"Found Amazon MRP as higher price in pair: {price_text}")
+                                                break
+                                            elif price2 > price1 and price2 > 100:
+                                                price_text = '₹' + price2_str
+                                                product_info.append(f"MRP: {price_text}")
+                                                mrp_found = True
+                                                print(f"Found Amazon MRP as higher price in pair: {price_text}")
+                                                break
+                                        except:
+                                            continue
+                                    
+                                    if mrp_found:
+                                        break
+                        except Exception as e:
+                            print(f"Error in text-based MRP extraction: {e}")
+                            pass
+                    
+                    # Method 7: Final fallback - if MRP still not found but we have selling price,
+                    # look for all prices in main product area and use the highest as MRP
+                    # This handles cases where MRP is displayed but not with explicit "M.R.P." label
+                    if not mrp_found and selling_price_found:
+                        try:
+                            # Get all price elements from main product area
+                            try:
+                                main_area = driver.find_element(By.CSS_SELECTOR, "#centerCol, #dp-container")
+                                search_area = main_area
+                            except:
+                                search_area = driver
+                            
+                            all_prices = []
+                            price_elements = search_area.find_elements(By.XPATH, "//span[contains(@class, 'a-price')] | //*[contains(text(), '₹')]")
+                            
+                            for elem in price_elements[:20]:  # Check first 20 price elements
+                                if is_in_recommendation_section(elem):
+                                    continue
+                                
+                                text = elem.text.strip()
+                                # Extract all prices from text
+                                price_matches = re.findall(r'₹\s*(\d+(?:,\d+)*)', text)
+                                for price_str in price_matches:
+                                    try:
+                                        price_value = int(price_str.replace(',', ''))
+                                        if price_value > 10:  # Reasonable minimum
+                                            all_prices.append(price_value)
+                                    except:
+                                        continue
+                            
+                            # If we found multiple prices, use the highest as MRP (if significantly higher than selling price)
+                            if len(all_prices) >= 2:
+                                all_prices = sorted(set(all_prices), reverse=True)  # Remove duplicates, sort descending
+                                
+                                # Get selling price value if we found it
+                                selling_price_value = None
+                                for info in product_info:
+                                    if info.startswith("Price: ₹"):
+                                        try:
+                                            selling_price_value = int(re.search(r'₹\s*(\d+(?:,\d+)*)', info).group(1).replace(',', ''))
+                                            break
+                                        except:
+                                            pass
+                                
+                                # Use highest price as MRP if it's significantly higher than selling price
+                                highest_price = all_prices[0]
+                                if selling_price_value:
+                                    if highest_price > selling_price_value * 1.1:  # At least 10% higher
+                                        price_text = '₹' + str(highest_price)
+                                        product_info.append(f"MRP: {price_text}")
+                                        mrp_found = True
+                                        print(f"Found Amazon MRP as highest price (fallback): {price_text}")
+                                elif highest_price > 100:  # If no selling price found, use highest reasonable price
+                                    price_text = '₹' + str(highest_price)
+                                    product_info.append(f"MRP: {price_text}")
+                                    mrp_found = True
+                                    print(f"Found Amazon MRP as highest price (fallback): {price_text}")
+                        except Exception as e:
+                            print(f"Error in final MRP fallback: {e}")
+                            pass
                     
                     # Get brand name
                     brand_selectors = [
@@ -379,7 +863,20 @@ class URLScraper:
                         pass
                     
                     if product_info:
-                        text_parts.append("Product Information:\n" + "\n".join(product_info))
+                        product_info_text = "Product Information:\n" + "\n".join(product_info)
+                        text_parts.append(product_info_text)
+                        # Debug: Log what prices were found
+                        mrp_in_info = any('MRP:' in p for p in product_info)
+                        price_in_info = any('Price:' in p for p in product_info)
+                        print(f"📋 Amazon product info extracted:")
+                        print(f"   MRP found: {mrp_in_info}")
+                        print(f"   Price found: {price_in_info}")
+                        if mrp_in_info:
+                            mrp_line = [p for p in product_info if 'MRP:' in p][0]
+                            print(f"   MRP line: {mrp_line}")
+                        if price_in_info:
+                            price_line = [p for p in product_info if 'Price:' in p][0]
+                            print(f"   Price line: {price_line}")
                     
                 except Exception as e:
                     print(f"Could not extract main product info from Amazon: {e}")
@@ -1652,6 +2149,40 @@ class URLScraper:
                 return await loop.run_in_executor(None, lambda: driver.find_element(By.TAG_NAME, "body").text[:5000])
             return ""
     
+    def _normalize_url(self, url: str) -> str:
+        """
+        Normalize URL to ensure it has a valid protocol (http:// or https://)
+        This prevents ChromeDriver 'invalid argument' errors
+        
+        Args:
+            url: URL string (may or may not have protocol)
+            
+        Returns:
+            Normalized URL with protocol
+        """
+        url = url.strip()
+        
+        # If URL already has protocol, return as-is
+        if url.startswith(('http://', 'https://')):
+            return url
+        
+        # If URL starts with //, add https:
+        if url.startswith('//'):
+            return f'https:{url}'
+        
+        # If URL doesn't have protocol, add https://
+        # This handles cases like "amazon.in/dp/..." or "www.amazon.in/dp/..."
+        if not url.startswith(('http://', 'https://', '//')):
+            # Check if it looks like a domain (contains .)
+            if '.' in url.split('/')[0] or url.startswith('www.'):
+                return f'https://{url}'
+            else:
+                # If it doesn't look like a domain, assume it's a relative path
+                # This shouldn't happen, but add https:// anyway
+                return f'https://{url}'
+        
+        return url
+    
     async def scrape_url(self, url: str) -> Dict[str, any]:
         """
         Scrape a product URL and extract text content using Selenium
@@ -1661,20 +2192,46 @@ class URLScraper:
         """
         driver = None
         try:
+            # Normalize URL to ensure it has a valid protocol
+            # This prevents ChromeDriver 'invalid argument' errors
+            normalized_url = self._normalize_url(url)
+            if normalized_url != url:
+                print(f"⚠️ URL normalized: '{url}' -> '{normalized_url}'")
+            
             # Initialize driver
             driver = await self._get_driver()
             
             loop = asyncio.get_event_loop()
             
             # Load URL in executor (Selenium is synchronous)
-            print(f"Loading URL with Selenium: {url}")
-            await loop.run_in_executor(None, driver.get, url)
+            print(f"Loading URL with Selenium: {normalized_url}")
+            try:
+                await loop.run_in_executor(None, driver.get, normalized_url)
+            except WebDriverException as e:
+                error_msg = str(e)
+                # Check for common ChromeDriver errors
+                if "invalid argument" in error_msg.lower():
+                    raise Exception(
+                        f"Invalid URL format detected. The URL '{url}' was normalized to '{normalized_url}', "
+                        f"but ChromeDriver still rejected it. This usually means the URL is malformed or missing required components. "
+                        f"Please ensure the URL is a complete, valid URL starting with http:// or https://. "
+                        f"Original error: {error_msg}"
+                    )
+                elif "net::" in error_msg.lower() or "ERR_" in error_msg:
+                    raise Exception(
+                        f"Network error while loading URL: {error_msg}. "
+                        f"This could indicate: 1) The URL is unreachable, 2) Network connectivity issues, "
+                        f"3) The website is blocking automated access, or 4) DNS resolution failed."
+                    )
+                else:
+                    raise
             
             # Wait for page to load
             await asyncio.sleep(3)  # Give JavaScript time to render
             
             # Detect platform and scrape accordingly
-            platform = self._detect_platform(url)
+            # Use normalized_url for platform detection to ensure consistency
+            platform = self._detect_platform(normalized_url)
             print(f"Detected platform: {platform}")
             
             if platform == "amazon":
@@ -1718,9 +2275,35 @@ class URLScraper:
             }
             
         except WebDriverException as e:
-            raise Exception(f"Selenium WebDriver error: {str(e)}. Make sure ChromeDriver is installed.")
+            error_msg = str(e)
+            # Provide more specific error messages for common ChromeDriver issues
+            if "invalid argument" in error_msg.lower():
+                raise Exception(
+                    f"ChromeDriver invalid argument error. This usually means: "
+                    f"1) The URL format is invalid (missing protocol or malformed), "
+                    f"2) ChromeDriver version mismatch with Chrome browser, "
+                    f"3) Invalid Chrome options were passed. "
+                    f"URL attempted: '{url}'. "
+                    f"Please ensure URLs start with http:// or https://. "
+                    f"Original error: {error_msg}"
+                )
+            elif "session not created" in error_msg.lower() or "chrome not reachable" in error_msg.lower():
+                raise Exception(
+                    f"ChromeDriver session creation failed: {error_msg}. "
+                    f"This usually means: 1) Chrome browser is not installed or not accessible, "
+                    f"2) ChromeDriver version doesn't match Chrome version, "
+                    f"3) Chrome is already running and blocking automation, "
+                    f"4) Insufficient permissions to run Chrome. "
+                    f"On Linux servers, ensure Chrome/Chromium is installed and accessible."
+                )
+            else:
+                raise Exception(f"Selenium WebDriver error: {error_msg}. Make sure ChromeDriver is installed and matches your Chrome version.")
         except Exception as e:
-            raise Exception(f"Failed to scrape URL: {str(e)}")
+            error_msg = str(e)
+            # Check if it's already a formatted error message
+            if "ChromeDriver" in error_msg or "invalid argument" in error_msg.lower():
+                raise
+            raise Exception(f"Failed to scrape URL: {error_msg}")
         finally:
             # Don't close driver here - keep it for reuse
             pass
@@ -2616,6 +3199,228 @@ Return only the JSON array with ALL ingredients:"""
             import traceback
             traceback.print_exc()
             return None
+    
+    async def validate_extracted_data_with_ai(
+        self,
+        ingredients: List[str],
+        extracted_text: str,
+        product_name: str,
+        product_image: Optional[str] = None,
+        url: Optional[str] = None,
+        mrp: Optional[float] = None,
+        selling_price: Optional[float] = None
+    ) -> Dict[str, any]:
+        """
+        Validate and enhance extracted data using AI to ensure quality and accuracy.
+        This method performs final validation on all extracted data before returning.
+        
+        Args:
+            ingredients: List of extracted ingredient names
+            extracted_text: Full scraped text from URL
+            product_name: Product name if available
+            product_image: Product image URL if available
+            url: Source URL for the product page
+            mrp: Extracted MRP value (if any)
+            selling_price: Extracted selling price value
+            
+        Returns:
+            Dict with validated/enhanced 'ingredients', 'extracted_text', 'product_name',
+            'product_image', 'mrp', 'selling_price', and optional 'validation_notes'
+        """
+        try:
+            claude = self._get_claude_client()
+            
+            # Prepare prompt for validation
+            ingredients_text = ", ".join(ingredients) if ingredients else "None found"
+            text_snippet = extracted_text[:5000] if len(extracted_text) > 5000 else extracted_text
+            
+            # Prepare price information for validation
+            price_info = ""
+            if mrp is not None or selling_price is not None:
+                price_info = "\n\nExtracted Price Information:\n"
+                if mrp is not None:
+                    price_info += f"- MRP: ₹{mrp}\n"
+                else:
+                    price_info += "- MRP: Not found\n"
+                if selling_price is not None:
+                    price_info += f"- Selling Price: ₹{selling_price}\n"
+                else:
+                    price_info += "- Selling Price: Not found\n"
+            
+            # Build system prompt with price validation requirements
+            price_validation_required = (mrp is not None or selling_price is not None)
+            
+            system_prompt = """You are an expert at validating cosmetic product data extraction.
+Your task is to review extracted data and ensure it's accurate and complete, including price validation.
+
+Return your response as a JSON object with these REQUIRED fields:
+- "ingredients": array of strings - Validated ingredient list (remove duplicates, fix typos, ensure proper INCI names)
+- "extracted_text": string - Original extracted text (keep as-is)
+- "product_name": string - Validated product name (clean up, remove extra text)
+- "product_image": string - Product image URL if provided
+- "mrp": number or null - REQUIRED: Validated MRP (Maximum Retail Price) in INR. If no MRP is found on the page, return null. If MRP is incorrectly extracted (e.g., unit price like ₹21.63/millilitre), return null.
+- "selling_price": number or null - REQUIRED: Validated selling price in INR. This is the actual price the customer pays. If not found, return null.
+- "validation_notes": string - Optional notes about what was validated/changed, especially price corrections
+
+CRITICAL: You MUST ALWAYS include both "mrp" and "selling_price" fields in your JSON response, even if they are null. Do not omit these fields.
+
+IMPORTANT FOR PRICE VALIDATION:
+- Carefully examine the extracted text to find the actual product prices
+- MRP (Maximum Retail Price) is usually shown with strikethrough or labeled as "MRP" or "M.R.P."
+- Selling price is the current price the customer pays (usually shown prominently)
+- If MRP is not displayed on the page, return null for mrp (don't guess)
+- If only selling price is shown (no MRP), return null for mrp and the correct selling_price
+- Reject unit prices (like ₹21.63/millilitre) - these are NOT the product MRP
+- Reject prices that are clearly wrong (too low, like ₹21 for a full product)
+- Prices should be reasonable for cosmetic products (typically ₹100-₹5000+)
+- If extracted prices seem incorrect, search the text carefully for the correct values
+
+IMPORTANT FOR OTHER FIELDS:
+- Only return valid INCI ingredient names (remove marketing terms, non-ingredient words)
+- Keep ingredients in order of concentration (highest to lowest) if possible
+- Product name should be clean and concise (remove platform suffixes like "| Amazon", "- Nykaa")
+- If data looks good, return it as-is without unnecessary changes"""
+
+            user_prompt = f"""Validate and clean this extracted product data:
+
+Source URL: {url or "Not provided"}
+
+Product Name: {product_name or "Unknown"}
+
+Ingredients Found: {ingredients_text}
+
+Extracted Text (for price validation - search carefully for MRP and selling price):
+{text_snippet}
+
+Product Image: {product_image or "Not provided"}
+{price_info}
+
+Please carefully validate the prices by searching the extracted text. Look for:
+1. MRP/M.R.P. labels with prices
+2. Strikethrough prices (usually MRP)
+3. Current selling price (usually the main displayed price)
+4. Any price-related text like "Price:", "₹", etc.
+
+Return validated data as JSON with correct prices."""
+
+            response = claude.messages.create(
+                model=os.getenv("CLAUDE_MODEL") or os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929",
+                max_tokens=2048,
+                temperature=0.1,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_prompt}]
+            )
+            
+            if not response.content or len(response.content) == 0:
+                # Return original data if AI validation fails
+                return {
+                    "ingredients": ingredients,
+                    "extracted_text": extracted_text,
+                    "product_name": product_name,
+                    "product_image": product_image,
+                    "mrp": mrp,
+                    "selling_price": selling_price,
+                    "validation_notes": "AI validation returned empty response"
+                }
+            
+            content = response.content[0].text.strip()
+            
+            # Try to parse JSON from response
+            try:
+                # Extract JSON from response (might have markdown code blocks)
+                if '```json' in content:
+                    json_start = content.find('```json') + 7
+                    json_end = content.find('```', json_start)
+                    content = content[json_start:json_end].strip()
+                elif '```' in content:
+                    json_start = content.find('```') + 3
+                    json_end = content.find('```', json_start)
+                    content = content[json_start:json_end].strip()
+                elif '{' in content and '}' in content:
+                    json_start = content.find('{')
+                    json_end = content.rfind('}') + 1
+                    content = content[json_start:json_end]
+                
+                result = json.loads(content)
+                
+                # Extract validated data
+                validated_ingredients = result.get("ingredients", ingredients)
+                if not isinstance(validated_ingredients, list):
+                    validated_ingredients = ingredients
+                
+                validated_text = result.get("extracted_text", extracted_text)
+                validated_name = result.get("product_name", product_name)
+                validated_image = result.get("product_image", product_image)
+                validation_notes = result.get("validation_notes", "")
+                
+                # Extract validated prices (AI may correct them)
+                # Check if keys exist in result to distinguish between "not provided" vs "explicitly null"
+                mrp_provided = "mrp" in result
+                selling_price_provided = "selling_price" in result
+                
+                if mrp_provided:
+                    validated_mrp = result.get("mrp")
+                    # Convert to float if it's a number, or keep None
+                    if validated_mrp is not None:
+                        try:
+                            validated_mrp = float(validated_mrp)
+                        except (ValueError, TypeError):
+                            validated_mrp = None
+                else:
+                    # AI didn't provide MRP validation, keep original
+                    validated_mrp = mrp
+                
+                if selling_price_provided:
+                    validated_selling_price = result.get("selling_price")
+                    # Convert to float if it's a number, or keep None
+                    if validated_selling_price is not None:
+                        try:
+                            validated_selling_price = float(validated_selling_price)
+                        except (ValueError, TypeError):
+                            validated_selling_price = None
+                else:
+                    # AI didn't provide selling price validation, keep original
+                    validated_selling_price = selling_price
+                
+                # Debug logging
+                if mrp_provided or selling_price_provided:
+                    print(f"💰 AI price validation: MRP provided={mrp_provided} (value={validated_mrp}), Selling price provided={selling_price_provided} (value={validated_selling_price})")
+                
+                return {
+                    "ingredients": validated_ingredients,
+                    "extracted_text": validated_text,
+                    "product_name": validated_name,
+                    "product_image": validated_image,
+                    "mrp": validated_mrp,
+                    "selling_price": validated_selling_price,
+                    "validation_notes": validation_notes
+                }
+                
+            except json.JSONDecodeError as e:
+                print(f"Failed to parse AI validation response as JSON: {e}")
+                # Return original data if parsing fails
+                return {
+                    "ingredients": ingredients,
+                    "extracted_text": extracted_text,
+                    "product_name": product_name,
+                    "product_image": product_image,
+                    "mrp": mrp,
+                    "selling_price": selling_price,
+                    "validation_notes": f"JSON parsing failed: {str(e)}"
+                }
+                
+        except Exception as e:
+            print(f"Error in AI validation: {e}")
+            # Return original data if validation fails
+            return {
+                "ingredients": ingredients,
+                "extracted_text": extracted_text,
+                "product_name": product_name,
+                "product_image": product_image,
+                "mrp": mrp,
+                "selling_price": selling_price,
+                "validation_notes": f"Validation error: {str(e)}"
+            }
     
     async def extract_ingredients_from_url(self, url: str) -> Dict[str, any]:
         """

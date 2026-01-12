@@ -26,6 +26,7 @@ async def normalize_url(url: str) -> str:
     """
     Normalize URL for consistent caching.
     Removes tracking parameters and sorts query parameters.
+    Ensures URL has a valid protocol (https://) if missing.
     
     Args:
         url: Original URL
@@ -34,7 +35,23 @@ async def normalize_url(url: str) -> str:
         Normalized URL suitable for caching
     """
     try:
+        # Ensure URL has a protocol before parsing
+        url = url.strip()
+        if not url.startswith(('http://', 'https://')):
+            if url.startswith('//'):
+                url = f'https:{url}'
+            else:
+                # Add https:// if URL looks like a domain
+                if '.' in url.split('/')[0] or url.startswith('www.'):
+                    url = f'https://{url}'
+                else:
+                    # If it doesn't look like a domain, add https:// anyway
+                    url = f'https://{url}'
+        
         parsed = urlparse(url)
+        
+        # Ensure scheme is set (default to https if missing)
+        scheme = parsed.scheme or 'https'
         
         # Remove common tracking parameters
         tracking_params = {
@@ -64,9 +81,9 @@ async def normalize_url(url: str) -> str:
         
         query_string = "&".join(sorted_params)
         
-        # Rebuild normalized URL
+        # Rebuild normalized URL with ensured scheme
         normalized = urlunparse((
-            parsed.scheme,
+            scheme,
             parsed.netloc,
             parsed.path,
             parsed.params,  # Usually empty
@@ -78,6 +95,9 @@ async def normalize_url(url: str) -> str:
         
     except Exception as e:
         print(f"Error normalizing URL {url}: {e}")
+        # If normalization fails, try to add protocol if missing
+        if not url.startswith(('http://', 'https://')):
+            return f'https://{url}'
         return url  # Return original if normalization fails
 
 
