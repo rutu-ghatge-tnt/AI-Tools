@@ -618,14 +618,24 @@ async def _add_exported_product_to_board(user_id: str, board_id: str, product_da
     except:
         return None
     
+    # Ensure price and size are valid (must be > 0 for AddProductManualRequest)
+    price = product_data.get("price", 0) or 0
+    size = product_data.get("size", 0) or 0
+    
+    # Use default values if price/size is 0 or missing (required by schema: gt=0)
+    if price <= 0:
+        price = 1.0  # Default to 1 unit (e.g., 1 rupee) for formulations without cost data
+    if size <= 0:
+        size = 1.0  # Default to 1 unit if size is missing
+    
     # Create manual product request
     manual_request = AddProductManualRequest(
         name=product_data["name"],
         brand=product_data.get("brand", "Unknown"),
         url=product_data.get("url"),
         platform=product_data.get("platform", "other"),
-        price=product_data.get("price", 0),
-        size=product_data.get("size", 0),
+        price=price,
+        size=size,
         unit=product_data.get("unit", "ml"),
         category=product_data.get("category"),
         notes=product_data.get("notes"),
