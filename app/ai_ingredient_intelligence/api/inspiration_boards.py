@@ -26,7 +26,7 @@ from app.ai_ingredient_intelligence.logic.url_fetcher import fetch_product_from_
 from app.ai_ingredient_intelligence.logic.competitor_analyzer import analyze_competitors
 from app.ai_ingredient_intelligence.logic.product_tags import get_all_tags, validate_tags, initialize_tags
 from app.ai_ingredient_intelligence.logic.feature_history_accessor import (
-    get_feature_history, extract_product_data_from_history, validate_history_ids, get_product_type_config
+    get_feature_history, extract_product_data_from_history, extract_products_from_history, validate_history_ids, get_product_type_config
 )
 from app.ai_ingredient_intelligence.logic.serper_product_search import fetch_platforms
 from app.ai_ingredient_intelligence.db.collections import inspiration_products_col
@@ -526,33 +526,53 @@ async def export_to_board_endpoint(
                         skipped_count += 1
                         continue
                     
-                    # Extract product data
-                    product_data = await extract_product_data_from_history(feature_type, history_data)
+                    # For product_comparison, extract multiple products; for others, extract single product
+                    if feature_type == "product_comparison":
+                        products_list = await extract_products_from_history(feature_type, history_data)
+                    else:
+                        product_data = await extract_product_data_from_history(feature_type, history_data)
+                        products_list = [product_data] if product_data else []
                     
-                    # Check for duplicates within this board
-                    if await _is_duplicate_in_board(request.board_id, product_data):
-                        duplicates_count += 1
+                    if not products_list:
+                        errors.append(f"{feature_type}: No products found in history ID {history_id}")
+                        skipped_count += 1
                         continue
                     
-                    # Add history link
+                    # Get product config for history link
                     product_config = get_product_type_config(feature_type)
-                    product_data["history_link"] = {
-                        "feature_type": feature_type,
-                        "history_id": history_id,
-                        "source_description": f"{product_config['label']} from {history_data.get('created_at', 'unknown date')}"
-                    }
                     
-                    # Add product to board
-                    added_product = await _add_exported_product_to_board(user_id, request.board_id, product_data)
-                    if added_product:
-                        exported_products.append(added_product)
-                        # Trigger background task to fetch platforms
-                        product_id = added_product.get("product_id")
-                        if product_id:
-                            background_tasks.add_task(fetch_platforms_for_product_background, product_id, user_id)
-                    else:
-                        errors.append(f"Failed to add product from {feature_type} history ID {history_id}")
-                        skipped_count += 1
+                    # Process each product
+                    for product_data in products_list:
+                        try:
+                            # Check for duplicates within this board
+                            if await _is_duplicate_in_board(request.board_id, product_data):
+                                duplicates_count += 1
+                                continue
+                            
+                            # Add history link
+                            product_data["history_link"] = {
+                                "feature_type": feature_type,
+                                "history_id": history_id,
+                                "source_description": f"{product_config['label']} from {history_data.get('created_at', 'unknown date')}",
+                                "board_id": request.board_id
+                            }
+                            
+                            # Add product to board
+                            added_product = await _add_exported_product_to_board(user_id, request.board_id, product_data)
+                            if added_product:
+                                exported_products.append(added_product)
+                                # Trigger background task to fetch platforms
+                                product_id = added_product.get("product_id")
+                                if product_id:
+                                    background_tasks.add_task(fetch_platforms_for_product_background, product_id, user_id)
+                            else:
+                                errors.append(f"Failed to add product '{product_data.get('name', 'Unknown')}' from {feature_type} history ID {history_id}")
+                                skipped_count += 1
+                                
+                        except Exception as e:
+                            product_name = product_data.get("name", "Unknown")
+                            errors.append(f"Error processing product '{product_name}' from {feature_type} history ID {history_id}: {str(e)}")
+                            skipped_count += 1
                         
                 except Exception as e:
                     errors.append(f"Error processing {feature_type} history ID {history_id}: {str(e)}")
@@ -635,6 +655,7 @@ async def _add_exported_product_to_board(user_id: str, board_id: str, product_da
         url=product_data.get("url"),
         platform=product_data.get("platform", "other"),
         price=price,
+        mrp=product_data.get("mrp"),  # Include MRP if available
         size=size,
         unit=product_data.get("unit", "ml"),
         category=product_data.get("category"),

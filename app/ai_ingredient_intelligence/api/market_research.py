@@ -407,6 +407,12 @@ async def get_market_research_history_detail(
             
             # Build analysis object
             processing_time = research_result.get("processing_time", 0)
+            
+            # Initialize selected_keywords if null (for backward compatibility with old records)
+            selected_keywords = item_meta.get("selected_keywords")
+            if selected_keywords is None:
+                selected_keywords = ProductKeywords().model_dump_exclude_empty()
+            
             analysis_data = {
                 "processing_time": processing_time,
                 "category": {
@@ -416,7 +422,7 @@ async def get_market_research_history_detail(
                 },
                 "ai_interpretation": ai_interpretation,
                 "structured_analysis": item_meta.get("structured_analysis"),
-                "selected_keywords": item_meta.get("selected_keywords"),
+                "selected_keywords": selected_keywords,
                 "available_keywords": item_meta.get("available_keywords")
             }
             
@@ -499,6 +505,12 @@ async def get_market_research_history_detail(
         
         # Build analysis object
         processing_time = research_result.get("processing_time", 0)
+        
+        # Initialize selected_keywords if null (for backward compatibility with old records)
+        selected_keywords = item_meta.get("selected_keywords")
+        if selected_keywords is None:
+            selected_keywords = ProductKeywords().model_dump_exclude_empty()
+        
         analysis_data = {
             "processing_time": processing_time,
             "category": {
@@ -508,7 +520,7 @@ async def get_market_research_history_detail(
             },
             "ai_interpretation": ai_interpretation,
             "structured_analysis": item_meta.get("structured_analysis"),
-            "selected_keywords": item_meta.get("selected_keywords"),
+            "selected_keywords": selected_keywords,
             "available_keywords": item_meta.get("available_keywords")
         }
         
@@ -2780,14 +2792,20 @@ async def market_research(
                 if available_keywords_dict:
                     update_doc["available_keywords"] = available_keywords_dict
                 
-                # Save selected_keywords if provided in payload
+                # Initialize selected_keywords - use provided value or create empty ProductKeywords object
                 selected_keywords_payload = payload.get("selected_keywords")
                 if selected_keywords_payload:
                     try:
                         selected_keywords_obj = ProductKeywords(**selected_keywords_payload)
                         update_doc["selected_keywords"] = selected_keywords_obj.model_dump_exclude_empty()
                     except Exception as e:
-                        print(f"[AUTO-SAVE] Warning: Could not parse selected_keywords: {e}")
+                        print(f"[AUTO-SAVE] Warning: Could not parse selected_keywords: {e}, initializing empty")
+                        # Initialize empty ProductKeywords if parsing fails
+                        update_doc["selected_keywords"] = ProductKeywords().model_dump_exclude_empty()
+                elif not history_id:
+                    # Initialize empty ProductKeywords only when creating new history (not updating existing)
+                    # This ensures new history items always have selected_keywords initialized
+                    update_doc["selected_keywords"] = ProductKeywords().model_dump_exclude_empty()
                 
                 if history_id:
                     # Update existing history

@@ -886,8 +886,9 @@ class URLScraper:
                 product_info = []
                 
                 # FIRST: Extract main product information (name, price, MRP, brand)
+                product_name_elem = None
                 try:
-                    # Get product name - use multiple selectors
+                    # Get product name element (we'll use this to limit price search area)
                     product_name_selectors = [
                         "span.B_NuCI",
                         "h1 span",
@@ -904,9 +905,44 @@ class URLScraper:
                             text = element.text.strip()
                             if text and len(text) > 5 and len(text) < 300:
                                 product_info.append(f"Product Name: {text}")
+                                product_name_elem = element  # Store element for distance calculation
                                 break
                         except:
                             continue
+                    
+                    # Helper function to check if element is in recommendation section
+                    def is_in_recommendation_section_price(price_elem):
+                        """Check if price element is in a recommendation/related products section"""
+                        try:
+                            # Check ancestors for recommendation section indicators
+                            current = price_elem
+                            for _ in range(6):  # Check up to 6 levels up
+                                try:
+                                    current = current.find_element(By.XPATH, "./..")
+                                    class_attr = current.get_attribute('class') or ''
+                                    id_attr = current.get_attribute('id') or ''
+                                    data_testid = current.get_attribute('data-testid') or ''
+                                    
+                                    # Flipkart-specific recommendation section keywords
+                                    recommendation_keywords = [
+                                        'frequently', 'bought', 'together',  # "Frequently bought together"
+                                        'also-viewed', 'alsoviewed',
+                                        'recommended', 'recommendation',
+                                        'similar', 'related', 'related-products',
+                                        'cross-sell', 'crosssell',
+                                        'you-may-like', 'youmaylike',
+                                        'sponsored', 'advertisement', 'ad',
+                                        'carousel', 'slider', 'suggestions'
+                                    ]
+                                    
+                                    combined_text = (class_attr + ' ' + id_attr + ' ' + data_testid).lower()
+                                    if any(keyword in combined_text for keyword in recommendation_keywords):
+                                        return True
+                                except:
+                                    break
+                            return False
+                        except:
+                            return False
                     
                     # Get price information - IMPORTANT: Extract MRP separately from selling price
                     # Flipkart shows MRP (strikethrough) and selling price separately
@@ -924,6 +960,10 @@ class URLScraper:
                             
                             for elem in price_elements:
                                 try:
+                                    # CRITICAL: Skip if in recommendation section (Frequently bought together, etc.)
+                                    if is_in_recommendation_section_price(elem):
+                                        continue
+                                    
                                     text = elem.text.strip()
                                     if not text or '₹' not in text or len(text) > 50:
                                         continue
@@ -939,6 +979,23 @@ class URLScraper:
                                     
                                     price_value = price_match.group(1).replace(',', '')
                                     price_text = '₹' + price_value
+                                    
+                                    # Calculate distance from product name (closer = more likely to be main product price)
+                                    distance_score = 0
+                                    if product_name_elem:
+                                        try:
+                                            name_location = product_name_elem.location
+                                            elem_location = elem.location
+                                            # Calculate distance (both X and Y)
+                                            distance_x = abs(elem_location['x'] - name_location['x'])
+                                            distance_y = abs(elem_location['y'] - name_location['y'])
+                                            # Prefer prices that are close horizontally and slightly below product name
+                                            distance = distance_x + max(0, distance_y - 200)  # Allow prices up to 200px below
+                                            distance_score = max(0, 10000 - distance)
+                                        except:
+                                            distance_score = 5000
+                                    else:
+                                        distance_score = 5000
                                     
                                     # Use JavaScript to check computed style for strikethrough
                                     try:
@@ -982,36 +1039,36 @@ class URLScraper:
                                                 pass
                                         
                                         if is_strikethrough:
-                                            mrp_candidates.append((price_text, price_value))
+                                            mrp_candidates.append((price_text, int(price_value), distance_score))
                                         else:
-                                            price_candidates.append((price_text, price_value))
+                                            price_candidates.append((price_text, int(price_value), distance_score))
                                     except:
                                         # Fallback: check class attributes only
                                         class_attr = elem.get_attribute('class') or ''
                                         if 'strike' in class_attr.lower() or '_2p6lqe' in class_attr or '_3I9_wc' in class_attr:
-                                            mrp_candidates.append((price_text, price_value))
+                                            mrp_candidates.append((price_text, int(price_value), distance_score))
                                         else:
-                                            price_candidates.append((price_text, price_value))
+                                            price_candidates.append((price_text, int(price_value), distance_score))
                                 except:
                                     continue
                             
-                            # Prioritize MRP: Use the highest price from strikethrough candidates (usually MRP is higher)
+                            # Prioritize MRP: Sort by distance (closest to product name first), then by price (highest)
                             if mrp_candidates:
-                                # Sort by price value (descending) and take the highest
-                                mrp_candidates.sort(key=lambda x: int(x[1]), reverse=True)
-                                mrp_text, _ = mrp_candidates[0]
+                                # Sort by distance_score (descending - closest first), then by price (descending - highest first)
+                                mrp_candidates.sort(key=lambda x: (x[2], x[1]), reverse=True)
+                                mrp_text, _, _ = mrp_candidates[0]
                                 product_info.append(f"MRP: {mrp_text}")
                                 mrp_found = True
-                                print(f"Found Flipkart MRP: {mrp_text}")
+                                print(f"Found Flipkart MRP: {mrp_text} (from {len(mrp_candidates)} candidates)")
                             
-                            # Use selling price from non-strikethrough candidates
+                            # Use selling price: Sort by distance (closest first), then by price (lowest)
                             if price_candidates:
-                                # Sort by price value (ascending) and take the lowest (selling price is usually lower)
-                                price_candidates.sort(key=lambda x: int(x[1]))
-                                price_text, _ = price_candidates[0]
+                                # Sort by distance_score (descending - closest first), then by price (ascending - lowest first)
+                                price_candidates.sort(key=lambda x: (x[2], -x[1]), reverse=True)
+                                price_text, _, _ = price_candidates[0]
                                 product_info.append(f"Price: {price_text}")
                                 selling_price_found = True
-                                print(f"Found Flipkart Selling Price: {price_text}")
+                                print(f"Found Flipkart Selling Price: {price_text} (from {len(price_candidates)} candidates)")
                                 
                         except Exception as e:
                             print(f"Error in price extraction method 1: {e}")
@@ -1035,6 +1092,10 @@ class URLScraper:
                                     try:
                                         elements = driver.find_elements(By.CSS_SELECTOR, selector)
                                         for elem in elements:
+                                            # CRITICAL: Skip if in recommendation section
+                                            if is_in_recommendation_section_price(elem):
+                                                continue
+                                            
                                             text = elem.text.strip()
                                             if '₹' in text and len(text) < 50:
                                                 price_match = re.search(r'₹\s*(\d+(?:,\d+)*)', text)
@@ -1043,14 +1104,34 @@ class URLScraper:
                                                     price_text = '₹' + price_value
                                                     # Skip if it's clearly not MRP (too low or contains discount text)
                                                     if not any(word in text.lower() for word in ['off', '%', 'discount', 'save']):
-                                                        mrp_candidates.append((price_text, int(price_value)))
+                                                        # Calculate distance from product name (closer = more likely to be main product price)
+                                                        distance_score = 0
+                                                        if product_name_elem:
+                                                            try:
+                                                                name_location = product_name_elem.location
+                                                                elem_location = elem.location
+                                                                # Calculate distance (both X and Y)
+                                                                distance_x = abs(elem_location['x'] - name_location['x'])
+                                                                distance_y = abs(elem_location['y'] - name_location['y'])
+                                                                # Prefer prices that are close horizontally and slightly below product name
+                                                                distance = distance_x + max(0, distance_y - 200)  # Allow prices up to 200px below
+                                                                distance_score = max(0, 10000 - distance)
+                                                                
+                                                                # Filter out prices that are too far away (likely from other products)
+                                                                if distance > 1000:  # More than 1000px away
+                                                                    continue
+                                                            except:
+                                                                distance_score = 5000
+                                                        else:
+                                                            distance_score = 5000
+                                                        mrp_candidates.append((price_text, int(price_value), distance_score))
                                     except:
                                         continue
                                 
-                                # If we found MRP candidates, use the highest one (MRP is usually higher)
+                                # Sort by distance (closest first), then by price (highest first)
                                 if mrp_candidates:
-                                    mrp_candidates.sort(key=lambda x: x[1], reverse=True)
-                                    mrp_text, _ = mrp_candidates[0]
+                                    mrp_candidates.sort(key=lambda x: (x[2], x[1]), reverse=True)
+                                    mrp_text, _, _ = mrp_candidates[0]
                                     product_info.append(f"MRP: {mrp_text}")
                                     mrp_found = True
                                     print(f"Found Flipkart MRP via CSS selectors: {mrp_text}")
@@ -1069,6 +1150,10 @@ class URLScraper:
                                     try:
                                         elements = driver.find_elements(By.CSS_SELECTOR, selector)
                                         for elem in elements:
+                                            # CRITICAL: Skip if in recommendation section
+                                            if is_in_recommendation_section_price(elem):
+                                                continue
+                                            
                                             # Skip if this is the MRP element
                                             class_attr = elem.get_attribute('class') or ''
                                             if 'strike' in class_attr.lower() or '_3I9_wc' in class_attr or '_2p6lqe' in class_attr:
@@ -1082,14 +1167,32 @@ class URLScraper:
                                                     price_text = '₹' + price_value
                                                     # Skip if it contains discount text
                                                     if not any(word in text.lower() for word in ['off', '%', 'discount', 'save']):
-                                                        price_candidates.append((price_text, int(price_value)))
+                                                        # Calculate distance from product name
+                                                        distance_score = 0
+                                                        if product_name_elem:
+                                                            try:
+                                                                name_location = product_name_elem.location
+                                                                elem_location = elem.location
+                                                                distance_x = abs(elem_location['x'] - name_location['x'])
+                                                                distance_y = abs(elem_location['y'] - name_location['y'])
+                                                                distance = distance_x + max(0, distance_y - 200)
+                                                                distance_score = max(0, 10000 - distance)
+                                                                
+                                                                # Filter out prices that are too far away
+                                                                if distance > 1000:
+                                                                    continue
+                                                            except:
+                                                                distance_score = 5000
+                                                        else:
+                                                            distance_score = 5000
+                                                        price_candidates.append((price_text, int(price_value), distance_score))
                                     except:
                                         continue
                                 
-                                # Use the lowest price from candidates (selling price is usually lower than MRP)
+                                # Use the closest price (by distance), then lowest price
                                 if price_candidates:
-                                    price_candidates.sort(key=lambda x: x[1])
-                                    price_text, _ = price_candidates[0]
+                                    price_candidates.sort(key=lambda x: (x[2], -x[1]), reverse=True)
+                                    price_text, _, _ = price_candidates[0]
                                     product_info.append(f"Price: {price_text}")
                                     selling_price_found = True
                                     print(f"Found Flipkart Selling Price via CSS selectors: {price_text}")
@@ -2095,14 +2198,14 @@ class URLScraper:
                                         src = element.get_attribute('src') or element.get_attribute('data-src') or ''
                                         srcset = element.get_attribute('srcset') or ''
                                         
-                                        if src and src.startswith(('http://', 'https://', '//')):
-                                            candidates.append(src)
-                                        if srcset:
-                                            # Parse srcset (format: "url1 size1, url2 size2")
-                                            for item in srcset.split(','):
-                                                url_part = item.strip().split(' ')[0]
-                                                if url_part and url_part.startswith(('http://', 'https://', '//')):
-                                                    candidates.append(url_part)
+                                    if src and src.startswith(('http://', 'https://', '//')):
+                                        candidates.append(src)
+                                    if srcset:
+                                        # Parse srcset (format: "url1 size1, url2 size2")
+                                        for item in srcset.split(','):
+                                            url_part = item.strip().split(' ')[0]
+                                            if url_part and url_part.startswith(('http://', 'https://', '//')):
+                                                candidates.append(url_part)
                                     
                                     for candidate_url in candidates:
                                         if candidate_url:

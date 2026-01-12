@@ -6,15 +6,17 @@ Unified module to access history data from different features.
 Provides a single interface to fetch data from any feature's history collection.
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from bson import ObjectId
 from datetime import datetime
+import re
 
 # Import all feature collections
 from app.ai_ingredient_intelligence.db.collections import (
     market_research_history_col,
     wish_history_col,
-    inci_col
+    decode_history_col,
+    compare_history_col
 )
 
 
@@ -68,11 +70,9 @@ async def get_feature_history(feature_type: str, history_id: str) -> Optional[Di
     elif feature_type == "make_wish":
         return await wish_history_col.find_one({"_id": obj_id})
     elif feature_type == "formulation_decode":
-        return await inci_col.find_one({"_id": obj_id})
+        return await decode_history_col.find_one({"_id": obj_id})
     elif feature_type == "product_comparison":
-        # TODO: Implement when product comparison history collection is available
-        # For now, return None or implement based on your comparison storage
-        return None
+        return await compare_history_col.find_one({"_id": obj_id})
     else:
         return None
 
@@ -100,25 +100,132 @@ async def extract_product_data_from_history(feature_type: str, history_data: Dic
         return {}
 
 
+async def extract_products_from_history(feature_type: str, history_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Extract multiple products from feature history (useful for product_comparison)
+    
+    Args:
+        feature_type: Type of feature
+        history_data: Raw history data from feature collection
+        
+    Returns:
+        List of standardized product data for inspiration board
+    """
+    if feature_type == "product_comparison":
+        return _extract_product_comparison_products(history_data)
+    else:
+        # For other features, return single product as list
+        product_data = await extract_product_data_from_history(feature_type, history_data)
+        return [product_data] if product_data else []
+
+
 def _extract_market_research_product(history_data: Dict[str, Any]) -> Dict[str, Any]:
     """Extract product data from market research history"""
-    # Market research history typically contains:
-    # - url, inci, mrp, benefits, and other scraped data
-    # - AI analysis results
+    # Market research history structure:
+    # - Top level: name (user-provided), input_url, input_data, research_result
+    # - research_result.products[]: Array of matched products with full details
+    
+    # Try to get product from research_result.products array (first product)
+    research_result = history_data.get("research_result", {}) or {}
+    products = research_result.get("products", [])
+    
+    # Use first product if available, otherwise fallback to top-level fields
+    product = products[0] if products else {}
+    
+    # Extract product name
+    name = (
+        product.get("productName") or 
+        product.get("name") or 
+        history_data.get("name") or  # User-provided name
+        "Unknown Product"
+    )
+    
+    # Extract brand
+    brand = (
+        product.get("brand") or 
+        history_data.get("brand") or 
+        "Unknown Brand"
+    )
+    
+    # Extract URL
+    url = (
+        product.get("url") or 
+        product.get("productUrl") or 
+        history_data.get("input_url") or 
+        history_data.get("url")
+    )
+    
+    # Extract price and MRP
+    price = product.get("price") or history_data.get("price") or 0
+    mrp = product.get("mrp") or history_data.get("mrp")
+    
+    # Convert to float if string
+    if isinstance(price, str):
+        price = _parse_price_string(price)
+    if isinstance(mrp, str):
+        mrp = _parse_price_string(mrp)
+    
+    # If price is 0 but MRP exists, use MRP as price
+    if price == 0 and mrp:
+        price = mrp
+    
+    # Extract size and unit
+    size = product.get("size") or history_data.get("size") or 0
+    unit = product.get("unit") or history_data.get("unit") or "ml"
+    
+    # If size is 0, try to extract from product name or description
+    if size == 0:
+        size_text = product.get("productName") or product.get("description") or ""
+        extracted_size, extracted_unit = _extract_size_from_text(size_text)
+        if extracted_size > 0:
+            size = extracted_size
+            unit = extracted_unit
+    
+    # Extract category
+    category = (
+        product.get("category") or 
+        history_data.get("category") or 
+        history_data.get("primary_category")
+    )
+    
+    # Extract image
+    image = (
+        product.get("productImage") or 
+        product.get("product_image") or 
+        product.get("image") or 
+        history_data.get("product_image") or 
+        "🧴"
+    )
+    
+    # Extract ingredients
+    ingredients = (
+        product.get("inci") or 
+        product.get("ingredients") or 
+        []
+    )
+    if isinstance(ingredients, str):
+        ingredients = [ing.strip() for ing in ingredients.split(",") if ing.strip()]
+    
+    # Build notes with ingredients if available
+    notes = f"Market research analysis from {history_data.get('created_at', 'unknown date')}"
+    if ingredients:
+        notes += f"\n\nIngredients: {', '.join(ingredients[:10])}"  # First 10 ingredients
     
     product_data = {
-        "name": history_data.get("product_name", "Unknown Product"),
-        "brand": history_data.get("brand", "Unknown Brand"),
-        "url": history_data.get("url"),
-        "platform": _detect_platform(history_data.get("url", "")),
-        "price": history_data.get("mrp", 0),
-        "size": history_data.get("size", 0),
-        "unit": history_data.get("unit", "ml"),
-        "category": history_data.get("category"),
-        "image": history_data.get("product_image", "🧴"),
-        "notes": f"Market research analysis from {history_data.get('created_at', 'unknown date')}",
+        "name": name,
+        "brand": brand,
+        "url": url,
+        "platform": _detect_platform(url or ""),
+        "price": float(price) if price else 0,
+        "mrp": float(mrp) if mrp else None,
+        "size": float(size) if size else 0,
+        "unit": unit,
+        "category": category,
+        "image": image,
+        "notes": notes,
         "tags": ["market_research"],
-        "product_type": PRODUCT_TYPE_CONFIG["market_research"]["type_name"]
+        "product_type": PRODUCT_TYPE_CONFIG["market_research"]["type_name"],
+        "ingredients": ingredients  # Store ingredients for reference
     }
     
     return product_data
@@ -134,20 +241,44 @@ def _extract_make_wish_product(history_data: Dict[str, Any]) -> Dict[str, Any]:
     
     wish_data = history_data.get("wish_data", {})
     formula_data = history_data.get("formula_data", {})
+    optimized_formula = formula_data.get("optimized_formula", {})
+    
+    # Extract product name
+    name = wish_data.get("product_name") or wish_data.get("productName") or "My Formulation"
+    
+    # Extract ingredients from formula
+    ingredients = []
+    if optimized_formula:
+        # Extract ingredient names from formula structure
+        formula_items = optimized_formula.get("ingredients", []) or optimized_formula.get("formula", [])
+        if isinstance(formula_items, list):
+            for item in formula_items:
+                if isinstance(item, dict):
+                    ing_name = item.get("name") or item.get("ingredient") or item.get("inci")
+                    if ing_name:
+                        ingredients.append(ing_name)
+                elif isinstance(item, str):
+                    ingredients.append(item)
+    
+    # Build notes with ingredients if available
+    notes = f"Generated from wish: {wish_data.get('wish_text', 'Unknown wish')}"
+    if ingredients:
+        notes += f"\n\nIngredients: {', '.join(ingredients[:15])}"  # First 15 ingredients
     
     product_data = {
-        "name": wish_data.get("product_name", "My Formulation"),
+        "name": name,
         "brand": "Custom Formulation",
         "url": None,  # No real URL for formulations
         "platform": "formulation",
-        "price": formula_data.get("estimated_cost_per_100g", 0),
+        "price": formula_data.get("estimated_cost_per_100g", 0) or 0,
         "size": 100,  # Standard 100g
         "unit": "g",
-        "category": wish_data.get("product_category", "Custom"),
+        "category": wish_data.get("product_category") or wish_data.get("productType") or "Custom",
         "image": PRODUCT_TYPE_CONFIG["make_wish"]["emoji"],  # Use emoji instead of real image
-        "notes": f"Generated from wish: {wish_data.get('wish_text', 'Unknown wish')}",
+        "notes": notes,
         "tags": ["formulation", "custom"],
-        "product_type": PRODUCT_TYPE_CONFIG["make_wish"]["type_name"]
+        "product_type": PRODUCT_TYPE_CONFIG["make_wish"]["type_name"],
+        "ingredients": ingredients
     }
     
     return product_data
@@ -155,35 +286,184 @@ def _extract_make_wish_product(history_data: Dict[str, Any]) -> Dict[str, Any]:
 
 def _extract_formulation_decode_product(history_data: Dict[str, Any]) -> Dict[str, Any]:
     """Extract product data from formulation decode history"""
-    # Formulation decode history contains:
-    # - scraped product data
-    # - ingredient analysis
-    # - decoded formulation
+    # Formulation decode history structure:
+    # - name: User-provided name
+    # - input_type: "url" or "inci"
+    # - input_data: URL or INCI list
+    # - analysis_result: Analysis results (may contain product info)
+    
+    # Get name from history (user-provided name)
+    name = history_data.get("name", "Decoded Product")
+    
+    # Extract URL if input_type is "url"
+    url = None
+    input_type = history_data.get("input_type", "")
+    input_data = history_data.get("input_data", "")
+    
+    if input_type == "url" and input_data:
+        # input_data contains the URL
+        url = input_data if isinstance(input_data, str) and input_data.startswith(("http://", "https://")) else None
+    
+    # Try to get product info from analysis_result if available (some older data might have it)
+    analysis_result = history_data.get("analysis_result", {}) or {}
+    
+    # Extract price and MRP
+    price = history_data.get("price") or analysis_result.get("price") or 0
+    mrp = history_data.get("mrp") or analysis_result.get("mrp")
+    
+    # Convert to float if string
+    if isinstance(price, str):
+        price = _parse_price_string(price)
+    if isinstance(mrp, str):
+        mrp = _parse_price_string(mrp)
+    
+    # Extract size and unit
+    size = history_data.get("size") or analysis_result.get("size") or 0
+    unit = history_data.get("unit") or analysis_result.get("unit") or "ml"
+    
+    # Extract ingredients from input_data or analysis_result
+    ingredients = []
+    if input_type == "inci" and input_data:
+        if isinstance(input_data, str):
+            ingredients = [ing.strip() for ing in input_data.split(",") if ing.strip()]
+        elif isinstance(input_data, list):
+            ingredients = [str(ing).strip() for ing in input_data if ing]
+    
+    # Also check analysis_result for ingredients
+    if not ingredients and analysis_result:
+        decoded_data = analysis_result.get("decoded_data", {})
+        if decoded_data:
+            ingredient_list = decoded_data.get("ingredients", [])
+            if ingredient_list:
+                ingredients = [item.get("name") or item.get("inci") or str(item) for item in ingredient_list if item]
+    
+    # Build notes with ingredients if available
+    notes = f"Formulation decoded on {history_data.get('created_at', 'unknown date')}"
+    if ingredients:
+        notes += f"\n\nIngredients: {', '.join(ingredients[:15])}"  # First 15 ingredients
     
     product_data = {
-        "name": history_data.get("product_name", "Decoded Product"),
-        "brand": history_data.get("brand", "Unknown Brand"),
-        "url": history_data.get("url"),
-        "platform": _detect_platform(history_data.get("url", "")),
-        "price": history_data.get("price", 0),
-        "size": history_data.get("size", 0),
-        "unit": history_data.get("unit", "ml"),
-        "category": history_data.get("category"),
-        "image": history_data.get("product_image", "🧴"),
-        "notes": f"Formulation decoded on {history_data.get('created_at', 'unknown date')}",
+        "name": name,
+        "brand": history_data.get("brand") or analysis_result.get("brand") or "Unknown Brand",
+        "url": url,
+        "platform": _detect_platform(url or ""),
+        "price": float(price) if price else 0,
+        "mrp": float(mrp) if mrp else None,
+        "size": float(size) if size else 0,
+        "unit": unit,
+        "category": history_data.get("category") or analysis_result.get("category"),
+        "image": history_data.get("product_image") or analysis_result.get("product_image") or PRODUCT_TYPE_CONFIG["formulation_decode"]["emoji"],
+        "notes": notes,
         "tags": ["decoded", "analysis"],
-        "product_type": PRODUCT_TYPE_CONFIG["formulation_decode"]["type_name"]
+        "product_type": PRODUCT_TYPE_CONFIG["formulation_decode"]["type_name"],
+        "ingredients": ingredients
     }
     
     return product_data
 
 
-def _extract_product_comparison_product(history_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Extract product data from product comparison history"""
-    # TODO: Implement based on your comparison history structure
-    # This would extract data from comparison results
+def _extract_product_comparison_products(history_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Extract product data from product comparison history - returns list of products"""
+    # Product comparison history structure:
+    # - comparison_result.products[]: Array of ProductComparisonItem objects
+    #   Each product has: product_name, brand_name, price (string), url, inci, etc.
     
-    product_data = {
+    comparison_result = history_data.get("comparison_result", {}) or {}
+    products = comparison_result.get("products", [])
+    
+    if not products:
+        # Fallback: return single product with basic info
+        return [{
+            "name": history_data.get("name", "Compared Product"),
+            "brand": "Unknown Brand",
+            "url": None,
+            "platform": "comparison",
+            "price": 0,
+            "size": 0,
+            "unit": "ml",
+            "category": None,
+            "image": PRODUCT_TYPE_CONFIG["product_comparison"]["emoji"],
+            "notes": f"Product comparison from {history_data.get('created_at', 'unknown date')}",
+            "tags": ["comparison"],
+            "product_type": PRODUCT_TYPE_CONFIG["product_comparison"]["type_name"],
+            "ingredients": []
+        }]
+    
+    extracted_products = []
+    
+    for idx, product in enumerate(products):
+        # Extract product name
+        name = product.get("product_name") or product.get("name") or f"Compared Product {idx + 1}"
+        
+        # Extract brand
+        brand = product.get("brand_name") or product.get("brand") or "Unknown Brand"
+        
+        # Extract URL
+        url = product.get("url")
+        
+        # Extract and parse price
+        price_str = product.get("price") or "0"
+        price = _parse_price_string(price_str) if isinstance(price_str, str) else (float(price_str) if price_str else 0)
+        
+        # Extract MRP if available
+        mrp_str = product.get("mrp")
+        mrp = _parse_price_string(mrp_str) if isinstance(mrp_str, str) else (float(mrp_str) if mrp_str else None)
+        
+        # Extract size and unit from product name or description
+        size = 0
+        unit = "ml"
+        product_name_text = name
+        extracted_text = product.get("extracted_text", "")
+        size_text = product_name_text + " " + extracted_text
+        extracted_size, extracted_unit = _extract_size_from_text(size_text)
+        if extracted_size > 0:
+            size = extracted_size
+            unit = extracted_unit
+        
+        # Extract category
+        category = product.get("category")
+        
+        # Extract image (may not be available in comparison)
+        image = product.get("image") or product.get("product_image") or PRODUCT_TYPE_CONFIG["product_comparison"]["emoji"]
+        
+        # Extract ingredients
+        ingredients = product.get("inci") or product.get("ingredients") or []
+        if isinstance(ingredients, str):
+            ingredients = [ing.strip() for ing in ingredients.split(",") if ing.strip()]
+        elif not isinstance(ingredients, list):
+            ingredients = []
+        
+        # Build notes with ingredients if available
+        notes = f"Product {idx + 1} from comparison: {history_data.get('name', 'Product Comparison')}"
+        if ingredients:
+            notes += f"\n\nIngredients: {', '.join(ingredients[:15])}"  # First 15 ingredients
+        
+        product_data = {
+            "name": name,
+            "brand": brand,
+            "url": url,
+            "platform": _detect_platform(url or ""),
+            "price": float(price) if price else 0,
+            "mrp": float(mrp) if mrp else None,
+            "size": float(size) if size else 0,
+            "unit": unit,
+            "category": category,
+            "image": image,
+            "notes": notes,
+            "tags": ["comparison"],
+            "product_type": PRODUCT_TYPE_CONFIG["product_comparison"]["type_name"],
+            "ingredients": ingredients
+        }
+        
+        extracted_products.append(product_data)
+    
+    return extracted_products
+
+
+def _extract_product_comparison_product(history_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract product data from product comparison history - returns first product for backward compatibility"""
+    products = _extract_product_comparison_products(history_data)
+    return products[0] if products else {
         "name": "Compared Product",
         "brand": "Unknown Brand",
         "url": None,
@@ -195,10 +475,54 @@ def _extract_product_comparison_product(history_data: Dict[str, Any]) -> Dict[st
         "image": PRODUCT_TYPE_CONFIG["product_comparison"]["emoji"],
         "notes": "Product comparison result",
         "tags": ["comparison"],
-        "product_type": PRODUCT_TYPE_CONFIG["product_comparison"]["type_name"]
+        "product_type": PRODUCT_TYPE_CONFIG["product_comparison"]["type_name"],
+        "ingredients": []
     }
+
+
+def _parse_price_string(price_str: str) -> float:
+    """Parse price string like '₹999', '$29.99', 'INR 1,299' to float"""
+    if not price_str or not isinstance(price_str, str):
+        return 0.0
     
-    return product_data
+    # Remove currency symbols and text
+    price_str = re.sub(r'[₹$€£]', '', price_str)
+    price_str = re.sub(r'INR|USD|EUR|GBP', '', price_str, flags=re.IGNORECASE)
+    price_str = re.sub(r'Rs\.?|rupees?', '', price_str, flags=re.IGNORECASE)
+    
+    # Remove commas and whitespace
+    price_str = price_str.replace(',', '').strip()
+    
+    # Extract numbers
+    numbers = re.findall(r'\d+\.?\d*', price_str)
+    if numbers:
+        try:
+            return float(numbers[0])
+        except ValueError:
+            return 0.0
+    
+    return 0.0
+
+
+def _extract_size_from_text(text: str) -> tuple:
+    """Extract size and unit from text (e.g., '50ml', '100g', '30 ml')"""
+    if not text:
+        return (0, "ml")
+    
+    # Look for patterns like "50ml", "100g", "30 ml", "1.5 oz"
+    patterns = [
+        r'(\d+\.?\d*)\s*(ml|g|oz|kg|mg|l)',
+        r'(\d+\.?\d*)\s*(ml|g|oz|kg|mg|l)\s*',
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            size = float(match.group(1))
+            unit = match.group(2).lower()
+            return (size, unit)
+    
+    return (0, "ml")
 
 
 def _detect_platform(url: str) -> str:

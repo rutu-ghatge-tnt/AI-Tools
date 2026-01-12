@@ -48,6 +48,26 @@ async def fetch_product_from_url(url: str, force_refresh: bool = False) -> Dict[
     if not force_refresh:
         cached_data = await get_cached_url_data(url)
         if cached_data:
+            # Update cached data to indicate it came from cache
+            original_source = cached_data.get("source", "url_extraction")
+            original_message = cached_data.get("message")
+            
+            # Determine the appropriate source and message
+            if original_source == "ai_search":
+                # If originally from AI search, indicate it's cached AI search data
+                cached_data["source"] = "ai_search_cached"
+                # Update message to indicate it was previously scraped and is now from cache
+                cached_data["message"] = "This URL was previously scraped and ingredients were estimated via AI search. Data retrieved from cache."
+            else:
+                # For other sources, indicate it's cached
+                cached_data["source"] = f"{original_source}_cached" if original_source != "cache" else original_source
+                # Update message to indicate it was previously scraped and is now from cache
+                cached_data["message"] = "This URL was previously scraped. Data retrieved from cache."
+            
+            # Ensure from_cache flag is set
+            cached_data["from_cache"] = True
+            
+            print(f"✅ Returning cached data for {url} (original source: {original_source})")
             return cached_data
     
     # Cache miss or force refresh - scrape normally
@@ -100,10 +120,15 @@ async def fetch_product_from_url(url: str, force_refresh: bool = False) -> Dict[
             print(f"⚠️ Warning: Failed to extract brand: {e}")
             brand = "Unknown Brand"
         
-        # Extract price
+        # Extract selling price (excludes MRP)
         price = _extract_price_from_text(extracted_text)
         if price is None:
             price = 0.0
+        
+        # Extract MRP separately
+        mrp = _extract_mrp_from_text(extracted_text)
+        if mrp is None:
+            mrp = None  # MRP is optional
         
         # Extract size and unit
         size = _extract_size_from_text(extracted_text)
@@ -143,6 +168,7 @@ async def fetch_product_from_url(url: str, force_refresh: bool = False) -> Dict[
             "url": url,
             "platform": platform,
             "price": price,
+            "mrp": mrp,  # MRP (Maximum Retail Price) - optional
             "size": size,
             "unit": unit,
             "category": category,
@@ -185,6 +211,7 @@ async def fetch_product_from_url(url: str, force_refresh: bool = False) -> Dict[
             "url": url,
             "platform": _detect_platform(url),
             "price": None,
+            "mrp": None,
             "size": None,
             "unit": None,
             "category": None,
@@ -222,16 +249,29 @@ async def extract_ingredients_from_url_cached(url: str, force_refresh: bool = Fa
         cached_data = await get_cached_url_data(url)
         if cached_data:
             # Convert cached product data to extraction result format
-            print(f"✅ Using cached data for ingredient extraction: {url}")
+            original_source = cached_data.get("source", "url_extraction")
+            original_message = cached_data.get("message")
+            
+            # Determine the appropriate source and message
+            if original_source == "ai_search":
+                source = "ai_search_cached"
+                message = "This URL was previously scraped and ingredients were estimated via AI search. Data retrieved from cache."
+            else:
+                source = f"{original_source}_cached" if original_source != "cache" else original_source
+                message = "This URL was previously scraped. Data retrieved from cache."
+            
+            print(f"✅ Using cached data for ingredient extraction: {url} (original source: {original_source})")
             return {
                 "ingredients": cached_data.get("ingredients", []),
                 "extracted_text": cached_data.get("extracted_text", ""),
                 "platform": cached_data.get("platform", "unknown"),
                 "url": url,
                 "is_estimated": cached_data.get("is_estimated", False),
-                "source": cached_data.get("source", "url_extraction"),
+                "source": source,
                 "product_name": cached_data.get("product_name") or cached_data.get("name"),
-                "product_image": cached_data.get("product_image") or cached_data.get("image", "🧴")
+                "product_image": cached_data.get("product_image") or cached_data.get("image", "🧴"),
+                "message": message,
+                "from_cache": True
             }
     
     # Cache miss or force refresh - scrape normally
@@ -567,23 +607,80 @@ Brand name:"""
 
 
 def _extract_price_from_text(text: str) -> Optional[float]:
-    """Extract price from text"""
+    """Extract selling price from text (excludes MRP)"""
     import re
-    # Look for ₹ symbol followed by numbers
-    patterns = [
-        r'₹\s*(\d+(?:,\d+)*(?:\.\d+)?)',
-        r'Rs\.?\s*(\d+(?:,\d+)*(?:\.\d+)?)',
-        r'INR\s*(\d+(?:,\d+)*(?:\.\d+)?)',
+    # Look for "Price:" label first (selling price)
+    price_patterns = [
+        r'Price:\s*₹\s*(\d+(?:,\d+)*(?:\.\d+)?)',  # Price: ₹649
+        r'Price:\s*Rs\.?\s*(\d+(?:,\d+)*(?:\.\d+)?)',  # Price: Rs.649
+        r'Price:\s*(\d+(?:,\d+)*(?:\.\d+)?)',  # Price: 649
     ]
-    for pattern in patterns:
-        matches = re.findall(pattern, text)
-        if matches:
-            # Get the first match and clean it
-            price_str = matches[0].replace(',', '')
+    
+    for pattern in price_patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            price_str = match.group(1).replace(',', '')
             try:
                 return float(price_str)
             except:
                 pass
+    
+    # If no "Price:" label found, look for ₹ symbol but exclude MRP lines
+    # Look for prices that are NOT on MRP lines
+    lines = text.split('\n')
+    for line in lines:
+        # Skip lines that contain MRP
+        if 'MRP' in line.upper() or 'M.R.P' in line.upper():
+            continue
+        # Look for ₹ symbol
+        patterns = [
+            r'₹\s*(\d+(?:,\d+)*(?:\.\d+)?)',
+            r'Rs\.?\s*(\d+(?:,\d+)*(?:\.\d+)?)',
+            r'INR\s*(\d+(?:,\d+)*(?:\.\d+)?)',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, line)
+            if match:
+                price_str = match.group(1).replace(',', '')
+                try:
+                    return float(price_str)
+                except:
+                    pass
+    
+    return None
+
+
+def _extract_mrp_from_text(text: str) -> Optional[float]:
+    """Extract MRP (Maximum Retail Price) from text"""
+    import re
+    # Look for explicit MRP patterns first
+    mrp_patterns = [
+        r'MRP:\s*₹\s*(\d+(?:,\d+)*(?:\.\d+)?)',  # MRP: ₹649
+        r'MRP:\s*Rs\.?\s*(\d+(?:,\d+)*(?:\.\d+)?)',  # MRP: Rs.649
+        r'MRP:\s*(\d+(?:,\d+)*(?:\.\d+)?)',  # MRP: 649
+        r'M\.R\.P\.?[:\s]*₹\s*(\d+(?:,\d+)*(?:\.\d+)?)',  # M.R.P: ₹649
+        r'Maximum\s+Retail\s+Price[:\s]*₹\s*(\d+(?:,\d+)*(?:\.\d+)?)',  # Maximum Retail Price: ₹649
+    ]
+    
+    for pattern in mrp_patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            mrp_str = match.group(1).replace(',', '')
+            try:
+                return float(mrp_str)
+            except:
+                pass
+    
+    # If no explicit MRP found, look for price pairs where higher is MRP
+    # Pattern: ₹649 ₹292 (MRP then selling price)
+    price_pair_pattern = r'₹\s*(\d+(?:,\d+)*)\s+₹\s*(\d+(?:,\d+)*)'
+    match = re.search(price_pair_pattern, text)
+    if match:
+        price1 = float(match.group(1).replace(',', ''))
+        price2 = float(match.group(2).replace(',', ''))
+        # Higher price is usually MRP
+        return max(price1, price2)
+    
     return None
 
 

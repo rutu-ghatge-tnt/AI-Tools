@@ -44,6 +44,14 @@ async def add_product_from_url(
         price = 0
         size = 0
     
+    # Extract MRP if available
+    mrp = fetched_data.get("mrp")
+    if mrp is not None:
+        try:
+            mrp = float(mrp) if mrp else None
+        except (ValueError, TypeError):
+            mrp = None
+    
     product_data = {
         "board_id": board_obj_id,
         "user_id": user_id,
@@ -53,6 +61,7 @@ async def add_product_from_url(
         "platform": fetched_data.get("platform", "other"),
         "image": fetched_data.get("image", "🧴"),
         "price": price,
+        "mrp": mrp,  # MRP (Maximum Retail Price) - optional
         "size": size,
         "unit": fetched_data.get("unit", "ml"),
         "price_per_ml": price_per_ml,
@@ -135,6 +144,7 @@ async def add_product_manual(
         "platform": request.platform,
         "image": request.image or "🧴",
         "price": request.price,
+        "mrp": request.mrp,  # MRP (Maximum Retail Price) - optional
         "size": request.size,
         "unit": request.unit,
         "price_per_ml": price_per_ml,
@@ -244,6 +254,7 @@ async def _format_product(product_doc: Dict[str, Any]) -> Dict[str, Any]:
         "platform": product_doc.get("platform", "other"),
         "image": product_doc.get("image", "🧴"),
         "price": product_doc.get("price", 0),
+        "mrp": product_doc.get("mrp"),  # MRP (Maximum Retail Price) - optional
         "size": product_doc.get("size", 0),
         "unit": product_doc.get("unit", "ml"),
         "price_per_ml": product_doc.get("price_per_ml", 0),

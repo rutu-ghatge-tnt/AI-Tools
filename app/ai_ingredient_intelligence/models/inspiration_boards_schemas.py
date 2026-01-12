@@ -144,6 +144,7 @@ class AddProductManualRequest(BaseModel):
     url: Optional[str] = None
     platform: str = Field(default="other", max_length=50)
     price: float = Field(..., gt=0)
+    mrp: Optional[float] = Field(None, gt=0, description="Maximum Retail Price (MRP)")
     size: float = Field(..., gt=0)
     unit: str = Field(default="ml", max_length=10)
     category: Optional[str] = Field(None, max_length=100)
@@ -170,6 +171,7 @@ class ProductSummary(BaseModel):
     platform: str
     image: str
     price: float
+    mrp: Optional[float] = Field(None, description="Maximum Retail Price (MRP)")
     size: float
     unit: str
     price_per_ml: float
@@ -207,6 +209,7 @@ class ProductResponse(BaseModel):
     platform: str
     image: str
     price: float
+    mrp: Optional[float] = Field(None, description="Maximum Retail Price (MRP)")
     size: float
     unit: str
     price_per_ml: float
@@ -247,6 +250,7 @@ class FetchProductResponse(BaseModel):
     url: str
     platform: str
     price: Optional[float]
+    mrp: Optional[float] = Field(None, description="Maximum Retail Price (MRP)")
     size: Optional[float]
     unit: Optional[str]
     category: Optional[str]
