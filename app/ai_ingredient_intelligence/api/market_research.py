@@ -1234,92 +1234,27 @@ async def market_research_analyze(
             except Exception as e:
                 print(f"⚠️  Error updating history: {e}")
         elif name:
-            # Create new history item only if name is provided
+            # 🔹 IMPORTANT: Always create new history item when no history_id provided (never match/reuse existing entries)
+            # Updates only happen when history_id is explicitly provided (PATCH/UPDATE operations)
             try:
-                # Check if a history item with the same input_data already exists for this user
-                existing_history_item = await market_research_history_col.find_one({
+                history_doc = {
                     "user_id": user_id,
+                    "name": name,
+                    "tag": tag,
+                    "notes": notes,
                     "input_type": input_type,
-                    "input_data": input_data_value
-                }, sort=[("created_at", -1)])  # Get the most recent one
+                    "input_data": input_data_value,
+                    "structured_analysis": structured_analysis.model_dump(),
+                    "available_keywords": keywords.model_dump_exclude_empty(),
+                    "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
+                }
+                # Add input_url if provided
+                if input_url:
+                    history_doc["input_url"] = input_url
                 
-                # 🔹 IMPORTANT: Only update if ingredients also match (to prevent updating wrong card when URL is same but INCI differs)
-                should_update_existing = False
-                if existing_history_item:
-                    if input_type == "inci":
-                        # For INCI type, input_data already contains the INCI list, so if input_data matches, it's the same INCI
-                        should_update_existing = True
-                    else:
-                        # For URL type, compare ingredients to ensure they match
-                        # Compare active ingredients from structured analysis
-                        existing_structured_analysis = existing_history_item.get("structured_analysis", {})
-                        existing_active_ingredients = existing_structured_analysis.get("active_ingredients", [])
-                        current_active_ingredients = structured_analysis.active_ingredients
-                        
-                        # Normalize ingredient names for comparison (case-insensitive, sorted)
-                        existing_ingredient_names = sorted([ai.get("name", "").lower().strip() for ai in existing_active_ingredients if ai.get("name")])
-                        current_ingredient_names = sorted([ai.name.lower().strip() for ai in current_active_ingredients if ai.name])
-                        
-                        # Also compare the full ingredient list if available in history (for more accurate comparison)
-                        # Check if we can compare extracted ingredients from response
-                        existing_extracted = existing_history_item.get("extracted_ingredients")
-                        if existing_extracted and isinstance(existing_extracted, list):
-                            # Compare full ingredient lists
-                            existing_full_ingredients = sorted([ing.lower().strip() for ing in existing_extracted if ing])
-                            current_full_ingredients = sorted([ing.lower().strip() for ing in ingredients if ing])
-                            if existing_full_ingredients == current_full_ingredients and len(existing_full_ingredients) > 0:
-                                should_update_existing = True
-                            else:
-                                should_update_existing = False
-                        elif existing_ingredient_names == current_ingredient_names and len(existing_ingredient_names) > 0:
-                            # Fallback to active ingredients comparison
-                            should_update_existing = True
-                        else:
-                            # Ingredients differ or no ingredients to compare - create new entry to be safe
-                            should_update_existing = False
-                
-                if existing_history_item and should_update_existing:
-                    history_id = str(existing_history_item["_id"])
-                    # Update existing history with new analysis data
-                    update_data = {
-                        "structured_analysis": structured_analysis.model_dump(),
-                        "available_keywords": keywords.model_dump_exclude_empty(),
-                        "name": name,  # Update name in case it changed
-                        "tag": tag,  # Update tag in case it changed
-                        "notes": notes  # Update notes
-                    }
-                    # Add input_url if provided
-                    if input_url:
-                        update_data["input_url"] = input_url
-                    
-                    await market_research_history_col.update_one(
-                        {"_id": existing_history_item["_id"]},
-                        {"$set": update_data}
-                    )
-                    print(f"✅ Updated existing history item: {history_id}")
-                else:
-                    # Create new history item (either no existing item found, or ingredients differ)
-                    history_doc = {
-                        "user_id": user_id,
-                        "name": name,
-                        "tag": tag,
-                        "notes": notes,
-                        "input_type": input_type,
-                        "input_data": input_data_value,
-                        "structured_analysis": structured_analysis.model_dump(),
-                        "available_keywords": keywords.model_dump_exclude_empty(),
-                        "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
-                    }
-                    # Add input_url if provided
-                    if input_url:
-                        history_doc["input_url"] = input_url
-                    
-                    result = await market_research_history_col.insert_one(history_doc)
-                    history_id = str(result.inserted_id)
-                    if existing_history_item:
-                        print(f"✅ Created new history item (ingredients differ from existing): {history_id}")
-                    else:
-                        print(f"✅ Auto-saved analysis to history: {history_id}")
+                result = await market_research_history_col.insert_one(history_doc)
+                history_id = str(result.inserted_id)
+                print(f"✅ Auto-saved analysis to history: {history_id}")
             except Exception as e:
                 print(f"⚠️  Error auto-saving to history: {e}")
         
@@ -1914,43 +1849,29 @@ async def market_research(
         print(f"Normalized ingredients for matching ({len(normalized_input_ingredients)}): {normalized_input_ingredients[:10]}{'...' if len(normalized_input_ingredients) > 10 else ''}")
         
         # 🔹 Auto-save: Save initial state with "in_progress" status if user_id provided and no existing history_id
+        # 🔹 IMPORTANT: Always create new entry when no history_id provided (never match/reuse existing entries)
+        # Updates only happen when history_id is explicitly provided (PATCH/UPDATE operations)
         if user_id_value and not history_id and input_data_value:
             try:
-                # Check if a history item with the same input_data already exists for this user
-                existing_history_item = await market_research_history_col.find_one({
-                    "user_id": user_id_value,
-                    "input_type": input_type,
-                    "input_data": input_data_value
-                }, sort=[("created_at", -1)])  # Get the most recent one
+                # Name is required - already validated above
+                # Truncate if too long
+                if len(name) > 100:
+                    name = name[:100]
                 
-                if existing_history_item:
-                    history_id = str(existing_history_item["_id"])
-                    print(f"[AUTO-SAVE] Found existing history item with same input_data, reusing history_id: {history_id}")
-                    # Update status to in_progress if reusing existing item
-                    await market_research_history_col.update_one(
-                        {"_id": existing_history_item["_id"]},
-                        {"$set": {"status": "in_progress"}}
-                    )
-                else:
-                    # Name is required - already validated above
-                    # Truncate if too long
-                    if len(name) > 100:
-                        name = name[:100]
-                    
-                    # Save initial state with "in_progress" status
-                    history_doc = {
-                        "user_id": user_id_value,
-                        "name": name,
-                        "tag": tag,
-                        "input_type": input_type,
-                        "input_data": input_data_value,
-                        "notes": notes,
-                        "status": "in_progress",
-                        "created_at": (datetime.now(timezone(timedelta(hours=5, minutes=30)))).isoformat()
-                    }
-                    result = await market_research_history_col.insert_one(history_doc)
-                    history_id = str(result.inserted_id)
-                    print(f"[AUTO-SAVE] Saved initial state with history_id: {history_id} (status: in_progress)")
+                # Always create new history item (never reuse existing entries)
+                history_doc = {
+                    "user_id": user_id_value,
+                    "name": name,
+                    "tag": tag,
+                    "input_type": input_type,
+                    "input_data": input_data_value,
+                    "notes": notes,
+                    "status": "in_progress",
+                    "created_at": (datetime.now(timezone(timedelta(hours=5, minutes=30)))).isoformat()
+                }
+                result = await market_research_history_col.insert_one(history_doc)
+                history_id = str(result.inserted_id)
+                print(f"[AUTO-SAVE] Created new history entry with history_id: {history_id} (status: in_progress)")
             except Exception as e:
                 print(f"[AUTO-SAVE] Warning: Failed to save initial state: {e}")
                 import traceback
@@ -2835,37 +2756,22 @@ async def market_research(
                     )
                     print(f"[AUTO-SAVE] Updated history {history_id} with research results (saved {len(matched_products)} total products, status: completed)")
                 elif name:
-                    # Check if a history item with the same input_data already exists for this user
-                    existing_history_item = await market_research_history_col.find_one({
+                    # 🔹 IMPORTANT: Always create new history item when no history_id provided (never match/reuse existing entries)
+                    # Updates only happen when history_id is explicitly provided (PATCH/UPDATE operations)
+                    history_doc = {
                         "user_id": user_id_value,
+                        "name": name,
+                        "tag": tag,
                         "input_type": input_type,
-                        "input_data": input_data_value
-                    }, sort=[("created_at", -1)])  # Get the most recent one
-                    
-                    if existing_history_item:
-                        # Update existing history instead of creating new one
-                        history_id = str(existing_history_item["_id"])
-                        await market_research_history_col.update_one(
-                            {"_id": existing_history_item["_id"]},
-                            {"$set": update_doc}
-                        )
-                        print(f"[AUTO-SAVE] Updated existing history {history_id} with research results (saved {len(matched_products)} total products, status: completed)")
-                    else:
-                        # Create new history item
-                        history_doc = {
-                            "user_id": user_id_value,
-                            "name": name,
-                            "tag": tag,
-                            "input_type": input_type,
-                            "input_data": input_data_value,
-                            "notes": notes,
-                            "status": "completed",
-                            "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat(),
-                            **update_doc
-                        }
-                        result = await market_research_history_col.insert_one(history_doc)
-                        history_id = str(result.inserted_id)
-                        print(f"[AUTO-SAVE] Created new history {history_id} with research results (saved {len(matched_products)} total products, status: completed)")
+                        "input_data": input_data_value,
+                        "notes": notes,
+                        "status": "completed",
+                        "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat(),
+                        **update_doc
+                    }
+                    result = await market_research_history_col.insert_one(history_doc)
+                    history_id = str(result.inserted_id)
+                    print(f"[AUTO-SAVE] Created new history {history_id} with research results (saved {len(matched_products)} total products, status: completed)")
             except Exception as e:
                 print(f"[AUTO-SAVE] Warning: Failed to save/update history: {e}")
                 import traceback
