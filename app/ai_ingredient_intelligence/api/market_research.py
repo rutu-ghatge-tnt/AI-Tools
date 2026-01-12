@@ -407,6 +407,12 @@ async def get_market_research_history_detail(
             
             # Build analysis object
             processing_time = research_result.get("processing_time", 0)
+            
+            # Initialize selected_keywords if null (for backward compatibility with old records)
+            selected_keywords = item_meta.get("selected_keywords")
+            if selected_keywords is None:
+                selected_keywords = ProductKeywords().model_dump_exclude_empty()
+            
             analysis_data = {
                 "processing_time": processing_time,
                 "category": {
@@ -416,7 +422,7 @@ async def get_market_research_history_detail(
                 },
                 "ai_interpretation": ai_interpretation,
                 "structured_analysis": item_meta.get("structured_analysis"),
-                "selected_keywords": item_meta.get("selected_keywords"),
+                "selected_keywords": selected_keywords,
                 "available_keywords": item_meta.get("available_keywords")
             }
             
@@ -499,6 +505,12 @@ async def get_market_research_history_detail(
         
         # Build analysis object
         processing_time = research_result.get("processing_time", 0)
+        
+        # Initialize selected_keywords if null (for backward compatibility with old records)
+        selected_keywords = item_meta.get("selected_keywords")
+        if selected_keywords is None:
+            selected_keywords = ProductKeywords().model_dump_exclude_empty()
+        
         analysis_data = {
             "processing_time": processing_time,
             "category": {
@@ -508,7 +520,7 @@ async def get_market_research_history_detail(
             },
             "ai_interpretation": ai_interpretation,
             "structured_analysis": item_meta.get("structured_analysis"),
-            "selected_keywords": item_meta.get("selected_keywords"),
+            "selected_keywords": selected_keywords,
             "available_keywords": item_meta.get("available_keywords")
         }
         
@@ -2780,14 +2792,20 @@ async def market_research(
                 if available_keywords_dict:
                     update_doc["available_keywords"] = available_keywords_dict
                 
-                # Save selected_keywords if provided in payload
+                # Initialize selected_keywords - use provided value or create empty ProductKeywords object
                 selected_keywords_payload = payload.get("selected_keywords")
                 if selected_keywords_payload:
                     try:
                         selected_keywords_obj = ProductKeywords(**selected_keywords_payload)
                         update_doc["selected_keywords"] = selected_keywords_obj.model_dump_exclude_empty()
                     except Exception as e:
-                        print(f"[AUTO-SAVE] Warning: Could not parse selected_keywords: {e}")
+                        print(f"[AUTO-SAVE] Warning: Could not parse selected_keywords: {e}, initializing empty")
+                        # Initialize empty ProductKeywords if parsing fails
+                        update_doc["selected_keywords"] = ProductKeywords().model_dump_exclude_empty()
+                elif not history_id:
+                    # Initialize empty ProductKeywords only when creating new history (not updating existing)
+                    # This ensures new history items always have selected_keywords initialized
+                    update_doc["selected_keywords"] = ProductKeywords().model_dump_exclude_empty()
                 
                 if history_id:
                     # Update existing history
@@ -2964,12 +2982,16 @@ async def market_research_products(
             if input_type_from_history == "url":
                 market_research_payload["url"] = input_data
             elif input_type_from_history == "inci":
-                # input_data might be a string or already parsed
+                # input_data is stored as comma-separated string, convert to array for market_research endpoint
                 if isinstance(input_data, str):
+                    # Split comma-separated string into array of strings
+                    market_research_payload["inci"] = [ing.strip() for ing in input_data.split(",") if ing.strip()]
+                elif isinstance(input_data, list):
+                    # Already an array, use as-is
                     market_research_payload["inci"] = input_data
                 else:
-                    # If it's already a list or dict, convert to string
-                    market_research_payload["inci"] = ", ".join(input_data) if isinstance(input_data, list) else str(input_data)
+                    # Fallback: convert to string then split
+                    market_research_payload["inci"] = [str(input_data)]
             
             # Add name/tag if available
             if history_item.get("name"):

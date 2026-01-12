@@ -258,6 +258,7 @@ async def _format_product_summary(product_doc: Dict[str, Any]) -> Dict[str, Any]
         "platform": product_doc.get("platform", "other"),
         "image": image,
         "price": product_doc.get("price", 0),
+        "mrp": product_doc.get("mrp"),  # MRP (Maximum Retail Price) - optional
         "size": product_doc.get("size", 0),
         "unit": product_doc.get("unit", "ml"),
         "price_per_ml": product_doc.get("price_per_ml", 0),

@@ -21,7 +21,7 @@ except ImportError:
     PIL_AVAILABLE = False
     print("Warning: PIL/Pillow not available. Logo conversion will be skipped.")
 
-from app.ai_ingredient_intelligence.config import SERPER_API_KEY, AWS_S3_BUCKET_PLATFORM_LOGOS, AWS_S3_PLATFORM_LOGOS_PREFIX
+from app.ai_ingredient_intelligence.config import SERPER_API_KEY, AWS_S3_BUCKET_PLATFORM_LOGOS, AWS_S3_PLATFORM_LOGOS_PREFIX, AWS_S3_REGION
 
 # Platform priority order
 PRIORITY_PLATFORMS = [
@@ -394,7 +394,8 @@ def sort_by_priority(results: List[Dict]) -> List[Dict]:
 def get_s3_client():
     """Get boto3 S3 client."""
     try:
-        client = boto3.client('s3')
+        # Initialize S3 client with the correct region
+        client = boto3.client('s3', region_name=AWS_S3_REGION)
         # Test if credentials work by trying to list buckets (lightweight operation)
         # This will fail fast if credentials are invalid
         return client
@@ -431,7 +432,7 @@ def check_logo_exists_in_s3(platform: str, s3_client) -> Optional[str]:
         try:
             region = s3_client.meta.region_name
         except:
-            region = 'us-east-1'
+            region = AWS_S3_REGION
         url = f"https://{AWS_S3_BUCKET_PLATFORM_LOGOS}.s3.{region}.amazonaws.com/{key}"
         print(f"[OK] Logo exists in S3 for {platform}: {url}")
         return url
@@ -450,23 +451,41 @@ def check_logo_exists_in_s3(platform: str, s3_client) -> Optional[str]:
         return None
 
 
-def fetch_logo_image(platform: str) -> Optional[bytes]:
+def fetch_logo_image(platform: str, serper_image_url: Optional[str] = None) -> Optional[bytes]:
     """
     Fetch logo image from URL.
     
     Args:
         platform: Normalized platform name
+        serper_image_url: Optional image URL from Serper API response (if available)
         
     Returns:
         Image bytes or None
     """
+    # If Serper provided an image URL, try to use it first
+    if serper_image_url:
+        try:
+            print(f"Attempting to fetch logo from Serper URL for {platform}: {serper_image_url}")
+            response = requests.get(serper_image_url, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
+            response.raise_for_status()
+            # Verify it's actually an image
+            content_type = response.headers.get('Content-Type', '').lower()
+            if 'image' in content_type:
+                print(f"Successfully fetched logo from Serper URL for {platform}")
+                return response.content
+            else:
+                print(f"Serper URL did not return an image (Content-Type: {content_type}), falling back to favicon")
+        except Exception as e:
+            print(f"Error fetching logo from Serper URL for {platform}: {str(e)}, falling back to favicon")
+    
+    # Fallback to hardcoded favicon URLs
     logo_url = PLATFORM_LOGO_URLS.get(platform)
     if not logo_url:
         # Try favicon for unknown platforms
         return None
     
     try:
-        response = requests.get(logo_url, timeout=10)
+        response = requests.get(logo_url, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
         response.raise_for_status()
         return response.content
     except Exception as e:
@@ -505,7 +524,7 @@ def convert_to_png(image_bytes: bytes) -> Optional[bytes]:
         return None
 
 
-def upload_logo_to_s3(platform: str, s3_client) -> Optional[str]:
+def upload_logo_to_s3(platform: str, s3_client, serper_image_url: Optional[str] = None) -> Optional[str]:
     """
     Upload platform logo to S3.
     
@@ -528,8 +547,8 @@ def upload_logo_to_s3(platform: str, s3_client) -> Optional[str]:
     
     print(f"Uploading new logo for platform: {platform}")
     
-    # Fetch logo
-    logo_bytes = fetch_logo_image(platform)
+    # Fetch logo (try Serper URL first if provided, then fallback to favicon)
+    logo_bytes = fetch_logo_image(platform, serper_image_url)
     if not logo_bytes:
         print(f"Failed to fetch logo image for {platform}")
         return None
@@ -544,22 +563,34 @@ def upload_logo_to_s3(platform: str, s3_client) -> Optional[str]:
     try:
         key = f"{AWS_S3_PLATFORM_LOGOS_PREFIX}/{platform}.png"
         
-        # Try to get region from client, default to us-east-1
+        # Try to get region from client, default to configured region
         try:
             region = s3_client.meta.region_name
         except:
-            region = 'us-east-1'
+            region = AWS_S3_REGION
         
         # Upload with error details
         print(f"Attempting to upload {key} to bucket '{AWS_S3_BUCKET_PLATFORM_LOGOS}' in region '{region}'")
         
-        s3_client.put_object(
-            Bucket=AWS_S3_BUCKET_PLATFORM_LOGOS,
-            Key=key,
-            Body=png_bytes,
-            ContentType='image/png',
-            ACL='public-read'  # Make publicly accessible
-        )
+        # Prepare upload parameters
+        upload_params = {
+            'Bucket': AWS_S3_BUCKET_PLATFORM_LOGOS,
+            'Key': key,
+            'Body': png_bytes,
+            'ContentType': 'image/png'
+        }
+        
+        # Try to set ACL, but catch error if bucket ACLs are disabled
+        try:
+            s3_client.put_object(**upload_params, ACL='public-read')
+        except ClientError as acl_error:
+            # If ACL fails, try without ACL (bucket policy should handle public access)
+            error_code = acl_error.response.get('Error', {}).get('Code', 'Unknown')
+            if error_code in ('AccessControlListNotSupported', 'InvalidRequest'):
+                print(f"[INFO] Bucket ACLs are disabled, uploading without ACL (using bucket policy)")
+                s3_client.put_object(**upload_params)
+            else:
+                raise  # Re-raise if it's a different error
         
         # Construct S3 URL
         url = f"https://{AWS_S3_BUCKET_PLATFORM_LOGOS}.s3.{region}.amazonaws.com/{key}"
@@ -657,7 +688,9 @@ def fetch_platforms(product_name: str) -> List[Dict]:
                 "price": item.get("price"),
                 "position": item.get("position", 999),
                 "source": source,  # Store source for reference
-                "platform_from_source": platform_from_source  # Pre-calculated platform
+                "platform_from_source": platform_from_source,  # Pre-calculated platform
+                "image": item.get("image"),  # Store image URL from Serper if available (could be product thumbnail or logo)
+                "thumbnail": item.get("thumbnail")  # Store thumbnail URL from Serper if available
             })
         
         print(f"Page {page}: {valid_count} valid e-commerce platforms after filtering")
@@ -689,6 +722,20 @@ def fetch_platforms(product_name: str) -> List[Dict]:
     
     # Cache for platform logos to avoid redundant S3 calls within the same request
     logo_cache = {}  # platform -> logo_url
+    # Map platforms to Serper image URLs (if any were provided)
+    platform_image_urls = {}  # platform -> serper_image_url
+    
+    # Collect image URLs from Serper results for each platform
+    for result in sorted_results:
+        platform = result.get("platform_from_source")
+        if not platform:
+            platform = normalize_platform(result.get("link", ""))
+        
+        if platform not in platform_image_urls:
+            # Try to get image URL from Serper response (could be product thumbnail or logo)
+            serper_image = result.get("image") or result.get("thumbnail")
+            if serper_image:
+                platform_image_urls[platform] = serper_image
     
     # Build final response with platform info and logos
     final_results = []
@@ -716,7 +763,9 @@ def fetch_platforms(product_name: str) -> List[Dict]:
                 # Check if logo exists in S3, if not try to upload it
                 logo_url = check_logo_exists_in_s3(platform, s3_client)
                 if not logo_url:
-                    logo_url = upload_logo_to_s3(platform, s3_client)
+                    # Get Serper image URL for this platform if available
+                    serper_image_url = platform_image_urls.get(platform)
+                    logo_url = upload_logo_to_s3(platform, s3_client, serper_image_url)
             
             # Fallback to favicon URL if S3 is not available or upload failed
             if not logo_url:
