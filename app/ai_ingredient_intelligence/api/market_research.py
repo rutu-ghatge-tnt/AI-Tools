@@ -444,13 +444,23 @@ async def get_market_research_history_detail(
             platforms = item_meta.get("platforms")
             platforms_fetched_at = item_meta.get("platforms_fetched_at")
             
+            # Determine next page unlock status
+            next_page = page + 1
+            next_page_requires_credit = next_page > FREE_PAGES_LIMIT
+            next_page_unlocked = next_page in accessed_pages if next_page_requires_credit else True
+            
             pagination_section = {
                 "page": page,
                 "page_size": page_size,
                 "total_pages": 0,
                 "total_items": 0,
                 "platforms": platforms,
-                "platforms_fetched_at": platforms_fetched_at
+                "platforms_fetched_at": platforms_fetched_at,
+                "page_requires_credit": page_requires_credit,
+                "is_unlocked": is_page_unlocked,
+                "unlocked_pages": sorted(accessed_pages),
+                "next_page_requires_credit": next_page_requires_credit,
+                "next_page_unlocked": next_page_unlocked
             }
             
             products_section = {
@@ -542,13 +552,23 @@ async def get_market_research_history_detail(
         platforms = item_meta.get("platforms")
         platforms_fetched_at = item_meta.get("platforms_fetched_at")
         
+        # Determine next page unlock status
+        next_page = page + 1
+        next_page_requires_credit = next_page > FREE_PAGES_LIMIT
+        next_page_unlocked = next_page in accessed_pages if next_page_requires_credit else True
+        
         pagination_section = {
             "page": page,
             "page_size": page_size,
             "total_pages": total_pages,
             "total_items": total_products,
             "platforms": platforms,
-            "platforms_fetched_at": platforms_fetched_at
+            "platforms_fetched_at": platforms_fetched_at,
+            "page_requires_credit": page_requires_credit,
+            "is_unlocked": is_page_unlocked,
+            "unlocked_pages": sorted(accessed_pages),
+            "next_page_requires_credit": next_page_requires_credit,
+            "next_page_unlocked": next_page_unlocked
         }
         
         products_section = {
