@@ -2884,6 +2884,10 @@ async def market_research_products(
     
     Uses stored research results from history and applies new keyword filters and filters.
     
+    AUTO-RESEARCH: If the history item doesn't have research_result yet (e.g., created from /market-research/analyze),
+    this endpoint will automatically run market research first using the stored input_data and input_type,
+    then apply the filters and return results.
+    
     Path Parameters:
     - history_id: History item ID (required)
     
@@ -2943,10 +2947,79 @@ async def market_research_products(
     # Get stored research result
     research_result = history_item.get("research_result", {})
     if not research_result:
-        raise HTTPException(
-            status_code=400,
-            detail="History item does not contain research results. Please run market research first."
-        )
+        # Check if we can automatically run market research from stored input_data
+        input_data = history_item.get("input_data")
+        input_type_from_history = history_item.get("input_type", "").lower()
+        
+        if input_data and input_type_from_history in ["url", "inci"]:
+            # Automatically run market research using stored input_data
+            print(f"[AUTO-RESEARCH] History item {history_id} missing research_result, automatically running market research...")
+            
+            # Create payload for market research
+            market_research_payload = {
+                "input_type": input_type_from_history,
+                "history_id": history_id  # Use existing history_id to update the same item
+            }
+            
+            if input_type_from_history == "url":
+                market_research_payload["url"] = input_data
+            elif input_type_from_history == "inci":
+                # input_data might be a string or already parsed
+                if isinstance(input_data, str):
+                    market_research_payload["inci"] = input_data
+                else:
+                    # If it's already a list or dict, convert to string
+                    market_research_payload["inci"] = ", ".join(input_data) if isinstance(input_data, list) else str(input_data)
+            
+            # Add name/tag if available
+            if history_item.get("name"):
+                market_research_payload["name"] = history_item.get("name")
+            if history_item.get("tag"):
+                market_research_payload["tag"] = history_item.get("tag")
+            if history_item.get("notes"):
+                market_research_payload["notes"] = history_item.get("notes")
+            
+            # Call market research endpoint internally
+            try:
+                # Call the market_research function (defined earlier in this module at line 1702)
+                # At runtime, all functions in the module are available
+                market_research_response = await market_research(market_research_payload, current_user)
+                
+                # Refresh history item to get updated research_result
+                history_item = await market_research_history_col.find_one({
+                    "_id": ObjectId(history_id),
+                    "user_id": user_id_value
+                })
+                
+                if history_item:
+                    research_result = history_item.get("research_result", {})
+                    if not research_result:
+                        raise HTTPException(
+                            status_code=500,
+                            detail="Failed to generate research results. Please try running market research manually."
+                        )
+                    print(f"[AUTO-RESEARCH] ✅ Successfully generated research results for history {history_id}")
+                else:
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Failed to retrieve updated history item after market research."
+                    )
+            except HTTPException:
+                raise
+            except Exception as e:
+                print(f"[AUTO-RESEARCH] ❌ Error running automatic market research: {e}")
+                import traceback
+                traceback.print_exc()
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to automatically run market research: {str(e)}. Please run market research manually first."
+                )
+        else:
+            # Cannot auto-run, provide helpful error message
+            raise HTTPException(
+                status_code=400,
+                detail="History item does not contain research results. Please run market research first using POST /market-research endpoint with the same input_data."
+            )
     
     # Get stored products (all products from original research)
     stored_products = research_result.get("products", [])
