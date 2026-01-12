@@ -384,24 +384,80 @@ class URLScraper:
                 except Exception as e:
                     print(f"Could not extract main product info from Amazon: {e}")
                 
-                # SECOND: Extract product description and ingredients
-                selectors = [
-                    "#feature-bullets ul",
-                    "#productDescription",
-                    "#productDetails_techSpec_section_1",
-                    ".a-unordered-list",
-                    "[data-feature-name='productDescription']",
-                    "#productDescription_feature_div",
-                    "#productDetails_feature_specifications",
-                    ".product-facts-details"
+                # Helper function to check if element is in recommendation section
+                def is_in_recommendation_section_amazon(elem):
+                    """Check if element is in Amazon recommendation/related products section"""
+                    try:
+                        current = elem
+                        for _ in range(6):  # Check up to 6 levels up
+                            try:
+                                current = current.find_element(By.XPATH, "./..")
+                                class_attr = current.get_attribute('class') or ''
+                                id_attr = current.get_attribute('id') or ''
+                                data_testid = current.get_attribute('data-testid') or ''
+                                
+                                # Amazon-specific recommendation section keywords
+                                recommendation_keywords = [
+                                    'frequently', 'bought', 'together',  # "Frequently bought together"
+                                    'customers-who-viewed', 'customers_who_viewed',
+                                    'also-viewed', 'alsoviewed',
+                                    'sponsored', 'sponsored-products',
+                                    'recommended', 'recommendation',
+                                    'similar', 'related', 'related-products',
+                                    'sims-fbt', 'sims-consolidated',  # Amazon internal classes
+                                    'a-carousel', 'a-carousel-container',
+                                    'sp_desktop', 'sp_mobile',  # Sponsored products
+                                    'aok-block', 'aok-relative'  # Recommendation blocks
+                                ]
+                                
+                                combined_text = (class_attr + ' ' + id_attr + ' ' + data_testid).lower()
+                                if any(keyword in combined_text for keyword in recommendation_keywords):
+                                    return True
+                            except:
+                                break
+                        return False
+                    except:
+                        return False
+                
+                # SECOND: Extract product description and ingredients - FOCUS ON MAIN PRODUCT ONLY
+                # Target specific Amazon sections that contain product info
+                main_product_selectors = [
+                    "#feature-bullets ul",  # Product features/bullet points
+                    "#productDescription",  # Product description
+                    "#productDescription_feature_div",  # Product description div
+                    "#productDetails_techSpec_section_1",  # Technical details
+                    "#productDetails_feature_specifications",  # Specifications
+                    ".product-facts-details",  # Product facts
+                    "[data-feature-name='productDescription']",  # Product description data attribute
+                    "#productDetails_db_sections",  # Product details sections
                 ]
                 
-                for selector in selectors:
+                for selector in main_product_selectors:
                     try:
                         elements = driver.find_elements(By.CSS_SELECTOR, selector)
                         for element in elements:
+                            # Skip if in recommendation section
+                            if is_in_recommendation_section_amazon(element):
+                                continue
+                            
                             text = element.text.strip()
                             if text and len(text) > 20:
+                                # Filter out common marketing phrases that aren't ingredients
+                                if any(phrase in text.lower() for phrase in [
+                                    'frequently bought together',
+                                    'customers who viewed',
+                                    'add both to cart',
+                                    'get it by',
+                                    'free delivery',
+                                    'top brand',
+                                    'positive ratings',
+                                    'recent orders',
+                                    'years on amazon',
+                                    'report an issue',
+                                    'total price:'
+                                ]):
+                                    continue
+                                
                                 text_parts.append(text)
                     except:
                         continue
@@ -413,41 +469,88 @@ class URLScraper:
                 except:
                     pass
                 
-                # Try to find ingredients section
+                # Try to find ingredients section - TARGET SPECIFIC SECTIONS ONLY
                 try:
-                    # Look for ingredients in product details
-                    ingredient_keywords = ['ingredient', 'inci', 'composition', 'formula']
-                    body_text = driver.find_element(By.TAG_NAME, "body").text
-                    lines = body_text.split('\n')
+                    # Look for ingredients in specific product detail sections
+                    ingredient_section_selectors = [
+                        "#productDetails_techSpec_section_1",  # Technical specs (often has ingredients)
+                        "#productDetails_db_sections",  # Product details sections
+                        "[id*='ingredient']",  # Any element with "ingredient" in ID
+                        "[class*='ingredient']",  # Any element with "ingredient" in class
+                        "[data-feature-name*='ingredient']",  # Data attribute with ingredient
+                    ]
                     
-                    in_ingredient_section = False
-                    ingredient_lines = []
+                    ingredient_found = False
+                    for selector in ingredient_section_selectors:
+                        try:
+                            elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                            for element in elements:
+                                # Skip if in recommendation section
+                                if is_in_recommendation_section_amazon(element):
+                                    continue
+                                
+                                text = element.text.strip()
+                                if text and len(text) > 20:
+                                    # Check if it contains ingredient-related keywords
+                                    if any(keyword in text.lower() for keyword in ['ingredient', 'inci', 'composition', 'formula', 'contains']):
+                                        # Filter out marketing text
+                                        if not any(phrase in text.lower() for phrase in [
+                                            'frequently bought',
+                                            'customers who viewed',
+                                            'add to cart',
+                                            'get it by',
+                                            'free delivery'
+                                        ]):
+                                            text_parts.append(f"Ingredients:\n{text}")
+                                            ingredient_found = True
+                                            break
+                            if ingredient_found:
+                                break
+                        except:
+                            continue
                     
-                    for line in lines:
-                        line_lower = line.lower()
-                        if any(keyword in line_lower for keyword in ingredient_keywords):
-                            in_ingredient_section = True
-                            ingredient_lines.append(line)
-                        elif in_ingredient_section:
-                            if line.strip():
-                                ingredient_lines.append(line)
-                                if len(ingredient_lines) > 50:  # Limit to avoid too much text
-                                    break
-                            else:
-                                # Empty line might indicate end of section
-                                if len(ingredient_lines) > 5:
-                                    break
-                    
-                    if ingredient_lines:
-                        text_parts.append("Ingredients:\n" + "\n".join(ingredient_lines))
-                except:
-                    pass
+                    # If no specific ingredient section found, try to find in product description
+                    if not ingredient_found:
+                        try:
+                            desc_elements = driver.find_elements(By.CSS_SELECTOR, "#productDescription, #productDescription_feature_div")
+                            for desc_elem in desc_elements:
+                                if is_in_recommendation_section_amazon(desc_elem):
+                                    continue
+                                
+                                desc_text = desc_elem.text.strip()
+                                # Look for ingredient list patterns (comma-separated lists)
+                                if desc_text and len(desc_text) > 50:
+                                    # Check if it looks like an ingredient list (has common ingredients)
+                                    if any(ing in desc_text.lower() for ing in ['water', 'aqua', 'glycerin', 'dimethicone', 'acid', 'alcohol']):
+                                        # Extract only the ingredient part
+                                        lines = desc_text.split('\n')
+                                        ingredient_lines = []
+                                        for line in lines:
+                                            line_lower = line.lower()
+                                            # Skip marketing lines
+                                            if any(phrase in line_lower for phrase in [
+                                                'frequently bought', 'customers who', 'add to cart',
+                                                'get it by', 'free delivery', 'top brand', 'positive ratings'
+                                            ]):
+                                                continue
+                                            if line.strip():
+                                                ingredient_lines.append(line.strip())
+                                        
+                                        if ingredient_lines:
+                                            text_parts.append("Ingredients:\n" + "\n".join(ingredient_lines))
+                                            ingredient_found = True
+                                            break
+                        except:
+                            pass
+                except Exception as e:
+                    print(f"Error finding ingredients section: {e}")
                 
+                # Return only the collected text parts (don't fallback to all body text)
                 if text_parts:
                     return "\n\n".join(text_parts)
                 else:
-                    # Fallback: get all text content
-                    return driver.find_element(By.TAG_NAME, "body").text
+                    # Minimal fallback - just return product info if nothing else found
+                    return "\n\n".join(product_info) if product_info else "No product information found"
             
             return await loop.run_in_executor(None, scrape)
         except Exception as e:
@@ -2497,6 +2600,134 @@ Return only the JSON array of INCI names:"""
             print(f"Error searching ingredients by product name: {e}")
             return []
     
+    async def validate_extracted_data_with_ai(
+        self,
+        ingredients: List[str],
+        extracted_text: str,
+        product_name: Optional[str] = None,
+        product_image: Optional[str] = None
+    ) -> Dict[str, any]:
+        """
+        Validate all extracted data using AI to filter out marketing text, 
+        recommendation sections, and ensure data quality
+        
+        Args:
+            ingredients: List of extracted ingredients
+            extracted_text: Raw extracted text
+            product_name: Extracted product name
+            product_image: Extracted product image URL
+            
+        Returns:
+            Dict with validated and cleaned data
+        """
+        try:
+            claude_client = self._get_claude_client()
+            from app.config import CLAUDE_MODEL
+            model_name = CLAUDE_MODEL if CLAUDE_MODEL else (os.getenv("CLAUDE_MODEL") or os.getenv("MODEL_NAME") or "claude-sonnet-4-5-20250929")
+            
+            # Prepare text for validation (limit size)
+            validation_text = extracted_text[:8000] if extracted_text else ""
+            
+            prompt = f"""You are a data quality validator for e-commerce product scraping. Your task is to validate and clean extracted product data.
+
+EXTRACTED DATA TO VALIDATE:
+- Ingredients: {ingredients[:50] if ingredients else []}  # Showing first 50
+- Product Name: {product_name or "Not provided"}
+- Extracted Text Sample: {validation_text[:2000] if validation_text else "None"}
+
+VALIDATION RULES:
+
+1. **INGREDIENTS VALIDATION:**
+   - Remove any marketing claims (e.g., "DERMATOLOGIST TESTED", "Hypoallergenic", "fragrance free formula")
+   - Remove product features/benefits (e.g., "clinically proven", "respect sensitive skin")
+   - Remove section headers (e.g., "DEFENDS AGAINST 5 SIGNS OF SKIN SENSITIVITY")
+   - Remove UI elements (e.g., "Report an issue", "Top Brand", "Frequently bought together")
+   - Remove prices, ratings, delivery info
+   - Keep ONLY actual INCI ingredient names (e.g., "Water", "Glycerin", "Dimethicone", "Niacinamide")
+   - Ingredients should be cosmetic ingredient names, not marketing claims
+   - If an item contains phrases like "tested on", "proven to", "free", "for", "against", it's likely marketing text, not an ingredient
+
+2. **EXTRACTED TEXT VALIDATION:**
+   - Remove recommendation sections ("Frequently bought together", "Customers who viewed", "Also viewed")
+   - Remove marketing claims and promotional text
+   - Remove UI elements and navigation text
+   - Keep only product description, ingredients, and technical specifications
+   - Remove prices, delivery dates, ratings from other products
+
+3. **PRODUCT NAME VALIDATION:**
+   - Ensure it's a real product name, not marketing text
+   - Remove phrases like "Top Brand", "Report an issue", "Get it by"
+   - Should be a concise product name (typically 5-100 characters)
+
+Return ONLY a valid JSON object with this structure:
+{{
+  "ingredients": ["Water", "Glycerin", "Dimethicone", ...],  // Cleaned ingredient list (ONLY actual INCI names)
+  "extracted_text": "cleaned text without recommendations and marketing",  // Cleaned extracted text
+  "product_name": "validated product name or null",  // Validated product name or null if invalid
+  "is_valid": true,  // Whether the data passes validation
+  "validation_notes": "Brief notes about what was cleaned/removed"
+}}
+
+CRITICAL: 
+- If ingredients contain marketing text, remove those items completely
+- Only return actual cosmetic ingredient names in the ingredients array
+- Be strict - better to return fewer ingredients than include marketing claims
+- Extract only the main product name, ignore related products
+
+Return ONLY valid JSON, no markdown code blocks, no explanations."""
+
+            max_tokens = 4096 if "claude-3-opus-20240229" in model_name else 8192
+            
+            response = claude_client.messages.create(
+                model=model_name,
+                max_tokens=max_tokens,
+                temperature=0.1,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            validation_result = response.content[0].text.strip()
+            
+            # Parse JSON response
+            try:
+                # Extract JSON from response
+                if '```json' in validation_result:
+                    validation_result = validation_result.split('```json')[1].split('```')[0].strip()
+                elif '```' in validation_result:
+                    validation_result = validation_result.split('```')[1].split('```')[0].strip()
+                
+                validated_data = json.loads(validation_result)
+                
+                # Ensure we have valid structure
+                return {
+                    "ingredients": validated_data.get("ingredients", []),
+                    "extracted_text": validated_data.get("extracted_text", extracted_text),
+                    "product_name": validated_data.get("product_name", product_name),
+                    "is_valid": validated_data.get("is_valid", True),
+                    "validation_notes": validated_data.get("validation_notes", "")
+                }
+            except json.JSONDecodeError as e:
+                print(f"⚠️ Failed to parse AI validation response: {e}")
+                print(f"   Response: {validation_result[:500]}")
+                # Return original data if validation parsing fails
+                return {
+                    "ingredients": ingredients,
+                    "extracted_text": extracted_text,
+                    "product_name": product_name,
+                    "is_valid": True,
+                    "validation_notes": "Validation parsing failed, using original data"
+                }
+                
+        except Exception as e:
+            print(f"⚠️ Error during AI validation: {e}")
+            # Return original data if validation fails
+            return {
+                "ingredients": ingredients,
+                "extracted_text": extracted_text,
+                "product_name": product_name,
+                "is_valid": True,
+                "validation_notes": f"Validation failed: {str(e)}, using original data"
+            }
+    
     async def extract_ingredients_from_text(self, raw_text: str) -> List[str]:
         """
         Use Claude API to extract INCI ingredient names from scraped text
@@ -2752,19 +2983,48 @@ Return only the JSON array with ALL ingredients:"""
                 extraction_error = str(e)
                 print(f"Error extracting ingredients from text: {e}")
             
-            # If extraction succeeded, return direct results
+            # If extraction succeeded, validate with AI before returning
             if ingredients and len(ingredients) > 0:
                 print(f"Successfully extracted {len(ingredients)} ingredients directly from URL")
-                return {
-                    "ingredients": ingredients,
-                    "extracted_text": extracted_text,
-                    "platform": scrape_result["platform"],
-                    "url": url,
-                    "is_estimated": False,
-                    "source": "url_extraction",
-                    "product_name": None,
-                    "product_image": scrape_result.get("product_image")
-                }
+                
+                # Validate all extracted data with AI
+                try:
+                    validated = await self.validate_extracted_data_with_ai(
+                        ingredients=ingredients,
+                        extracted_text=extracted_text,
+                        product_name=None,
+                        product_image=scrape_result.get("product_image")
+                    )
+                    
+                    if validated.get("is_valid", True):
+                        print(f"✅ AI validation passed: {len(validated['ingredients'])} valid ingredients")
+                        if validated.get("validation_notes"):
+                            print(f"   Validation notes: {validated['validation_notes']}")
+                    else:
+                        print(f"⚠️ AI validation flagged issues, using cleaned data")
+                    
+                    return {
+                        "ingredients": validated.get("ingredients", ingredients),
+                        "extracted_text": validated.get("extracted_text", extracted_text),
+                        "platform": scrape_result["platform"],
+                        "url": url,
+                        "is_estimated": False,
+                        "source": "url_extraction",
+                        "product_name": validated.get("product_name"),
+                        "product_image": scrape_result.get("product_image")
+                    }
+                except Exception as e:
+                    print(f"⚠️ AI validation failed, using original data: {e}")
+                    return {
+                        "ingredients": ingredients,
+                        "extracted_text": extracted_text,
+                        "platform": scrape_result["platform"],
+                        "url": url,
+                        "is_estimated": False,
+                        "source": "url_extraction",
+                        "product_name": None,
+                        "product_image": scrape_result.get("product_image")
+                    }
             
             # If we have ingredient content but extraction failed, try direct parsing fallback
             if has_ingredient_content and not ingredients:
@@ -2792,16 +3052,39 @@ Return only the JSON array with ALL ingredients:"""
                         
                         if cleaned and len(cleaned) > 0:
                             print(f"Direct parsing extracted {len(cleaned)} ingredients")
-                            return {
-                                "ingredients": cleaned,
-                                "extracted_text": extracted_text,
-                                "platform": scrape_result["platform"],
-                                "url": url,
-                                "is_estimated": False,
-                                "source": "url_extraction",
-                                "product_name": None,
-                                "product_image": scrape_result.get("product_image")
-                            }
+                            
+                            # Validate with AI
+                            try:
+                                validated = await self.validate_extracted_data_with_ai(
+                                    ingredients=cleaned,
+                                    extracted_text=extracted_text,
+                                    product_name=None,
+                                    product_image=scrape_result.get("product_image")
+                                )
+                                print(f"✅ AI validation: {len(validated['ingredients'])} valid ingredients")
+                                
+                                return {
+                                    "ingredients": validated.get("ingredients", cleaned),
+                                    "extracted_text": validated.get("extracted_text", extracted_text),
+                                    "platform": scrape_result["platform"],
+                                    "url": url,
+                                    "is_estimated": False,
+                                    "source": "url_extraction",
+                                    "product_name": validated.get("product_name"),
+                                    "product_image": scrape_result.get("product_image")
+                                }
+                            except Exception as e:
+                                print(f"⚠️ AI validation failed: {e}")
+                                return {
+                                    "ingredients": cleaned,
+                                    "extracted_text": extracted_text,
+                                    "platform": scrape_result["platform"],
+                                    "url": url,
+                                    "is_estimated": False,
+                                    "source": "url_extraction",
+                                    "product_name": None,
+                                    "product_image": scrape_result.get("product_image")
+                                }
                 except Exception as e:
                     print(f"Direct parsing fallback failed: {e}")
                 
@@ -2812,16 +3095,39 @@ Return only the JSON array with ALL ingredients:"""
                     ingredients = await self.extract_ingredients_from_text(extracted_text[:12000])
                     if ingredients and len(ingredients) > 0:
                         print(f"Successfully extracted {len(ingredients)} ingredients on Claude retry")
-                        return {
-                            "ingredients": ingredients,
-                            "extracted_text": extracted_text,
-                            "platform": scrape_result["platform"],
-                            "url": url,
-                            "is_estimated": False,
-                            "source": "url_extraction",
-                            "product_name": None,
-                            "product_image": scrape_result.get("product_image")
-                        }
+                        
+                        # Validate with AI
+                        try:
+                            validated = await self.validate_extracted_data_with_ai(
+                                ingredients=ingredients,
+                                extracted_text=extracted_text,
+                                product_name=None,
+                                product_image=scrape_result.get("product_image")
+                            )
+                            print(f"✅ AI validation: {len(validated['ingredients'])} valid ingredients")
+                            
+                            return {
+                                "ingredients": validated.get("ingredients", ingredients),
+                                "extracted_text": validated.get("extracted_text", extracted_text),
+                                "platform": scrape_result["platform"],
+                                "url": url,
+                                "is_estimated": False,
+                                "source": "url_extraction",
+                                "product_name": validated.get("product_name"),
+                                "product_image": scrape_result.get("product_image")
+                            }
+                        except Exception as e:
+                            print(f"⚠️ AI validation failed: {e}")
+                            return {
+                                "ingredients": ingredients,
+                                "extracted_text": extracted_text,
+                                "platform": scrape_result["platform"],
+                                "url": url,
+                                "is_estimated": False,
+                                "source": "url_extraction",
+                                "product_name": None,
+                                "product_image": scrape_result.get("product_image")
+                            }
                 except Exception as e:
                     print(f"Claude retry also failed: {e}")
             
@@ -2839,28 +3145,68 @@ Return only the JSON array with ALL ingredients:"""
                 estimated_ingredients = await self.search_ingredients_by_product_name(product_name)
                 
                 if estimated_ingredients and len(estimated_ingredients) > 0:
-                    return {
-                        "ingredients": estimated_ingredients,
-                        "extracted_text": extracted_text,
-                        "platform": scrape_result["platform"],
-                        "url": url,
-                        "is_estimated": True,
-                        "source": "ai_search",
-                        "product_name": product_name,
-                        "product_image": scrape_result.get("product_image")
-                    }
+                    # Validate AI-estimated ingredients too
+                    try:
+                        validated = await self.validate_extracted_data_with_ai(
+                            ingredients=estimated_ingredients,
+                            extracted_text=extracted_text,
+                            product_name=product_name,
+                            product_image=scrape_result.get("product_image")
+                        )
+                        print(f"✅ AI validation for estimated ingredients: {len(validated['ingredients'])} valid")
+                        
+                        return {
+                            "ingredients": validated.get("ingredients", estimated_ingredients),
+                            "extracted_text": validated.get("extracted_text", extracted_text),
+                            "platform": scrape_result["platform"],
+                            "url": url,
+                            "is_estimated": True,
+                            "source": "ai_search",
+                            "product_name": validated.get("product_name", product_name),
+                            "product_image": scrape_result.get("product_image")
+                        }
+                    except Exception as e:
+                        print(f"⚠️ AI validation failed for estimated ingredients: {e}")
+                        return {
+                            "ingredients": estimated_ingredients,
+                            "extracted_text": extracted_text,
+                            "platform": scrape_result["platform"],
+                            "url": url,
+                            "is_estimated": True,
+                            "source": "ai_search",
+                            "product_name": product_name,
+                            "product_image": scrape_result.get("product_image")
+                        }
             
-            # If fallback also failed, return empty
-            return {
-                "ingredients": [],
-                "extracted_text": extracted_text,
-                "platform": scrape_result["platform"],
-                "url": url,
-                "is_estimated": False,
-                "source": "url_extraction",
-                "product_name": product_name,
-                "product_image": scrape_result.get("product_image")
-            }
+            # If fallback also failed, validate empty result too
+            try:
+                validated = await self.validate_extracted_data_with_ai(
+                    ingredients=[],
+                    extracted_text=extracted_text,
+                    product_name=product_name,
+                    product_image=scrape_result.get("product_image")
+                )
+                return {
+                    "ingredients": validated.get("ingredients", []),
+                    "extracted_text": validated.get("extracted_text", extracted_text),
+                    "platform": scrape_result["platform"],
+                    "url": url,
+                    "is_estimated": False,
+                    "source": "url_extraction",
+                    "product_name": validated.get("product_name", product_name),
+                    "product_image": scrape_result.get("product_image")
+                }
+            except:
+                return {
+                    "ingredients": [],
+                    "extracted_text": extracted_text,
+                    "platform": scrape_result["platform"],
+                    "url": url,
+                    "is_estimated": False,
+                    "source": "url_extraction",
+                    "product_name": product_name,
+                    "product_image": scrape_result.get("product_image")
+                }
             
         except Exception as e:
             error_msg = str(e)

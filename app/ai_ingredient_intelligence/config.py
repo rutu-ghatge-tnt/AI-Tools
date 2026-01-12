@@ -35,3 +35,4 @@ ALLOWED_PDF_TYPES = ["application/pdf"]
 SERPER_API_KEY = os.getenv("SERPER_API")
 AWS_S3_BUCKET_PLATFORM_LOGOS = "skinbb-main"
 AWS_S3_PLATFORM_LOGOS_PREFIX = "platform_logos"
+AWS_S3_REGION = os.getenv("AWS_S3_REGION", "ap-south-1")  # Default to Mumbai region

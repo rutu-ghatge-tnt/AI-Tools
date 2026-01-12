@@ -82,7 +82,7 @@ async def fetch_product_from_url(url: str, force_refresh: bool = False) -> Dict[
         # Extract ingredients and basic info
         result = await scraper.extract_ingredients_from_url(url)
         
-        # Get extracted text for parsing product details
+        # Get extracted text for parsing product details (already validated by extract_ingredients_from_url)
         extracted_text = result.get("extracted_text", "")
         ingredients = result.get("ingredients", [])
         
@@ -100,7 +100,7 @@ async def fetch_product_from_url(url: str, force_refresh: bool = False) -> Dict[
         if not product_image:
             product_image = "🧴"
         
-        # Extract product name - prioritize from result, fallback to text extraction
+        # Extract product name - prioritize from result (already validated), fallback to text extraction
         product_name = result.get("product_name")
         if not product_name or product_name == "Unknown Product":
             product_name = _extract_product_name_from_text(extracted_text)
@@ -108,6 +108,27 @@ async def fetch_product_from_url(url: str, force_refresh: bool = False) -> Dict[
             product_name = _extract_product_name_from_url(url)
         if not product_name:
             product_name = "Unknown Product"
+        
+        # Final AI validation of all extracted data before returning
+        try:
+            print("🔍 Running final AI validation on all extracted data...")
+            validated = await scraper.validate_extracted_data_with_ai(
+                ingredients=ingredients,
+                extracted_text=extracted_text,
+                product_name=product_name,
+                product_image=product_image
+            )
+            
+            # Use validated data
+            ingredients = validated.get("ingredients", ingredients)
+            extracted_text = validated.get("extracted_text", extracted_text)
+            product_name = validated.get("product_name", product_name) or "Unknown Product"
+            
+            if validated.get("validation_notes"):
+                print(f"✅ Validation notes: {validated['validation_notes']}")
+            print(f"✅ Final validation complete: {len(ingredients)} ingredients, product: {product_name[:50]}")
+        except Exception as e:
+            print(f"⚠️ Final AI validation failed, using original data: {e}")
         
         # Extract brand - try multiple sources
         try:
