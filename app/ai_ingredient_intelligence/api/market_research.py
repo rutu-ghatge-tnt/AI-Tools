@@ -10,7 +10,7 @@ API endpoints for market research functionality including:
 Extracted from analyze_inci.py for better modularity.
 """
 
-from fastapi import APIRouter, HTTPException, Depends, Query, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, Query, Path, BackgroundTasks
 import time
 import os
 import json
@@ -252,36 +252,13 @@ async def get_market_research_history(
 @router.get("/market-research-history/{history_id}/details", response_model=MarketResearchDetailResponseV2)
 async def get_market_research_history_detail(
     history_id: str,
-    page: int = Query(1, ge=1, description="Page number (starts from 1)"),
-    page_size: int = Query(10, ge=1, le=100, description="Number of products per page (max 100)"),
-    unlock_page: bool = Query(False, description="Flag to unlock page after credits are deducted (frontend should set this to true after calling credit deduction API)"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
-    Get full details of a specific market research history item (includes all large fields)
+    Get full details of a specific market research history item (without products).
     
-    This endpoint returns the complete data including:
-    - Full research_result with PAGINATED products (products array is paginated)
-    - All other fields remain constant (ai_interpretation, category info, etc.)
-    
-    Query Parameters:
-    - page: Page number (default: 1)
-    - page_size: Number of products per page (default: 10, max: 100)
-    - unlock_page: Flag to unlock page after credits are deducted (frontend should set this to true after calling credit deduction API)
-    
-    Credit-Based Pagination:
-    - Pages 1-2 are free (automatically unlocked)
-    - Pages 3+ require credits (must be unlocked via unlock_page flag)
-    - Frontend should call credit deduction API first, then call this endpoint with unlock_page=true
-    - Once a page is unlocked, it remains unlocked for that history_id
-    
-    Pagination:
-    - Only the "products" array in research_result is paginated
-    - All other fields (ai_interpretation, primary_category, subcategory, etc.) remain constant
-    - Pagination metadata (page, page_size, total_pages, total_products) is included in research_result
-    
-    Use this endpoint when you need to display the full research results with paginated products.
-    The list endpoint (/market-research-history) only returns summaries.
+    This endpoint returns research metadata and analysis data.
+    Products are available via the paginated endpoint: /market-research/products/{history_id}
     
     Authentication:
     - Requires JWT token in Authorization header
@@ -298,11 +275,7 @@ async def get_market_research_history_detail(
         if not ObjectId.is_valid(history_id):
             raise HTTPException(status_code=400, detail="Invalid history ID")
         
-        # 🔹 EFFICIENT DB-LEVEL PAGINATION: Use MongoDB aggregation with $slice
-        # This reduces network transfer by only sending requested products
-        # Note: MongoDB still loads full document, but only requested slice is transferred over network
-        
-        # First, get total count and other fields (lightweight query)
+        # Get history item metadata (without products)
         item_meta = await market_research_history_col.find_one(
             {"_id": ObjectId(history_id), "user_id": user_id},
             {
@@ -325,8 +298,6 @@ async def get_market_research_history_detail(
                 "available_keywords": 1,
                 "platforms": 1,
                 "platforms_fetched_at": 1,
-                "accessed_pages": 1,  # Include accessed_pages for credit-based pagination
-                "research_result.total_matched": 1,  # Get total count
                 "research_result.extracted_ingredients": 1,
                 "research_result.processing_time": 1,
                 "research_result.input_type": 1,
@@ -342,242 +313,7 @@ async def get_market_research_history_detail(
         if not item_meta:
             raise HTTPException(status_code=404, detail="History item not found")
         
-        # Get total products count
         research_result = item_meta.get("research_result", {})
-        total_products = research_result.get("total_matched", 0)
-        
-        # ========================================================================
-        # CREDIT-BASED PAGINATION LOGIC
-        # ========================================================================
-        # Get accessed_pages from history (pages user has unlocked)
-        accessed_pages = item_meta.get("accessed_pages", [])
-        
-        # Pages 1-2 are free
-        FREE_PAGES_LIMIT = 2
-        
-        # Check if page requires credit
-        page_requires_credit = page > FREE_PAGES_LIMIT
-        is_page_unlocked = page in accessed_pages
-        
-        # Handle credit-based access control
-        if page_requires_credit and not is_page_unlocked:
-            # Page requires credit but is not unlocked
-            if unlock_page:
-                # Frontend has deducted credits - unlock the page
-                await market_research_history_col.update_one(
-                    {"_id": ObjectId(history_id)},
-                    {"$addToSet": {"accessed_pages": page}}  # $addToSet prevents duplicates
-                )
-                # Update accessed_pages for response
-                accessed_pages.append(page)
-                is_page_unlocked = True
-            else:
-                # Page not unlocked and no unlock flag - return error
-                raise HTTPException(
-                    status_code=402,
-                    detail=f"This page requires credits. Please unlock it first. Page {page} requires payment. Unlocked pages: {sorted(accessed_pages)}"
-                )
-        elif not page_requires_credit:
-            # Free page - add to accessed_pages if not already there (for tracking)
-            if page not in accessed_pages:
-                await market_research_history_col.update_one(
-                    {"_id": ObjectId(history_id)},
-                    {"$addToSet": {"accessed_pages": page}}
-                )
-                accessed_pages.append(page)
-        # ========================================================================
-        
-        # If no products, return early with new format
-        if total_products == 0:
-            # Handle input_data - convert to array format
-            input_data_raw = item_meta.get("input_data", "")
-            if isinstance(input_data_raw, list):
-                input_data_array = [str(x) for x in input_data_raw if x]
-            elif isinstance(input_data_raw, str):
-                # Split comma-separated string into array
-                input_data_array = [x.strip() for x in input_data_raw.split(",") if x.strip()]
-            else:
-                input_data_array = [str(input_data_raw)] if input_data_raw else ""
-            
-            # Get category info
-            primary_category = item_meta.get("primary_category") or research_result.get("primary_category")
-            subcategory = item_meta.get("subcategory") or research_result.get("subcategory")
-            category_confidence = item_meta.get("category_confidence") or research_result.get("category_confidence")
-            ai_interpretation = item_meta.get("ai_interpretation") or research_result.get("ai_interpretation")
-            
-            # Build analysis object
-            processing_time = research_result.get("processing_time", 0)
-            
-            # Initialize selected_keywords if null (for backward compatibility with old records)
-            selected_keywords_raw = item_meta.get("selected_keywords")
-            if selected_keywords_raw is None:
-                selected_keywords = ProductKeywords().model_dump_exclude_empty()
-            elif isinstance(selected_keywords_raw, dict):
-                # Already a dict, use as-is but ensure it's properly formatted
-                # If it's an empty dict, ensure it's a valid ProductKeywords structure
-                if not selected_keywords_raw:
-                    selected_keywords = ProductKeywords().model_dump_exclude_empty()
-                else:
-                    # Validate it's a proper ProductKeywords dict by trying to create object
-                    try:
-                        ProductKeywords(**selected_keywords_raw)
-                        selected_keywords = selected_keywords_raw
-                    except:
-                        # If validation fails, use empty ProductKeywords
-                        selected_keywords = ProductKeywords().model_dump_exclude_empty()
-            else:
-                try:
-                    if hasattr(selected_keywords_raw, 'model_dump_exclude_empty'):
-                        selected_keywords = selected_keywords_raw.model_dump_exclude_empty()
-                    elif hasattr(selected_keywords_raw, 'dict'):
-                        selected_keywords = selected_keywords_raw.dict(exclude_none=True)
-                    else:
-                        selected_keywords = dict(selected_keywords_raw) if selected_keywords_raw else ProductKeywords().model_dump_exclude_empty()
-                except:
-                    selected_keywords = ProductKeywords().model_dump_exclude_empty()
-            
-            # Ensure available_keywords is also properly formatted
-            available_keywords_raw = item_meta.get("available_keywords")
-            if available_keywords_raw is None:
-                available_keywords = None
-            elif isinstance(available_keywords_raw, dict):
-                available_keywords = available_keywords_raw
-            else:
-                try:
-                    if hasattr(available_keywords_raw, 'model_dump_exclude_empty'):
-                        available_keywords = available_keywords_raw.model_dump_exclude_empty()
-                    elif hasattr(available_keywords_raw, 'dict'):
-                        available_keywords = available_keywords_raw.dict(exclude_none=True)
-                    else:
-                        available_keywords = dict(available_keywords_raw) if available_keywords_raw else None
-                except:
-                    available_keywords = None
-            
-            # Ensure selected_keywords is always a dict (even if empty)
-            # Make sure it's explicitly set - empty dict {} is valid and should be included
-            if selected_keywords is None:
-                selected_keywords = {}
-            elif not isinstance(selected_keywords, dict):
-                # Convert to dict if it's not already
-                try:
-                    if hasattr(selected_keywords, 'model_dump_exclude_empty'):
-                        selected_keywords = selected_keywords.model_dump_exclude_empty()
-                    elif hasattr(selected_keywords, 'dict'):
-                        selected_keywords = selected_keywords.dict(exclude_none=True)
-                    else:
-                        selected_keywords = dict(selected_keywords) if selected_keywords else {}
-                except:
-                    selected_keywords = {}
-            
-            # Debug: Print selected_keywords to verify it's being set
-            print(f"[DEBUG] selected_keywords (empty case) before adding to analysis_data: {selected_keywords}, type: {type(selected_keywords)}, is_empty: {selected_keywords == {}}")
-            
-            analysis_data = {
-                "processing_time": processing_time,
-                "category": {
-                    "primary": primary_category or None,
-                    "subcategory": subcategory or None,
-                    "confidence": category_confidence or None
-                },
-                "ai_interpretation": ai_interpretation,
-                "structured_analysis": item_meta.get("structured_analysis"),
-                "selected_keywords": selected_keywords,  # Always included, even if empty dict {}
-                "available_keywords": available_keywords  # Now properly formatted as dict
-            }
-            
-            # Debug: Verify selected_keywords is in analysis_data
-            print(f"[DEBUG] analysis_data['selected_keywords'] (empty case): {analysis_data.get('selected_keywords')}, type: {type(analysis_data.get('selected_keywords'))}, keys: {list(analysis_data.get('selected_keywords', {}).keys())}")
-            
-            # Build research section
-            platforms = item_meta.get("platforms")
-            platforms_fetched_at = item_meta.get("platforms_fetched_at")
-            
-            research_section = {
-                "id": str(item_meta["_id"]),
-                "user_id": str(item_meta.get("user_id", "")),
-                "name": item_meta.get("name", ""),
-                "tag": item_meta.get("tag"),
-                "input_type": item_meta.get("input_type", ""),
-                "input_data": input_data_array,
-                "input_url": item_meta.get("input_url"),
-                "analysis": analysis_data,
-                "notes": item_meta.get("notes"),
-                "created_at": item_meta.get("created_at", ""),
-                "platforms": platforms,
-                "platforms_fetched_at": platforms_fetched_at
-            }
-            
-            # Build products section with empty data
-            # Determine next page unlock status
-            next_page = page + 1
-            next_page_requires_credit = next_page > FREE_PAGES_LIMIT
-            next_page_unlocked = next_page in accessed_pages if next_page_requires_credit else True
-            
-            # Calculate total_unlocked_items based on free pages + unlocked pages
-            free_items = FREE_PAGES_LIMIT * page_size
-            unlocked_pages_beyond_free = [p for p in accessed_pages if p > FREE_PAGES_LIMIT]
-            additional_unlocked_items = len(unlocked_pages_beyond_free) * page_size
-            total_unlocked_items = min(free_items + additional_unlocked_items, 0)  # 0 since total_items is 0
-            
-            pagination_section = {
-                "page": page,
-                "page_size": page_size,
-                "total_pages": 0,
-                "total_items": 0,
-                "total_unlocked_items": total_unlocked_items,
-                "page_requires_credit": page_requires_credit,
-                "is_unlocked": is_page_unlocked,
-                "unlocked_pages": sorted(accessed_pages),
-                "next_page_requires_credit": next_page_requires_credit,
-                "next_page_unlocked": next_page_unlocked
-            }
-            
-            products_section = {
-                "data": [],
-                "pagination": pagination_section
-            }
-            
-            # Ensure selected_keywords is explicitly in analysis before returning
-            if "analysis" in research_section and "selected_keywords" not in research_section["analysis"]:
-                research_section["analysis"]["selected_keywords"] = {}
-            elif "analysis" in research_section and research_section["analysis"].get("selected_keywords") is None:
-                research_section["analysis"]["selected_keywords"] = {}
-            
-            # Final debug check
-            print(f"[DEBUG] Final check (empty case) - research_section['analysis']['selected_keywords']: {research_section.get('analysis', {}).get('selected_keywords')}")
-            
-            return MarketResearchDetailResponseV2(
-                research=research_section,
-                products=products_section
-            )
-        
-        # Use aggregation to slice products array at DB level
-        pipeline = [
-            {"$match": {"_id": ObjectId(history_id), "user_id": user_id}},
-            {
-                "$project": {
-                    # Slice products array: skip (page-1)*page_size, take page_size
-                    "products_slice": {
-                        "$slice": [
-                            {"$ifNull": ["$research_result.products", []]},
-                            (page - 1) * page_size,
-                            page_size
-                        ]
-                    }
-                }
-            }
-        ]
-        
-        cursor = market_research_history_col.aggregate(pipeline)
-        products_result = await cursor.to_list(length=1)
-        paginated_products = products_result[0].get("products_slice", []) if products_result else []
-        
-        # Calculate pagination metadata
-        # Ensure page_size is valid (should be handled by Query validation, but double-check for safety)
-        page_size = max(1, min(page_size, 100))  # Ensure page_size is between 1 and 100
-        total_pages = (total_products + page_size - 1) // page_size if total_products > 0 else 0
-        
-        # Note: If page exceeds total_pages, MongoDB $slice will return empty array, which is correct behavior
         
         # Handle input_data - convert to array format
         input_data_raw = item_meta.get("input_data", "")
@@ -660,9 +396,6 @@ async def get_market_research_history_detail(
             except:
                 selected_keywords = {}
         
-        # Debug: Print selected_keywords to verify it's being set
-        print(f"[DEBUG] selected_keywords before adding to analysis_data: {selected_keywords}, type: {type(selected_keywords)}, is_empty: {selected_keywords == {}}")
-        
         analysis_data = {
             "processing_time": processing_time,
             "category": {
@@ -675,9 +408,6 @@ async def get_market_research_history_detail(
             "selected_keywords": selected_keywords,  # Always included, even if empty dict {}
             "available_keywords": available_keywords  # Now properly formatted as dict
         }
-        
-        # Debug: Verify selected_keywords is in analysis_data
-        print(f"[DEBUG] analysis_data['selected_keywords']: {analysis_data.get('selected_keywords')}, type: {type(analysis_data.get('selected_keywords'))}, keys: {list(analysis_data.get('selected_keywords', {}).keys())}")
         
         # Build research section
         platforms = item_meta.get("platforms")
@@ -698,56 +428,14 @@ async def get_market_research_history_detail(
             "platforms_fetched_at": platforms_fetched_at
         }
         
-        # Debug: Verify selected_keywords is in research_section
-        print(f"[DEBUG] research_section['analysis']['selected_keywords']: {research_section.get('analysis', {}).get('selected_keywords')}")
-        
-        # Build products section with pagination
-        # Determine next page unlock status
-        next_page = page + 1
-        next_page_requires_credit = next_page > FREE_PAGES_LIMIT
-        next_page_unlocked = next_page in accessed_pages if next_page_requires_credit else True
-        
-        # Calculate total_unlocked_items based on free pages + unlocked pages
-        # Free items: Pages 1-2 are always free
-        free_items = FREE_PAGES_LIMIT * page_size
-        # Additional unlocked items: Pages beyond FREE_PAGES_LIMIT that have been unlocked
-        unlocked_pages_beyond_free = [p for p in accessed_pages if p > FREE_PAGES_LIMIT]
-        additional_unlocked_items = len(unlocked_pages_beyond_free) * page_size
-        # Total unlocked items = free items + additional unlocked items, capped at total_products
-        total_unlocked_items = min(free_items + additional_unlocked_items, total_products)
-        
-        pagination_section = {
-            "page": page,
-            "page_size": page_size,
-            "total_pages": total_pages,
-            "total_items": total_products,
-            "total_unlocked_items": total_unlocked_items,
-            "page_requires_credit": page_requires_credit,
-            "is_unlocked": is_page_unlocked,
-            "unlocked_pages": sorted(accessed_pages),
-            "next_page_requires_credit": next_page_requires_credit,
-            "next_page_unlocked": next_page_unlocked
-        }
-        
-        products_section = {
-            "data": paginated_products,
-            "pagination": pagination_section
-        }
-        
-        print(f"[DB PAGINATION] History {history_id}: Page {page}/{total_pages}, Showing {len(paginated_products)}/{total_products} products (DB-level slice)")
-        
         # Ensure selected_keywords is explicitly in analysis before returning
         if "analysis" in research_section and "selected_keywords" not in research_section["analysis"]:
             research_section["analysis"]["selected_keywords"] = {}
         elif "analysis" in research_section and research_section["analysis"].get("selected_keywords") is None:
             research_section["analysis"]["selected_keywords"] = {}
         
-        # Final debug check
-        print(f"[DEBUG] Final check - research_section['analysis']['selected_keywords']: {research_section.get('analysis', {}).get('selected_keywords')}")
-        
         return MarketResearchDetailResponseV2(
-            research=research_section,
-            products=products_section
+            research=research_section
         )
         
     except HTTPException:
@@ -1602,9 +1290,9 @@ async def update_market_research_keywords(
         )
 
 
-@router.get("/market-research/products/paginated", response_model=MarketResearchPaginatedResponse)
+@router.get("/market-research/products/{history_id}", response_model=MarketResearchPaginatedResponse)
 async def market_research_products_paginated(
-    history_id: str = Query(..., description="History item ID"),
+    history_id: str = Path(..., description="History item ID"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(10, ge=1, le=100, description="Items per page"),
     sort_by: str = Query("match_score", description="Sort by: price_low, price_high, match_score"),
@@ -1623,8 +1311,10 @@ async def market_research_products_paginated(
     - Frontend should call credit deduction API first, then call this endpoint with unlock_page=true
     - Once a page is unlocked, it remains unlocked for that history_id
     
-    Query Parameters:
+    Path Parameters:
     - history_id: History item ID (required)
+    
+    Query Parameters:
     - page: Page number (default: 1)
     - page_size: Items per page (default: 10, max: 100)
     - sort_by: Sort method - "price_low", "price_high", or "match_score" (default: "match_score")
@@ -1632,8 +1322,8 @@ async def market_research_products_paginated(
     - unlock_page: Set to true after deducting credits via third-party API (default: false)
     
     Example:
-    GET /api/market-research/products/paginated?history_id=abc123&page=1&page_size=20&sort_by=price_low
-    GET /api/market-research/products/paginated?history_id=abc123&page=3&unlock_page=true
+    GET /api/market-research/products/abc123?page=1&page_size=20&sort_by=price_low
+    GET /api/market-research/products/abc123?page=3&unlock_page=true
     """
     start = time.time()
     
@@ -1792,86 +1482,22 @@ async def market_research_products_paginated(
         sorted_products = sort_products(filtered_products, sort_by)
         
         # Step 4: Paginate
-        total_matched = len(sorted_products)  # Total within accessible + filtered range
-        totalItem = len(accessible_products)  # Total number of accessible items
-        total_pages = (total_matched + page_size - 1) // page_size if total_matched > 0 else 0
+        total_item = len(sorted_products)  # Total within accessible + filtered range
+        total_unlock_item = len(accessible_products)  # Total number of unlocked/accessible items
+        total_pages = (total_item + page_size - 1) // page_size if total_item > 0 else 0
         start_idx = (page - 1) * page_size
         end_idx = start_idx + page_size
         paginated_products = sorted_products[start_idx:end_idx]
         
-        # Build filters_applied
-        filters_applied = {}
-        if selected_keywords:
-            filters_applied["keywords"] = selected_keywords.model_dump_exclude_empty()
-        if additional_filters:
-            filters_applied.update(additional_filters)
-        
-        processing_time = round(time.time() - start, 2)
-        
-        # Determine unlock status based on accessible_limit
-        # Calculate if next page would require unlocking more products
-        next_page_start = page * page_size
-        next_page_requires_unlock = next_page_start >= accessible_limit
-        # Check if user can unlock more (they have products beyond accessible_limit)
-        can_unlock_more = len(ranked_products) > accessible_limit
-        
-        # Get extracted_ingredients for page 1 response
-        extracted_ingredients = research_result.get("extracted_ingredients", []) if page == 1 else None
-        
-        # 🔹 Return metadata only on page 1, subsequent pages return only products + pagination
-        if page == 1:
-            # Page 1: Return full response with metadata
-            return MarketResearchPaginatedResponse(
-                products=paginated_products,
-                total_matched=total_matched,
-                totalItem=totalItem,
-                page=page,
-                page_size=page_size,
-                total_pages=total_pages,
-                sort_by=sort_by,
-                filters_applied=filters_applied,
-                processing_time=processing_time,
-                extracted_ingredients=extracted_ingredients,
-                input_type=history_item.get("input_type", "inci"),
-                ai_interpretation=history_item.get("ai_interpretation"),
-                primary_category=available_keywords.main_category if available_keywords else history_item.get("primary_category"),
-                subcategory=available_keywords.subcategory if available_keywords else history_item.get("subcategory"),
-                category_confidence=history_item.get("category_confidence"),
-                history_id=history_id,
-                # Deprecated fields (kept for backward compatibility)
-                page_requires_credit=next_page_requires_unlock,
-                is_unlocked=not next_page_requires_unlock,
-                unlocked_pages=[],
-                next_page_requires_credit=next_page_requires_unlock,
-                next_page_unlocked=not next_page_requires_unlock
-            )
-        else:
-            # Page > 1: Return only products and pagination info (no metadata)
-            return MarketResearchPaginatedResponse(
-                products=paginated_products,
-                total_matched=total_matched,
-                totalItem=totalItem,
-                page=page,
-                page_size=page_size,
-                total_pages=total_pages,
-                sort_by=sort_by,
-                filters_applied=filters_applied,
-                processing_time=processing_time,
-                # Metadata fields set to None for pages > 1
-                extracted_ingredients=None,
-                input_type=None,
-                ai_interpretation=None,
-                primary_category=None,
-                subcategory=None,
-                category_confidence=None,
-                history_id=None,
-                # Deprecated fields (kept for backward compatibility)
-                page_requires_credit=next_page_requires_unlock,
-                is_unlocked=not next_page_requires_unlock,
-                unlocked_pages=[],
-                next_page_requires_credit=next_page_requires_unlock,
-                next_page_unlocked=not next_page_requires_unlock
-            )
+        # Return simplified response
+        return MarketResearchPaginatedResponse(
+            products=paginated_products,
+            total_unlock_item=total_unlock_item,
+            total_item=total_item,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages
+        )
         
     except HTTPException:
         raise
