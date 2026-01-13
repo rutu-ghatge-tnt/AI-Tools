@@ -226,7 +226,7 @@ async def get_market_research_history(
                 "input_data": input_data,
                 "notes": item.get("notes"),
                 "created_at": item.get("created_at"),
-                "status": item.get("status"),
+                "status": item.get("status") or "in_progress",  # Default to "in_progress" if status is null (failed status should be preserved)
                 "has_research": research_result is not None,
                 "total_products": total_products
             }
@@ -423,7 +423,7 @@ async def get_market_research_history_detail(
             "input_url": item_meta.get("input_url"),
             "analysis": analysis_data,
             "notes": item_meta.get("notes"),
-            "status": item_meta.get("status"),
+            "status": item_meta.get("status") or "in_progress",  # Default to "in_progress" if status is null (failed status should be preserved)
             "created_at": item_meta.get("created_at", ""),
             "platforms": platforms,
             "platforms_fetched_at": platforms_fetched_at
@@ -1211,11 +1211,33 @@ async def market_research_analyze(
         )
         
     except HTTPException:
+        # 🔹 Auto-save: Update status to "failed" if history_id exists
+        if 'history_id' in locals() and history_id and 'user_id' in locals() and user_id:
+            try:
+                await market_research_history_col.update_one(
+                    {"_id": ObjectId(history_id), "user_id": user_id},
+                    {"$set": {"status": "failed"}}
+                )
+                print(f"[AUTO-SAVE] Updated history {history_id} status to 'failed'")
+            except Exception as update_error:
+                print(f"[AUTO-SAVE] Warning: Failed to update status to 'failed': {update_error}")
         raise
     except Exception as e:
         print(f"Error in market research analyze: {e}")
         import traceback
         traceback.print_exc()
+        
+        # 🔹 Auto-save: Update status to "failed" if history_id exists
+        if 'history_id' in locals() and history_id and 'user_id' in locals() and user_id:
+            try:
+                await market_research_history_col.update_one(
+                    {"_id": ObjectId(history_id), "user_id": user_id},
+                    {"$set": {"status": "failed"}}
+                )
+                print(f"[AUTO-SAVE] Updated history {history_id} status to 'failed'")
+            except Exception as update_error:
+                print(f"[AUTO-SAVE] Warning: Failed to update status to 'failed': {update_error}")
+        
         raise HTTPException(
             status_code=500,
             detail=f"Failed to analyze product: {str(e)}"
@@ -1278,7 +1300,8 @@ async def update_market_research_keywords(
             success=True,
             message="Keywords updated successfully",
             selected_keywords=selected_keywords,
-            history_id=history_id
+            history_id=history_id,
+            status=existing_item.get("status") or "in_progress"  # Include current status
         )
         
     except HTTPException:
@@ -2951,6 +2974,8 @@ async def market_research(
 async def market_research_products(
     history_id: str,
     payload: dict,
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(10, ge=1, le=100, description="Items per page"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
     """
@@ -3235,24 +3260,42 @@ async def market_research_products(
         
         processing_time = time.time() - start
         
+        # Apply pagination
+        total_matched = len(matched_products)
+        total_pages = (total_matched + page_size - 1) // page_size if total_matched > 0 else 0
+        
+        # For POST endpoint, assume all items are unlocked (no credit system)
+        total_unlock_item = total_matched
+        total_unlock_pages = (total_unlock_item + page_size - 1) // page_size if total_unlock_item > 0 else 0
+        
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        paginated_products = matched_products[start_idx:end_idx]
+        
         print(f"\n{'='*60}")
         print(f"Market Research Products Summary:")
-        print(f"  Total products matched: {len(matched_products)}")
+        print(f"  Total products matched: {total_matched}")
+        print(f"  Page: {page}/{total_pages}")
+        print(f"  Items on this page: {len(paginated_products)}")
         print(f"  Category: {primary_category}/{subcategory}")
         print(f"  Processing time: {processing_time:.2f}s")
         print(f"{'='*60}\n")
         
-        # Return response with filtered products
+        # Return response with paginated products
         response = MarketResearchProductsResponse(
-            products=matched_products,
+            products=paginated_products,
             extracted_ingredients=ingredients,
-            total_matched=len(matched_products),
+            total_matched=total_matched,
             processing_time=round(processing_time, 2),
             input_type=input_type,
             ai_interpretation=ai_interpretation,
             primary_category=primary_category,
             subcategory=subcategory,
-            category_confidence=category_confidence
+            category_confidence=category_confidence,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages,
+            total_unlock_pages=total_unlock_pages
         )
         
         return response

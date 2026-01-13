@@ -410,6 +410,7 @@ class MarketResearchProductsResponse(BaseModel):
     page: int = Field(1, description="Current page number")
     page_size: int = Field(10, description="Number of products per page")
     total_pages: int = Field(0, description="Total number of pages")
+    total_unlock_pages: int = Field(0, description="Total number of pages based on unlocked items")
 
 
 class MarketResearchOverviewRequest(BaseModel):
@@ -643,6 +644,7 @@ class UpdateKeywordsResponse(BaseModel):
     message: str = Field(..., description="Response message")
     selected_keywords: ProductKeywords = Field(..., description="Updated selected keywords")
     history_id: str = Field(..., description="History item ID")
+    status: Optional[str] = Field(None, description="Current status of the history item")
 
 
 class MarketResearchWithKeywordsRequest(BaseModel):
