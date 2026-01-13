@@ -409,9 +409,38 @@ async def get_market_research_history_detail(
             processing_time = research_result.get("processing_time", 0)
             
             # Initialize selected_keywords if null (for backward compatibility with old records)
-            selected_keywords = item_meta.get("selected_keywords")
-            if selected_keywords is None:
+            selected_keywords_raw = item_meta.get("selected_keywords")
+            if selected_keywords_raw is None:
                 selected_keywords = ProductKeywords().model_dump_exclude_empty()
+            elif isinstance(selected_keywords_raw, dict):
+                selected_keywords = selected_keywords_raw
+            else:
+                try:
+                    if hasattr(selected_keywords_raw, 'model_dump_exclude_empty'):
+                        selected_keywords = selected_keywords_raw.model_dump_exclude_empty()
+                    elif hasattr(selected_keywords_raw, 'dict'):
+                        selected_keywords = selected_keywords_raw.dict(exclude_none=True)
+                    else:
+                        selected_keywords = dict(selected_keywords_raw) if selected_keywords_raw else ProductKeywords().model_dump_exclude_empty()
+                except:
+                    selected_keywords = ProductKeywords().model_dump_exclude_empty()
+            
+            # Ensure available_keywords is also properly formatted
+            available_keywords_raw = item_meta.get("available_keywords")
+            if available_keywords_raw is None:
+                available_keywords = None
+            elif isinstance(available_keywords_raw, dict):
+                available_keywords = available_keywords_raw
+            else:
+                try:
+                    if hasattr(available_keywords_raw, 'model_dump_exclude_empty'):
+                        available_keywords = available_keywords_raw.model_dump_exclude_empty()
+                    elif hasattr(available_keywords_raw, 'dict'):
+                        available_keywords = available_keywords_raw.dict(exclude_none=True)
+                    else:
+                        available_keywords = dict(available_keywords_raw) if available_keywords_raw else None
+                except:
+                    available_keywords = None
             
             analysis_data = {
                 "processing_time": processing_time,
@@ -422,8 +451,8 @@ async def get_market_research_history_detail(
                 },
                 "ai_interpretation": ai_interpretation,
                 "structured_analysis": item_meta.get("structured_analysis"),
-                "selected_keywords": selected_keywords,
-                "available_keywords": item_meta.get("available_keywords")
+                "selected_keywords": selected_keywords,  # Now properly formatted as dict
+                "available_keywords": available_keywords  # Now properly formatted as dict
             }
             
             # Build research section
@@ -517,9 +546,40 @@ async def get_market_research_history_detail(
         processing_time = research_result.get("processing_time", 0)
         
         # Initialize selected_keywords if null (for backward compatibility with old records)
-        selected_keywords = item_meta.get("selected_keywords")
-        if selected_keywords is None:
+        selected_keywords_raw = item_meta.get("selected_keywords")
+        if selected_keywords_raw is None:
             selected_keywords = ProductKeywords().model_dump_exclude_empty()
+        elif isinstance(selected_keywords_raw, dict):
+            # Already a dict, use as-is
+            selected_keywords = selected_keywords_raw
+        else:
+            # Try to convert to dict if it's a ProductKeywords object
+            try:
+                if hasattr(selected_keywords_raw, 'model_dump_exclude_empty'):
+                    selected_keywords = selected_keywords_raw.model_dump_exclude_empty()
+                elif hasattr(selected_keywords_raw, 'dict'):
+                    selected_keywords = selected_keywords_raw.dict(exclude_none=True)
+                else:
+                    selected_keywords = dict(selected_keywords_raw) if selected_keywords_raw else ProductKeywords().model_dump_exclude_empty()
+            except:
+                selected_keywords = ProductKeywords().model_dump_exclude_empty()
+        
+        # Ensure available_keywords is also properly formatted
+        available_keywords_raw = item_meta.get("available_keywords")
+        if available_keywords_raw is None:
+            available_keywords = None
+        elif isinstance(available_keywords_raw, dict):
+            available_keywords = available_keywords_raw
+        else:
+            try:
+                if hasattr(available_keywords_raw, 'model_dump_exclude_empty'):
+                    available_keywords = available_keywords_raw.model_dump_exclude_empty()
+                elif hasattr(available_keywords_raw, 'dict'):
+                    available_keywords = available_keywords_raw.dict(exclude_none=True)
+                else:
+                    available_keywords = dict(available_keywords_raw) if available_keywords_raw else None
+            except:
+                available_keywords = None
         
         analysis_data = {
             "processing_time": processing_time,
@@ -530,8 +590,8 @@ async def get_market_research_history_detail(
             },
             "ai_interpretation": ai_interpretation,
             "structured_analysis": item_meta.get("structured_analysis"),
-            "selected_keywords": selected_keywords,
-            "available_keywords": item_meta.get("available_keywords")
+            "selected_keywords": selected_keywords,  # Now properly formatted as dict
+            "available_keywords": available_keywords  # Now properly formatted as dict
         }
         
         # Build research section
@@ -979,6 +1039,54 @@ def sort_products(products: List[Dict], sort_by: str) -> List[Dict]:
         return products  # Default: no sort
 
 
+def compute_base_ranking_and_assign_sequences(products: List[Dict]) -> List[Dict]:
+    """
+    Compute base ranking by match_score and assign sequence numbers.
+    
+    This creates a fixed global ranking that never changes with filters/sorting.
+    Sequence 1 = best match (highest match_score), Sequence 2 = second best, etc.
+    
+    Args:
+        products: List of product dictionaries with match_score field
+        
+    Returns:
+        List of products with 'sequence' field added (1-indexed)
+    """
+    if not products:
+        return []
+    
+    # Sort by match_score (descending) - this is the BASE RANKING
+    ranked_products = sorted(
+        products,
+        key=lambda x: (
+            x.get("match_score", 0),  # Primary: match_score
+            x.get("match_percentage", 0),  # Secondary: match_percentage
+            x.get("active_match_count", 0),  # Tertiary: active_match_count
+        ),
+        reverse=True
+    )
+    
+    # Assign sequence numbers (1-indexed)
+    for idx, product in enumerate(ranked_products, start=1):
+        product["sequence"] = idx
+    
+    return ranked_products
+
+
+def filter_products_by_accessible_range(ranked_products: List[Dict], accessible_limit: int) -> List[Dict]:
+    """
+    Filter products to only include those within accessible range.
+    
+    Args:
+        ranked_products: List of products with sequence numbers
+        accessible_limit: Maximum sequence number allowed (e.g., 20, 30, 40)
+        
+    Returns:
+        Filtered list of products where sequence <= accessible_limit
+    """
+    return [p for p in ranked_products if p.get("sequence", 0) <= accessible_limit]
+
+
 @router.post("/market-research/analyze", response_model=ProductAnalysisResponse)
 async def market_research_analyze(
     payload: dict,
@@ -1406,50 +1514,49 @@ async def market_research_products_paginated(
             raise HTTPException(status_code=404, detail="History item not found")
         
         # ========================================================================
-        # CREDIT-BASED PAGINATION LOGIC
+        # SEQUENCE-BASED CREDIT PAGINATION LOGIC
         # ========================================================================
-        # Get accessed_pages from history (pages user has unlocked)
-        accessed_pages = history_item.get("accessed_pages", [])
+        # Get accessible_limit from history (default: 20 for free access)
+        accessible_limit = history_item.get("accessible_limit", 20)
+        ranked_products = history_item.get("ranked_products", [])
+        base_ranking_computed = history_item.get("base_ranking_computed", False)
         
-        # Pages 1-2 are free
-        FREE_PAGES_LIMIT = 2
-        
-        # Check if page requires credit
-        page_requires_credit = page > FREE_PAGES_LIMIT
-        is_page_unlocked = page in accessed_pages
-        
-        # Handle credit-based access control
-        if page_requires_credit and not is_page_unlocked:
-            # Page requires credit but is not unlocked
-            if unlock_page:
-                # Frontend has deducted credits - unlock the page
+        # Backward compatibility: If ranked_products doesn't exist, check if research_result exists
+        # If research_result exists but no ranked_products, compute base ranking on-the-fly
+        research_result = history_item.get("research_result", {})
+        if not base_ranking_computed and research_result:
+            products_from_result = research_result.get("products", [])
+            if products_from_result:
+                print(f"[BACKWARD COMPATIBILITY] Computing base ranking for old history item...")
+                ranked_products = compute_base_ranking_and_assign_sequences(products_from_result)
+                # Update history with ranked_products
                 await market_research_history_col.update_one(
                     {"_id": ObjectId(history_id)},
-                    {"$addToSet": {"accessed_pages": page}}  # $addToSet prevents duplicates
+                    {
+                        "$set": {
+                            "ranked_products": ranked_products,
+                            "accessible_limit": 20,
+                            "base_ranking_computed": True
+                        }
+                    }
                 )
-                # Update accessed_pages for response
-                accessed_pages.append(page)
-                is_page_unlocked = True
-            else:
-                # Page not unlocked and no unlock flag - return error
+                accessible_limit = 20
+                base_ranking_computed = True
+        
+        # If still no ranked_products, check if we need to trigger AUTO-RESEARCH
+        if not ranked_products:
+            structured_analysis_dict = history_item.get("structured_analysis")
+            if not structured_analysis_dict:
                 raise HTTPException(
-                    status_code=402,
-                    detail=f"This page requires credits. Please unlock it first. Page {page} requires payment. Unlocked pages: {sorted(accessed_pages)}"
+                    status_code=400,
+                    detail="History item does not contain structured_analysis. Please run /market-research/analyze first."
                 )
-        elif not page_requires_credit:
-            # Free page - add to accessed_pages if not already there (for tracking)
-            if page not in accessed_pages:
-                await market_research_history_col.update_one(
-                    {"_id": ObjectId(history_id)},
-                    {"$addToSet": {"accessed_pages": page}}
-                )
-                accessed_pages.append(page)
-        # ========================================================================
+            # Trigger AUTO-RESEARCH - this will be handled below
+            print(f"[AUTO-RESEARCH] No ranked_products found, will trigger research...")
         
         # Get stored data
         structured_analysis_dict = history_item.get("structured_analysis")
         selected_keywords_dict = history_item.get("selected_keywords")
-        research_result = history_item.get("research_result", {})
         
         if not structured_analysis_dict:
             raise HTTPException(
@@ -1477,111 +1584,76 @@ async def market_research_products_paginated(
             except:
                 pass
         
-        # Get sample product to check field existence
-        external_products_col = db["externalproducts"]
-        sample_product = await external_products_col.find_one({})
-        
-        # Build MongoDB query
-        mongo_query = build_mongo_query_from_keywords(
-            selected_keywords=selected_keywords,
-            structured_analysis=structured_analysis.model_dump(),
-            additional_filters=additional_filters,
-            collection_sample=sample_product
-        )
-        
-        # Add ingredients filter if we have extracted ingredients
-        extracted_ingredients = research_result.get("extracted_ingredients", [])
-        if extracted_ingredients:
-            # Normalize ingredients for matching
-            normalized_ingredients = [ing.strip().lower() for ing in extracted_ingredients]
-            # Add ingredient matching to query (products must have at least one matching ingredient)
-            mongo_query["ingredients"] = {
-                "$exists": True,
-                "$ne": None,
-                "$ne": ""
-            }
-        
-        # Fetch products
-        all_products_cursor = external_products_col.find(mongo_query)
-        all_products = await all_products_cursor.to_list(length=None)
-        
-        # Match products by ingredients (if we have extracted ingredients)
-        matched_products = []
-        if extracted_ingredients:
-            normalized_ingredients = [ing.strip().lower() for ing in extracted_ingredients]
+        # ========================================================================
+        # AUTO-RESEARCH: If ranked_products doesn't exist, trigger research
+        # ========================================================================
+        if not ranked_products:
+            # Check if we can automatically run market research from stored input_data
+            input_data = history_item.get("input_data")
+            input_type_from_history = history_item.get("input_type", "").lower()
             
-            for product in all_products:
-                product_ingredients = product.get("ingredients", [])
-                if isinstance(product_ingredients, str):
-                    product_ingredients = parse_inci_string(product_ingredients)
-                elif not isinstance(product_ingredients, list):
-                    product_ingredients = []
+            if input_data and input_type_from_history in ["url", "inci"]:
+                # Automatically run market research using stored input_data
+                print(f"[AUTO-RESEARCH] History item {history_id} missing ranked_products, automatically running market research...")
                 
-                # Normalize product ingredients
-                normalized_product_ingredients = [ing.strip().lower() for ing in product_ingredients]
-                
-                # Check for matches
-                matches = []
-                for input_ing in normalized_ingredients:
-                    for prod_ing in normalized_product_ingredients:
-                        if input_ing in prod_ing or prod_ing in input_ing:
-                            if prod_ing not in matches:
-                                matches.append(prod_ing)
-                            break
-                
-                if matches:
-                    # Build product data
-                    product_data = {
-                        "id": str(product.get("_id", "")),
-                        "productName": product.get("name") or product.get("productName", ""),
-                        "brand": product.get("brand", ""),
-                        "ingredients": product_ingredients,
-                        "image": product.get("image") or product.get("s3Image", ""),
-                        "images": product.get("images") or product.get("s3Images", []),
-                        "price": product.get("price"),
-                        "salePrice": product.get("salePrice"),
-                        "description": product.get("description", ""),
-                        "matched_ingredients": matches,
-                        "match_count": len(matches),
-                        "total_ingredients": len(product_ingredients),
-                        "match_percentage": (len(matches) / len(normalized_ingredients) * 100) if normalized_ingredients else 0,
-                        "match_score": (len(matches) / len(normalized_ingredients) * 100) if normalized_ingredients else 0,
-                        "active_match_count": len(matches),
-                        "active_ingredients": matches
-                    }
-                    matched_products.append(product_data)
-        else:
-            # No ingredient matching, just return all products matching the query
-            for product in all_products:
-                product_data = {
-                    "id": str(product.get("_id", "")),
-                    "productName": product.get("name") or product.get("productName", ""),
-                    "brand": product.get("brand", ""),
-                    "ingredients": product.get("ingredients", []),
-                    "image": product.get("image") or product.get("s3Image", ""),
-                    "images": product.get("images") or product.get("s3Images", []),
-                    "price": product.get("price"),
-                    "salePrice": product.get("salePrice"),
-                    "description": product.get("description", ""),
-                    "matched_ingredients": [],
-                    "match_count": 0,
-                    "total_ingredients": len(product.get("ingredients", [])),
-                    "match_percentage": 0,
-                    "match_score": 0,
-                    "active_match_count": 0,
-                    "active_ingredients": []
+                # Create payload for market research
+                market_research_payload = {
+                    "input_type": input_type_from_history,
+                    "history_id": history_id  # Use existing history_id to update the same item
                 }
-                matched_products.append(product_data)
+                
+                if input_type_from_history == "url":
+                    market_research_payload["url"] = input_data
+                elif input_type_from_history == "inci":
+                    # input_data is stored as comma-separated string, convert to array for market_research endpoint
+                    if isinstance(input_data, str):
+                        # Split comma-separated string into array of strings
+                        market_research_payload["inci"] = [ing.strip() for ing in input_data.split(",") if ing.strip()]
+                    elif isinstance(input_data, list):
+                        # Already an array, use as-is
+                        market_research_payload["inci"] = input_data
+                
+                # Call market_research endpoint logic (inline) - this will compute ranked_products
+                # For now, we'll fetch products and compute ranking manually to avoid circular dependency
+                # This is a simplified version - full implementation would call the market_research function
+                raise HTTPException(
+                    status_code=400,
+                    detail="Please run /market-research first to compute product rankings. Auto-research from paginated endpoint is not yet supported."
+                )
         
-        # Sort products
-        matched_products = sort_products(matched_products, sort_by)
+        # ========================================================================
+        # SEQUENCE-BASED FILTERING AND SORTING
+        # ========================================================================
+        # Step 1: Filter by accessible range (sequence <= accessible_limit)
+        accessible_products = filter_products_by_accessible_range(ranked_products, accessible_limit)
         
-        # Paginate
-        total_matched = len(matched_products)
+        # Step 2: Apply user filters (brand, price, etc.) ONLY to accessible products
+        filtered_products = accessible_products
+        if additional_filters:
+            # Apply brand filter
+            if "brand" in additional_filters:
+                brand_filter = additional_filters["brand"].lower()
+                filtered_products = [p for p in filtered_products if p.get("brand", "").lower() == brand_filter]
+            
+            # Apply price range filter
+            if "price_range" in additional_filters:
+                price_range = additional_filters["price_range"]
+                min_price = price_range.get("min", 0)
+                max_price = price_range.get("max", float('inf'))
+                filtered_products = [
+                    p for p in filtered_products
+                    if (p.get("price") or 0) >= min_price and (p.get("price") or 0) <= max_price
+                ]
+        
+        # Step 3: Apply sorting ONLY to filtered products
+        sorted_products = sort_products(filtered_products, sort_by)
+        
+        # Step 4: Paginate
+        total_matched = len(sorted_products)  # Total within accessible + filtered range
         total_pages = (total_matched + page_size - 1) // page_size if total_matched > 0 else 0
         start_idx = (page - 1) * page_size
         end_idx = start_idx + page_size
-        paginated_products = matched_products[start_idx:end_idx]
+        paginated_products = sorted_products[start_idx:end_idx]
         
         # Build filters_applied
         filters_applied = {}
@@ -1592,10 +1664,15 @@ async def market_research_products_paginated(
         
         processing_time = round(time.time() - start, 2)
         
-        # Determine next page unlock status
-        next_page = page + 1
-        next_page_requires_credit = next_page > FREE_PAGES_LIMIT
-        next_page_unlocked = next_page in accessed_pages if next_page_requires_credit else True
+        # Determine unlock status based on accessible_limit
+        # Calculate if next page would require unlocking more products
+        next_page_start = page * page_size
+        next_page_requires_unlock = next_page_start >= accessible_limit
+        # Check if user can unlock more (they have products beyond accessible_limit)
+        can_unlock_more = len(ranked_products) > accessible_limit
+        
+        # Get extracted_ingredients for page 1 response
+        extracted_ingredients = research_result.get("extracted_ingredients", []) if page == 1 else None
         
         # 🔹 Return metadata only on page 1, subsequent pages return only products + pagination
         if page == 1:
@@ -1616,11 +1693,12 @@ async def market_research_products_paginated(
                 subcategory=available_keywords.subcategory if available_keywords else history_item.get("subcategory"),
                 category_confidence=history_item.get("category_confidence"),
                 history_id=history_id,
-                page_requires_credit=page_requires_credit,
-                is_unlocked=is_page_unlocked if page_requires_credit else True,
-                unlocked_pages=sorted(accessed_pages),
-                next_page_requires_credit=next_page_requires_credit,
-                next_page_unlocked=next_page_unlocked
+                # Deprecated fields (kept for backward compatibility)
+                page_requires_credit=next_page_requires_unlock,
+                is_unlocked=not next_page_requires_unlock,
+                unlocked_pages=[],
+                next_page_requires_credit=next_page_requires_unlock,
+                next_page_unlocked=not next_page_requires_unlock
             )
         else:
             # Page > 1: Return only products and pagination info (no metadata)
@@ -1641,11 +1719,12 @@ async def market_research_products_paginated(
                 subcategory=None,
                 category_confidence=None,
                 history_id=None,
-                page_requires_credit=page_requires_credit,
-                is_unlocked=is_page_unlocked if page_requires_credit else True,
-                unlocked_pages=sorted(accessed_pages),
-                next_page_requires_credit=next_page_requires_credit,
-                next_page_unlocked=next_page_unlocked
+                # Deprecated fields (kept for backward compatibility)
+                page_requires_credit=next_page_requires_unlock,
+                is_unlocked=not next_page_requires_unlock,
+                unlocked_pages=[],
+                next_page_requires_credit=next_page_requires_unlock,
+                next_page_unlocked=not next_page_requires_unlock
             )
         
     except HTTPException:
@@ -1657,6 +1736,91 @@ async def market_research_products_paginated(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get paginated products: {str(e)}"
+        )
+
+
+@router.put("/market-research/unlock", response_model=Dict)
+async def unlock_market_research_products(
+    history_id: str = Query(..., description="History item ID"),
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
+    """
+    Unlock 10 more products for market research (costs 100 credits).
+    
+    This endpoint increases accessible_limit by 10, allowing user to see more products.
+    Frontend should deduct 100 credits BEFORE calling this endpoint.
+    
+    Query Parameters:
+    - history_id: History item ID (required)
+    
+    Returns:
+    {
+        "success": true,
+        "accessible_limit": 30,  // New accessible limit
+        "unlocked_count": 10,     // Number of products unlocked
+        "message": "Successfully unlocked 10 more products"
+    }
+    
+    Note: Credits must be deducted via external credit system before calling this endpoint.
+    """
+    try:
+        # Extract user_id from JWT token
+        user_id = current_user.get("user_id") or current_user.get("_id")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="User ID not found in JWT token")
+        
+        # Validate history_id
+        if not ObjectId.is_valid(history_id):
+            raise HTTPException(status_code=400, detail="Invalid history_id")
+        
+        # Get history item
+        history_item = await market_research_history_col.find_one({
+            "_id": ObjectId(history_id),
+            "user_id": user_id
+        })
+        
+        if not history_item:
+            raise HTTPException(status_code=404, detail="History item not found")
+        
+        # Get current accessible_limit
+        current_accessible_limit = history_item.get("accessible_limit", 20)
+        ranked_products = history_item.get("ranked_products", [])
+        total_ranked = len(ranked_products)
+        
+        # Check if there are more products to unlock
+        if current_accessible_limit >= total_ranked:
+            raise HTTPException(
+                status_code=400,
+                detail=f"All products are already accessible. Current limit: {current_accessible_limit}, Total products: {total_ranked}"
+            )
+        
+        # Increase accessible_limit by 10
+        new_accessible_limit = min(current_accessible_limit + 10, total_ranked)
+        unlocked_count = new_accessible_limit - current_accessible_limit
+        
+        # Update history item
+        await market_research_history_col.update_one(
+            {"_id": ObjectId(history_id)},
+            {"$set": {"accessible_limit": new_accessible_limit}}
+        )
+        
+        return {
+            "success": True,
+            "accessible_limit": new_accessible_limit,
+            "unlocked_count": unlocked_count,
+            "total_ranked_products": total_ranked,
+            "message": f"Successfully unlocked {unlocked_count} more products"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error unlocking market research products: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to unlock products: {str(e)}"
         )
 
 
@@ -1692,7 +1856,17 @@ async def market_research(
         "input_type": "url" or "inci",
         "name": "Product Name" (optional, for auto-saving),
         "tag": "optional-tag" (optional),
-        "notes": "User notes" (optional)
+        "notes": "User notes" (optional),
+        "selected_keywords": {
+            "form": "serum",
+            "price_tier": "masstige",
+            "target_area": "face",
+            "product_type_id": "serum",
+            "main_category": "skincare",
+            "subcategory": "serum",
+            "functionality": ["brightening"],
+            "benefits": ["brightening", "hydrating"]
+        } (optional - filters products before matching)
     }
     
     Returns:
@@ -2091,8 +2265,25 @@ async def market_research(
                     print(f"  ⚠️  No normalized ingredients available for AI analysis.")
                 print(f"  Will skip product matching since no actives to match against.")
         
-        # CRITICAL: Always fetch ALL products with ingredients - don't rely on regex query
-        # The regex query might not work well with arrays, so we'll do matching in Python
+        # ========================================================================
+        # STEP 1: Get selected_keywords from payload (for filtering later)
+        # ========================================================================
+        selected_keywords_payload = payload.get("selected_keywords")
+        selected_keywords_obj = None
+        if selected_keywords_payload:
+            try:
+                selected_keywords_obj = ProductKeywords(**selected_keywords_payload)
+                print(f"\n{'='*60}")
+                print("Selected keywords provided (will filter after active matching):")
+                print(f"{'='*60}")
+                print(f"  {selected_keywords_obj.model_dump_exclude_empty()}")
+            except Exception as e:
+                print(f"  ⚠️  Error parsing selected_keywords: {e}, will ignore keywords")
+                selected_keywords_obj = None
+        
+        # ========================================================================
+        # STEP 2: Fetch ALL products with ingredients from database
+        # ========================================================================
         print(f"\n{'='*60}")
         print("STEP 1: Fetching products from database...")
         print(f"{'='*60}")
@@ -2103,20 +2294,11 @@ async def market_research(
             total_count = await external_products_col.count_documents({})
             print(f"  Total documents: {total_count}")
             
-            # Check for ingredients field in different ways
-            has_ingredients_count_1 = await external_products_col.count_documents({
-                "ingredients": {"$exists": True}
-            })
-            has_ingredients_count_2 = await external_products_col.count_documents({
-                "ingredients": {"$exists": True, "$ne": None}
-            })
-            has_ingredients_count_3 = await external_products_col.count_documents({
+            # Count products with ingredients
+            ingredients_count = await external_products_col.count_documents({
                 "ingredients": {"$exists": True, "$ne": None, "$ne": ""}
             })
-            
-            print(f"  Products with ingredients field: {has_ingredients_count_1}")
-            print(f"  Products with ingredients (not null): {has_ingredients_count_2}")
-            print(f"  Products with ingredients (not null/empty): {has_ingredients_count_3}")
+            print(f"  Products with ingredients: {ingredients_count}")
             
             # Try to get a sample product to see the structure
             sample_product = await external_products_col.find_one({})
@@ -2133,11 +2315,11 @@ async def market_research(
                         print(f"    Ingredients string length: {len(sample_ing)}")
                         print(f"    First 200 chars: {sample_ing[:200]}")
             
-            # Fetch ALL products that have ingredients (no limit - we need to check everything)
+            # Fetch ALL products with ingredients (no keyword filtering yet)
             print(f"\nFetching all products with ingredients...")
             all_products = await external_products_col.find({
                 "ingredients": {"$exists": True, "$ne": None, "$ne": ""}
-            }).to_list(length=None)  # NO LIMIT - check all products
+            }).to_list(length=None)
             
             print(f"✅ Fetched {len(all_products)} products to check")
             
@@ -2200,12 +2382,17 @@ async def market_research(
                         print(f"  First 5: {sample_ingredients[:5]}")
             print(f"{'='*60}\n")
         
-        # Match products based on ingredient overlap
-        matched_products = []
+        # ========================================================================
+        # STEP 3: Match products by ACTIVE INGREDIENTS first
+        # ========================================================================
+        matched_products_by_actives = []
         print(f"\n{'='*60}")
-        print(f"Starting ingredient matching:")
+        print(f"STEP 2: Matching products by active ingredients...")
         print(f"  Input ingredients ({len(normalized_input_ingredients)}): {normalized_input_ingredients[:10]}{'...' if len(normalized_input_ingredients) > 10 else ''}")
+        print(f"  Active ingredients to match: {len(input_actives)}")
         print(f"  Products to check: {len(all_products)}")
+        if selected_keywords_obj:
+            print(f"  Note: Will filter by keywords AFTER active matching")
         print(f"{'='*60}\n")
         
         if len(all_products) == 0:
@@ -2549,7 +2736,85 @@ async def market_research(
                         # If description becomes empty after cleaning, remove it
                         product_data.pop("description", None)
                 
-                matched_products.append(product_data)
+                matched_products_by_actives.append(product_data)
+        
+        # ========================================================================
+        # STEP 4: Filter by selected_keywords (if provided)
+        # ========================================================================
+        matched_products = matched_products_by_actives
+        if selected_keywords_obj and len(matched_products_by_actives) > 0:
+            print(f"\n{'='*60}")
+            print(f"STEP 3: Filtering products by selected_keywords...")
+            print(f"{'='*60}")
+            print(f"  Products matched by actives: {len(matched_products_by_actives)}")
+            
+            filtered_products = []
+            for product in matched_products_by_actives:
+                should_include = True
+                
+                # Filter by form
+                if selected_keywords_obj.form:
+                    product_form = product.get("form", "").lower() if product.get("form") else ""
+                    if product_form != selected_keywords_obj.form.lower():
+                        should_include = False
+                
+                # Filter by price_tier (check price range)
+                if selected_keywords_obj.price_tier and should_include:
+                    price = product.get("price") or 0
+                    price_tier = selected_keywords_obj.price_tier.lower()
+                    if price_tier == "prestige" and price < 1500:
+                        should_include = False
+                    elif price_tier == "premium" and (price < 700 or price > 1500):
+                        should_include = False
+                    elif price_tier == "masstige" and (price < 300 or price > 700):
+                        should_include = False
+                    elif price_tier == "mass_market" and price > 300:
+                        should_include = False
+                
+                # Filter by target_area
+                if selected_keywords_obj.target_area and should_include:
+                    product_target = product.get("target_area", "").lower() if product.get("target_area") else ""
+                    product_category = product.get("category", "").lower() if product.get("category") else ""
+                    # Check if target_area matches (e.g., "face" in category or target_area field)
+                    if selected_keywords_obj.target_area.lower() not in product_target and selected_keywords_obj.target_area.lower() not in product_category:
+                        # Allow if category matches (e.g., skincare for face)
+                        if not (selected_keywords_obj.target_area == "face" and "skin" in product_category):
+                            should_include = False
+                
+                # Filter by product_type_id
+                if selected_keywords_obj.product_type_id and should_include:
+                    product_type = product.get("product_type_id", "").lower() if product.get("product_type_id") else ""
+                    product_subcategory = product.get("subcategory", "").lower() if product.get("subcategory") else ""
+                    if selected_keywords_obj.product_type_id.lower() not in product_type and selected_keywords_obj.product_type_id.lower() not in product_subcategory:
+                        should_include = False
+                
+                # Filter by main_category
+                if selected_keywords_obj.main_category and should_include:
+                    product_category = product.get("category", "").lower() if product.get("category") else ""
+                    if selected_keywords_obj.main_category.lower() not in product_category:
+                        should_include = False
+                
+                # Filter by subcategory
+                if selected_keywords_obj.subcategory and should_include:
+                    product_subcategory = product.get("subcategory", "").lower() if product.get("subcategory") else ""
+                    if selected_keywords_obj.subcategory.lower() not in product_subcategory:
+                        should_include = False
+                
+                if should_include:
+                    filtered_products.append(product)
+            
+            matched_products = filtered_products
+            print(f"  ✓ Filtered to {len(matched_products)} products matching keywords")
+        elif selected_keywords_obj:
+            print(f"\n{'='*60}")
+            print(f"STEP 3: No products matched by actives, skipping keyword filtering")
+            print(f"{'='*60}")
+            matched_products = []
+        else:
+            print(f"\n{'='*60}")
+            print(f"STEP 3: No selected_keywords provided, using all active-matched products")
+            print(f"{'='*60}")
+            matched_products = matched_products_by_actives
         
         # AI-Powered Product Ranking (optional enhancement)
         # Use AI to re-rank products based on intelligent analysis
@@ -2577,6 +2842,14 @@ async def market_research(
             reverse=True
         )
         
+        # ========================================================================
+        # SEQUENCE-BASED CREDIT PAGINATION: Compute base ranking and assign sequences
+        # ========================================================================
+        # Compute base ranking (fixed global ranking by match_score)
+        # This ranking never changes - filters/sorting only apply within accessible range
+        ranked_products = compute_base_ranking_and_assign_sequences(matched_products)
+        print(f"  ✓ Base ranking computed: {len(ranked_products)} products with sequence numbers")
+        
         # Return ALL matched products (no pagination in POST API - pagination is handled by GET detail endpoint)
         total_matched_count = len(matched_products)
         
@@ -2587,14 +2860,18 @@ async def market_research(
         print("Generating Market Research Overview...")
         print(f"{'='*60}")
         
-        # Get selected_keywords and structured_analysis for overview if available
-        selected_keywords_for_overview = None
-        structured_analysis_for_overview = None
-        
-        # Check if selected_keywords provided in payload
-        selected_keywords_payload = payload.get("selected_keywords")
-        if selected_keywords_payload:
-            selected_keywords_for_overview = selected_keywords_payload
+                # Get selected_keywords and structured_analysis for overview if available
+                selected_keywords_for_overview = None
+                structured_analysis_for_overview = None
+                
+                # Use selected_keywords_obj if available (from payload)
+                if selected_keywords_obj:
+                    selected_keywords_for_overview = selected_keywords_obj.model_dump_exclude_empty()
+                else:
+                    # Check if selected_keywords provided in payload
+                    selected_keywords_payload = payload.get("selected_keywords")
+                    if selected_keywords_payload:
+                        selected_keywords_for_overview = selected_keywords_payload
         
         # Get structured_analysis from history if available
         if history_id and user_id_value:
@@ -2724,7 +3001,11 @@ async def market_research(
                     "primary_category": primary_category,
                     "subcategory": subcategory,
                     "category_confidence": category_confidence,
-                    "status": "completed"
+                    "status": "completed",
+                    # NEW: Sequence-based credit pagination fields
+                    "ranked_products": ranked_products,  # Products with sequence numbers (base ranking)
+                    "accessible_limit": 20,  # Default free access to first 20 products
+                    "base_ranking_computed": True  # Flag to indicate base ranking is computed
                 }
                 
                 # Add structured_analysis and keywords if available from history
@@ -2733,18 +3014,23 @@ async def market_research(
                 if available_keywords_dict:
                     update_doc["available_keywords"] = available_keywords_dict
                 
-                # Initialize selected_keywords - use provided value or create empty ProductKeywords object
-                selected_keywords_payload = payload.get("selected_keywords")
-                if selected_keywords_payload:
-                    try:
-                        selected_keywords_obj = ProductKeywords(**selected_keywords_payload)
-                        update_doc["selected_keywords"] = selected_keywords_obj.model_dump_exclude_empty()
-                    except Exception as e:
-                        print(f"[AUTO-SAVE] Warning: Could not parse selected_keywords: {e}, initializing empty")
-                        # Initialize empty ProductKeywords if parsing fails
+                # Store selected_keywords if provided
+                if selected_keywords_obj:
+                    update_doc["selected_keywords"] = selected_keywords_obj.model_dump_exclude_empty()
+                else:
+                    # Initialize selected_keywords - use provided value or create empty ProductKeywords object
+                    selected_keywords_payload = payload.get("selected_keywords")
+                    if selected_keywords_payload:
+                        try:
+                            selected_keywords_obj = ProductKeywords(**selected_keywords_payload)
+                            update_doc["selected_keywords"] = selected_keywords_obj.model_dump_exclude_empty()
+                        except Exception as e:
+                            print(f"[AUTO-SAVE] Warning: Could not parse selected_keywords: {e}, initializing empty")
+                            # Initialize empty ProductKeywords if parsing fails
+                            update_doc["selected_keywords"] = ProductKeywords().model_dump_exclude_empty()
+                    elif not history_id:
+                        # Initialize empty ProductKeywords only when creating new history (not updating existing)
                         update_doc["selected_keywords"] = ProductKeywords().model_dump_exclude_empty()
-                elif not history_id:
-                    # Initialize empty ProductKeywords only when creating new history (not updating existing)
                     # This ensures new history items always have selected_keywords initialized
                     update_doc["selected_keywords"] = ProductKeywords().model_dump_exclude_empty()
                 
