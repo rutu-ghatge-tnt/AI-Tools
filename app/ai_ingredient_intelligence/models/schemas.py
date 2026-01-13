@@ -511,6 +511,7 @@ class MarketResearchDetailResearch(BaseModel):
     input_url: Optional[str] = Field(None, description="URL if provided separately")
     analysis: Dict = Field(..., description="Analysis data including processing_time, category, structured_analysis, keywords")
     notes: Optional[str] = Field(None, description="User notes")
+    status: Optional[str] = Field(None, description="Status: 'in_progress', 'completed', etc.")
     created_at: str = Field(..., description="Creation timestamp")
     platforms: Optional[List[Dict]] = Field(None, description="Platform links")
     platforms_fetched_at: Optional[str] = Field(None, description="Timestamp when platforms were fetched")
@@ -666,6 +667,7 @@ class MarketResearchPaginatedResponse(BaseModel):
     page: int = Field(1, description="Current page number")
     page_size: int = Field(10, description="Items per page")
     total_pages: int = Field(0, description="Total number of pages")
+    total_unlock_pages: int = Field(0, description="Total number of pages based on unlocked items")
 
 
 # ============================================================================
