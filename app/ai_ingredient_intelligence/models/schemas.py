@@ -662,6 +662,7 @@ class MarketResearchPaginatedResponse(BaseModel):
     """Response schema for paginated market research - includes metadata only on page 1"""
     products: List[MarketResearchProduct] = Field(default_factory=list, description="List of matched products")
     total_matched: int = Field(0, description="Total number of matched products")
+    totalItem: int = Field(0, description="Total number of accessible items")
     page: int = Field(1, description="Current page number")
     page_size: int = Field(10, description="Items per page")
     total_pages: int = Field(0, description="Total number of pages")

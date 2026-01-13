@@ -1793,6 +1793,7 @@ async def market_research_products_paginated(
         
         # Step 4: Paginate
         total_matched = len(sorted_products)  # Total within accessible + filtered range
+        totalItem = len(accessible_products)  # Total number of accessible items
         total_pages = (total_matched + page_size - 1) // page_size if total_matched > 0 else 0
         start_idx = (page - 1) * page_size
         end_idx = start_idx + page_size
@@ -1823,6 +1824,7 @@ async def market_research_products_paginated(
             return MarketResearchPaginatedResponse(
                 products=paginated_products,
                 total_matched=total_matched,
+                totalItem=totalItem,
                 page=page,
                 page_size=page_size,
                 total_pages=total_pages,
@@ -1848,6 +1850,7 @@ async def market_research_products_paginated(
             return MarketResearchPaginatedResponse(
                 products=paginated_products,
                 total_matched=total_matched,
+                totalItem=totalItem,
                 page=page,
                 page_size=page_size,
                 total_pages=total_pages,
