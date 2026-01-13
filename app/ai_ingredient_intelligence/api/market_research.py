@@ -1482,7 +1482,7 @@ async def market_research_products_paginated(
         sorted_products = sort_products(filtered_products, sort_by)
         
         # Step 4: Paginate
-        total_item = len(sorted_products)  # Total within accessible + filtered range
+        total_item = len(ranked_products)  # Total within accessible + filtered range
         total_unlock_item = len(accessible_products)  # Total number of unlocked/accessible items
         total_pages = (total_item + page_size - 1) // page_size if total_item > 0 else 0
         start_idx = (page - 1) * page_size
