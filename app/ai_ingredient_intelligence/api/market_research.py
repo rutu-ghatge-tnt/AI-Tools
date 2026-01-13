@@ -2860,18 +2860,18 @@ async def market_research(
         print("Generating Market Research Overview...")
         print(f"{'='*60}")
         
-                # Get selected_keywords and structured_analysis for overview if available
-                selected_keywords_for_overview = None
-                structured_analysis_for_overview = None
-                
-                # Use selected_keywords_obj if available (from payload)
-                if selected_keywords_obj:
-                    selected_keywords_for_overview = selected_keywords_obj.model_dump_exclude_empty()
-                else:
-                    # Check if selected_keywords provided in payload
-                    selected_keywords_payload = payload.get("selected_keywords")
-                    if selected_keywords_payload:
-                        selected_keywords_for_overview = selected_keywords_payload
+        # Get selected_keywords and structured_analysis for overview if available
+        selected_keywords_for_overview = None
+        structured_analysis_for_overview = None
+        
+        # Use selected_keywords_obj if available (from payload)
+        if selected_keywords_obj:
+            selected_keywords_for_overview = selected_keywords_obj.model_dump_exclude_empty()
+        else:
+            # Check if selected_keywords provided in payload
+            selected_keywords_payload = payload.get("selected_keywords")
+            if selected_keywords_payload:
+                selected_keywords_for_overview = selected_keywords_payload
         
         # Get structured_analysis from history if available
         if history_id and user_id_value:
