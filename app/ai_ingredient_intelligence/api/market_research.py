@@ -413,7 +413,18 @@ async def get_market_research_history_detail(
             if selected_keywords_raw is None:
                 selected_keywords = ProductKeywords().model_dump_exclude_empty()
             elif isinstance(selected_keywords_raw, dict):
-                selected_keywords = selected_keywords_raw
+                # Already a dict, use as-is but ensure it's properly formatted
+                # If it's an empty dict, ensure it's a valid ProductKeywords structure
+                if not selected_keywords_raw:
+                    selected_keywords = ProductKeywords().model_dump_exclude_empty()
+                else:
+                    # Validate it's a proper ProductKeywords dict by trying to create object
+                    try:
+                        ProductKeywords(**selected_keywords_raw)
+                        selected_keywords = selected_keywords_raw
+                    except:
+                        # If validation fails, use empty ProductKeywords
+                        selected_keywords = ProductKeywords().model_dump_exclude_empty()
             else:
                 try:
                     if hasattr(selected_keywords_raw, 'model_dump_exclude_empty'):
@@ -456,6 +467,9 @@ async def get_market_research_history_detail(
             }
             
             # Build research section
+            platforms = item_meta.get("platforms")
+            platforms_fetched_at = item_meta.get("platforms_fetched_at")
+            
             research_section = {
                 "id": str(item_meta["_id"]),
                 "user_id": str(item_meta.get("user_id", "")),
@@ -466,25 +480,29 @@ async def get_market_research_history_detail(
                 "input_url": item_meta.get("input_url"),
                 "analysis": analysis_data,
                 "notes": item_meta.get("notes"),
-                "created_at": item_meta.get("created_at", "")
+                "created_at": item_meta.get("created_at", ""),
+                "platforms": platforms,
+                "platforms_fetched_at": platforms_fetched_at
             }
             
             # Build products section with empty data
-            platforms = item_meta.get("platforms")
-            platforms_fetched_at = item_meta.get("platforms_fetched_at")
-            
             # Determine next page unlock status
             next_page = page + 1
             next_page_requires_credit = next_page > FREE_PAGES_LIMIT
             next_page_unlocked = next_page in accessed_pages if next_page_requires_credit else True
+            
+            # Calculate total_unlocked_items based on free pages + unlocked pages
+            free_items = FREE_PAGES_LIMIT * page_size
+            unlocked_pages_beyond_free = [p for p in accessed_pages if p > FREE_PAGES_LIMIT]
+            additional_unlocked_items = len(unlocked_pages_beyond_free) * page_size
+            total_unlocked_items = min(free_items + additional_unlocked_items, 0)  # 0 since total_items is 0
             
             pagination_section = {
                 "page": page,
                 "page_size": page_size,
                 "total_pages": 0,
                 "total_items": 0,
-                "platforms": platforms,
-                "platforms_fetched_at": platforms_fetched_at,
+                "total_unlocked_items": total_unlocked_items,
                 "page_requires_credit": page_requires_credit,
                 "is_unlocked": is_page_unlocked,
                 "unlocked_pages": sorted(accessed_pages),
@@ -524,7 +542,11 @@ async def get_market_research_history_detail(
         paginated_products = products_result[0].get("products_slice", []) if products_result else []
         
         # Calculate pagination metadata
-        total_pages = (total_products + page_size - 1) // page_size
+        # Ensure page_size is valid (should be handled by Query validation, but double-check for safety)
+        page_size = max(1, min(page_size, 100))  # Ensure page_size is between 1 and 100
+        total_pages = (total_products + page_size - 1) // page_size if total_products > 0 else 0
+        
+        # Note: If page exceeds total_pages, MongoDB $slice will return empty array, which is correct behavior
         
         # Handle input_data - convert to array format
         input_data_raw = item_meta.get("input_data", "")
@@ -550,8 +572,18 @@ async def get_market_research_history_detail(
         if selected_keywords_raw is None:
             selected_keywords = ProductKeywords().model_dump_exclude_empty()
         elif isinstance(selected_keywords_raw, dict):
-            # Already a dict, use as-is
-            selected_keywords = selected_keywords_raw
+            # Already a dict, use as-is but ensure it's properly formatted
+            # If it's an empty dict, ensure it's a valid ProductKeywords structure
+            if not selected_keywords_raw:
+                selected_keywords = ProductKeywords().model_dump_exclude_empty()
+            else:
+                # Validate it's a proper ProductKeywords dict by trying to create object
+                try:
+                    ProductKeywords(**selected_keywords_raw)
+                    selected_keywords = selected_keywords_raw
+                except:
+                    # If validation fails, use empty ProductKeywords
+                    selected_keywords = ProductKeywords().model_dump_exclude_empty()
         else:
             # Try to convert to dict if it's a ProductKeywords object
             try:
@@ -595,6 +627,9 @@ async def get_market_research_history_detail(
         }
         
         # Build research section
+        platforms = item_meta.get("platforms")
+        platforms_fetched_at = item_meta.get("platforms_fetched_at")
+        
         research_section = {
             "id": str(item_meta["_id"]),
             "user_id": str(item_meta.get("user_id", "")),
@@ -605,25 +640,32 @@ async def get_market_research_history_detail(
             "input_url": item_meta.get("input_url"),
             "analysis": analysis_data,
             "notes": item_meta.get("notes"),
-            "created_at": item_meta.get("created_at", "")
+            "created_at": item_meta.get("created_at", ""),
+            "platforms": platforms,
+            "platforms_fetched_at": platforms_fetched_at
         }
         
         # Build products section with pagination
-        platforms = item_meta.get("platforms")
-        platforms_fetched_at = item_meta.get("platforms_fetched_at")
-        
         # Determine next page unlock status
         next_page = page + 1
         next_page_requires_credit = next_page > FREE_PAGES_LIMIT
         next_page_unlocked = next_page in accessed_pages if next_page_requires_credit else True
+        
+        # Calculate total_unlocked_items based on free pages + unlocked pages
+        # Free items: Pages 1-2 are always free
+        free_items = FREE_PAGES_LIMIT * page_size
+        # Additional unlocked items: Pages beyond FREE_PAGES_LIMIT that have been unlocked
+        unlocked_pages_beyond_free = [p for p in accessed_pages if p > FREE_PAGES_LIMIT]
+        additional_unlocked_items = len(unlocked_pages_beyond_free) * page_size
+        # Total unlocked items = free items + additional unlocked items, capped at total_products
+        total_unlocked_items = min(free_items + additional_unlocked_items, total_products)
         
         pagination_section = {
             "page": page,
             "page_size": page_size,
             "total_pages": total_pages,
             "total_items": total_products,
-            "platforms": platforms,
-            "platforms_fetched_at": platforms_fetched_at,
+            "total_unlocked_items": total_unlocked_items,
             "page_requires_credit": page_requires_credit,
             "is_unlocked": is_page_unlocked,
             "unlocked_pages": sorted(accessed_pages),
@@ -3032,8 +3074,7 @@ async def market_research(
                     elif not history_id:
                         # Initialize empty ProductKeywords only when creating new history (not updating existing)
                         update_doc["selected_keywords"] = ProductKeywords().model_dump_exclude_empty()
-                    # This ensures new history items always have selected_keywords initialized
-                    update_doc["selected_keywords"] = ProductKeywords().model_dump_exclude_empty()
+                    # Note: If history_id exists and no selected_keywords provided, don't overwrite existing value
                 
                 if history_id:
                     # Update existing history
