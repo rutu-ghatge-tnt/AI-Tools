@@ -511,6 +511,8 @@ class MarketResearchDetailResearch(BaseModel):
     analysis: Dict = Field(..., description="Analysis data including processing_time, category, structured_analysis, keywords")
     notes: Optional[str] = Field(None, description="User notes")
     created_at: str = Field(..., description="Creation timestamp")
+    platforms: Optional[List[Dict]] = Field(None, description="Platform links")
+    platforms_fetched_at: Optional[str] = Field(None, description="Timestamp when platforms were fetched")
 
 
 class MarketResearchDetailPagination(BaseModel):
@@ -519,8 +521,7 @@ class MarketResearchDetailPagination(BaseModel):
     page_size: int = Field(..., description="Items per page")
     total_pages: int = Field(..., description="Total number of pages")
     total_items: int = Field(..., description="Total number of items")
-    platforms: Optional[List[Dict]] = Field(None, description="Platform links")
-    platforms_fetched_at: Optional[str] = Field(None, description="Timestamp when platforms were fetched")
+    total_unlocked_items: int = Field(..., description="Total number of unlocked items (based on free pages + unlocked pages)")
     # Credit-based pagination fields
     page_requires_credit: bool = Field(False, description="Whether current page requires credits (pages > 2)")
     is_unlocked: bool = Field(True, description="Whether current page is unlocked (always true for pages <= 2)")
