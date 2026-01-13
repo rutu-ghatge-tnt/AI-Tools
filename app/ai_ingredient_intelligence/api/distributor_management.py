@@ -164,6 +164,8 @@ async def register_distributor(
             }
         ],
         "ingredientName": "Hyaluronic Acid",
+        "ingredientId": "optional_single_id",  # Optional: single ingredient ID (backward compatibility)
+        "ingredientIds": ["id1", "id2", "id3"],  # Optional: array of ingredient IDs (preferred)
         "principlesSuppliers": ["Supplier 1", "Supplier 2"],
         "yourInfo": {
             "name": "John Doe",
@@ -224,7 +226,8 @@ async def register_distributor(
         
         # Lookup ingredient IDs from branded ingredients collection by name
         ingredient_name = payload["ingredientName"]
-        ingredient_id_provided = payload.get("ingredientId")  # Optional ingredient ID from frontend
+        ingredient_id_provided = payload.get("ingredientId")  # Optional single ingredient ID (backward compatibility)
+        ingredient_ids_provided = payload.get("ingredientIds")  # Optional array of ingredient IDs
         ingredient_ids = []
         
         # Clean ingredient name (remove trailing commas, extra spaces)
@@ -232,8 +235,28 @@ async def register_distributor(
         
         print(f"🔍 Looking up ingredient IDs for: '{ingredient_name_clean}'")
         
-        # CRITICAL: If ingredientId is provided from frontend, use it directly (most reliable)
-        if ingredient_id_provided:
+        # CRITICAL: If ingredientIds array is provided from frontend, use them directly (most reliable)
+        if ingredient_ids_provided:
+            if isinstance(ingredient_ids_provided, list) and len(ingredient_ids_provided) > 0:
+                print(f"✅✅✅ Using provided ingredient IDs array: {ingredient_ids_provided}")
+                for ing_id_str in ingredient_ids_provided:
+                    try:
+                        ing_id_obj = ObjectId(ing_id_str)
+                        # Verify the ID exists in the collection
+                        verify_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
+                        if verify_doc:
+                            if str(ing_id_obj) not in ingredient_ids:
+                                ingredient_ids.append(str(ing_id_obj))
+                                print(f"   ✅ Verified ingredient ID: {ing_id_str} -> '{verify_doc.get('ingredient_name', 'N/A')}'")
+                        else:
+                            print(f"   ❌ WARNING: Provided ingredient ID {ing_id_str} not found!")
+                    except Exception as e:
+                        print(f"   ❌ WARNING: Invalid ingredient ID format {ing_id_str}: {e}")
+            else:
+                print(f"⚠️ WARNING: ingredientIds provided but not a valid non-empty array. Will lookup by name instead.")
+        
+        # CRITICAL: If single ingredientId is provided from frontend (backward compatibility), use it directly
+        if not ingredient_ids and ingredient_id_provided:
             try:
                 ing_id_obj = ObjectId(ingredient_id_provided)
                 # Verify the ID exists in the collection

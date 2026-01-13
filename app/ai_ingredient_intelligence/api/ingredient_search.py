@@ -355,9 +355,10 @@ async def get_ingredients_by_supplier_id(
     supplier_id: str,
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(50, ge=1, le=1000, description="Maximum number of records to return"),
+    search: Optional[str] = Query(None, description="Search term to filter ingredients by name"),
     current_user: dict = Depends(verify_jwt_token)  # JWT token validation
 ):
-    """Get all ingredients for a specific supplier by supplier ID with pagination"""
+    """Get all ingredients for a specific supplier by supplier ID with pagination and search"""
     try:
         from bson import ObjectId
         
@@ -381,12 +382,35 @@ async def get_ingredients_by_supplier_id(
         
         # Find all ingredients with this supplier_id
         # Handle both ObjectId and string formats (supplier_id can be stored as either)
-        query = {
+        base_query = {
             "$or": [
                 {"supplier_id": supplier_object_id},  # ObjectId match
                 {"supplier_id": str(supplier_object_id)}  # String match
             ]
         }
+        
+        # Add search filter if provided
+        if search:
+            search_trimmed = search.strip()
+            if search_trimmed:
+                # Escape special regex characters and add search condition
+                import re
+                search_pattern = re.escape(search_trimmed)
+                query = {
+                    "$and": [
+                        base_query,
+                        {
+                            "$or": [
+                                {"ingredient_name": {"$regex": search_pattern, "$options": "i"}},
+                                {"original_inci_name": {"$regex": search_pattern, "$options": "i"}}
+                            ]
+                        }
+                    ]
+                }
+            else:
+                query = base_query
+        else:
+            query = base_query
         
         # Get total count for pagination
         total = await branded_ingredients_col.count_documents(query)
