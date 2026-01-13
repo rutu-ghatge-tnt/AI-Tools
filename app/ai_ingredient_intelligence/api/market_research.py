@@ -2386,6 +2386,7 @@ async def market_research(
         # STEP 3: Match products by ACTIVE INGREDIENTS first
         # ========================================================================
         matched_products_by_actives = []
+        matched_products = []  # Initialize early to avoid UnboundLocalError
         print(f"\n{'='*60}")
         print(f"STEP 2: Matching products by active ingredients...")
         print(f"  Input ingredients ({len(normalized_input_ingredients)}): {normalized_input_ingredients[:10]}{'...' if len(normalized_input_ingredients) > 10 else ''}")
@@ -2540,7 +2541,7 @@ async def market_research(
                             if active_ing in active_to_index_map:
                                 matched_active_indices.add(active_to_index_map[active_ing])
                             matched_this_active = True
-                            if len(matched_products) < 10:  # Log for first 10 matches for debugging
+                            if len(matched_products_by_actives) < 10:  # Log for first 10 matches for debugging
                                 print(f"  ✓ Matched active: '{active_ing}' -> '{original_ing}' (product: {product.get('name', 'Unknown')[:30]})")
                         break  # Found a match for this active ingredient, move to next
                 
@@ -2596,10 +2597,10 @@ async def market_research(
                 # If category doesn't match, exclude the product
                 if not category_match:
                     should_include = False
-                    if len(matched_products) < 5:  # Debug for first 5
+                    if len(matched_products_by_actives) < 5:  # Debug for first 5
                         print(f"  ✗ Category mismatch: Product category '{product_category}' doesn't match '{primary_category}'")
             
-            if len(matched_products) < 5:  # Debug for first 5
+            if len(matched_products_by_actives) < 5:  # Debug for first 5
                 print(f"  Product match (active only): {active_match_percentage:.1f}% | Actives: {len(matched_actives)}/{len(input_actives)} | Include: {should_include}")
             
             # Include products that have at least one active ingredient match AND pass category filter
