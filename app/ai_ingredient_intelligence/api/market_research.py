@@ -1132,7 +1132,7 @@ async def market_research_analyze(
                     "name": name if name else None,  # Update name in case it changed
                     "tag": tag,  # Update tag in case it changed
                     "notes": notes,  # Update notes
-                    "status": "completed"  # Mark as completed since analysis is done
+                    "status": "in_progress"  # Keep as in_progress until products are fetched
                 }
                 
                 # Handle selected_keywords: save if provided, initialize if missing
@@ -1188,7 +1188,7 @@ async def market_research_analyze(
                     "structured_analysis": structured_analysis.model_dump(),
                     "available_keywords": keywords.model_dump_exclude_empty(),
                     "selected_keywords": selected_keywords_value,  # Use provided or empty
-                    "status": "completed",  # Mark as completed since analysis is done
+                    "status": "in_progress",  # Keep as in_progress until products are fetched
                     "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
                 }
                 # Add input_url if provided
@@ -3298,6 +3298,16 @@ async def market_research_products(
             total_pages=total_pages,
             total_unlock_pages=total_unlock_pages
         )
+        
+        # 🔹 Update status to "completed" after products are successfully fetched
+        try:
+            await market_research_history_col.update_one(
+                {"_id": ObjectId(history_id), "user_id": user_id_value},
+                {"$set": {"status": "completed"}}
+            )
+            print(f"[STATUS] Updated history {history_id} status to 'completed' after products fetched")
+        except Exception as status_error:
+            print(f"[STATUS] Warning: Failed to update status to 'completed': {status_error}")
         
         return response
         
