@@ -361,6 +361,7 @@ class MarketResearchProduct(BaseModel):
     match_score: float = Field(0.0, description="Weighted match score (0-100) considering actives, excipients, and overall match")
     active_match_count: int = Field(0, description="Number of active ingredients that matched")
     active_ingredients: List[str] = Field(default_factory=list, description="List of matched active ingredients")
+    sequence: Optional[int] = Field(None, description="Sequence number in base ranking (1-indexed)")
 
 
 class MarketResearchRequest(BaseModel):
@@ -541,7 +542,6 @@ class MarketResearchDetailProducts(BaseModel):
 class MarketResearchDetailResponseV2(BaseModel):
     """New response schema for market research detail (restructured format)"""
     research: MarketResearchDetailResearch = Field(..., description="Research data")
-    products: MarketResearchDetailProducts = Field(..., description="Products data with pagination")
 
 
 # ============================================================================
@@ -659,29 +659,13 @@ class MarketResearchWithKeywordsRequest(BaseModel):
 
 
 class MarketResearchPaginatedResponse(BaseModel):
-    """Response schema for paginated market research - includes metadata only on page 1"""
+    """Response schema for paginated market research"""
     products: List[MarketResearchProduct] = Field(default_factory=list, description="List of matched products")
-    total_matched: int = Field(0, description="Total number of matched products")
+    total_unlock_item: int = Field(0, description="Total number of unlocked/accessible items")
+    total_item: int = Field(0, description="Total number of matched items")
     page: int = Field(1, description="Current page number")
     page_size: int = Field(10, description="Items per page")
     total_pages: int = Field(0, description="Total number of pages")
-    sort_by: str = Field(..., description="Current sort method")
-    filters_applied: Dict[str, Any] = Field(default_factory=dict, description="Applied filters")
-    processing_time: float = Field(..., description="Time taken for processing")
-    # Metadata fields - only included on page 1
-    extracted_ingredients: Optional[List[str]] = Field(None, description="Extracted ingredients list (only on page 1)")
-    input_type: Optional[str] = Field(None, description="Type of input processed (only on page 1)")
-    ai_interpretation: Optional[str] = Field(None, description="AI interpretation (only on page 1)")
-    primary_category: Optional[str] = Field(None, description="Primary category (only on page 1)")
-    subcategory: Optional[str] = Field(None, description="Subcategory (only on page 1)")
-    category_confidence: Optional[str] = Field(None, description="Category confidence (only on page 1)")
-    history_id: Optional[str] = Field(None, description="History item ID if saved (only on page 1)")
-    # Credit-based pagination fields
-    page_requires_credit: bool = Field(False, description="Whether current page requires credits (pages > 2)")
-    is_unlocked: bool = Field(True, description="Whether current page is unlocked (always true for pages <= 2)")
-    unlocked_pages: List[int] = Field(default_factory=list, description="List of all unlocked pages for this history")
-    next_page_requires_credit: bool = Field(False, description="Whether next page requires credits")
-    next_page_unlocked: bool = Field(True, description="Whether next page is unlocked")
 
 
 # ============================================================================
