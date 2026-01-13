@@ -226,7 +226,7 @@ async def get_market_research_history(
                 "input_data": input_data,
                 "notes": item.get("notes"),
                 "created_at": item.get("created_at"),
-                "status": item.get("status") or "in_progress",  # Default to "in_progress" if status is null (failed status should be preserved)
+                "status": item.get("status"),  # Get actual status from database
                 "has_research": research_result is not None,
                 "total_products": total_products
             }
@@ -292,6 +292,7 @@ async def get_market_research_history_detail(
                 "subcategory": 1,
                 "category_confidence": 1,
                 "notes": 1,
+                "status": 1,  # Add status field to projection
                 "created_at": 1,
                 "structured_analysis": 1,
                 "selected_keywords": 1,
@@ -423,7 +424,7 @@ async def get_market_research_history_detail(
             "input_url": item_meta.get("input_url"),
             "analysis": analysis_data,
             "notes": item_meta.get("notes"),
-            "status": item_meta.get("status") or "in_progress",  # Default to "in_progress" if status is null (failed status should be preserved)
+            "status": item_meta.get("status"),  # Get actual status from database
             "created_at": item_meta.get("created_at", ""),
             "platforms": platforms,
             "platforms_fetched_at": platforms_fetched_at
