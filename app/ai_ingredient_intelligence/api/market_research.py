@@ -423,6 +423,7 @@ async def get_market_research_history_detail(
             "input_url": item_meta.get("input_url"),
             "analysis": analysis_data,
             "notes": item_meta.get("notes"),
+            "status": item_meta.get("status"),
             "created_at": item_meta.get("created_at", ""),
             "platforms": platforms,
             "platforms_fetched_at": platforms_fetched_at
@@ -1129,7 +1130,8 @@ async def market_research_analyze(
                     "available_keywords": keywords.model_dump_exclude_empty(),
                     "name": name if name else None,  # Update name in case it changed
                     "tag": tag,  # Update tag in case it changed
-                    "notes": notes  # Update notes
+                    "notes": notes,  # Update notes
+                    "status": "completed"  # Mark as completed since analysis is done
                 }
                 
                 # Handle selected_keywords: save if provided, initialize if missing
@@ -1185,6 +1187,7 @@ async def market_research_analyze(
                     "structured_analysis": structured_analysis.model_dump(),
                     "available_keywords": keywords.model_dump_exclude_empty(),
                     "selected_keywords": selected_keywords_value,  # Use provided or empty
+                    "status": "completed",  # Mark as completed since analysis is done
                     "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
                 }
                 # Add input_url if provided
@@ -1485,6 +1488,7 @@ async def market_research_products_paginated(
         total_item = len(ranked_products)  # Total within accessible + filtered range
         total_unlock_item = len(accessible_products)  # Total number of unlocked/accessible items
         total_pages = (total_item + page_size - 1) // page_size if total_item > 0 else 0
+        total_unlock_pages = (total_unlock_item + page_size - 1) // page_size if total_unlock_item > 0 else 0
         start_idx = (page - 1) * page_size
         end_idx = start_idx + page_size
         paginated_products = sorted_products[start_idx:end_idx]
@@ -1496,7 +1500,8 @@ async def market_research_products_paginated(
             total_item=total_item,
             page=page,
             page_size=page_size,
-            total_pages=total_pages
+            total_pages=total_pages,
+            total_unlock_pages=total_unlock_pages
         )
         
     except HTTPException:
