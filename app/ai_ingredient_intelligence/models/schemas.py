@@ -513,6 +513,8 @@ class MarketResearchDetailResearch(BaseModel):
     created_at: str = Field(..., description="Creation timestamp")
     platforms: Optional[List[Dict]] = Field(None, description="Platform links")
     platforms_fetched_at: Optional[str] = Field(None, description="Timestamp when platforms were fetched")
+    
+    model_config = ConfigDict(exclude_none=False)  # Ensure empty dicts are included
 
 
 class MarketResearchDetailPagination(BaseModel):

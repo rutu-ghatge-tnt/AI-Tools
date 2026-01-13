@@ -453,6 +453,25 @@ async def get_market_research_history_detail(
                 except:
                     available_keywords = None
             
+            # Ensure selected_keywords is always a dict (even if empty)
+            # Make sure it's explicitly set - empty dict {} is valid and should be included
+            if selected_keywords is None:
+                selected_keywords = {}
+            elif not isinstance(selected_keywords, dict):
+                # Convert to dict if it's not already
+                try:
+                    if hasattr(selected_keywords, 'model_dump_exclude_empty'):
+                        selected_keywords = selected_keywords.model_dump_exclude_empty()
+                    elif hasattr(selected_keywords, 'dict'):
+                        selected_keywords = selected_keywords.dict(exclude_none=True)
+                    else:
+                        selected_keywords = dict(selected_keywords) if selected_keywords else {}
+                except:
+                    selected_keywords = {}
+            
+            # Debug: Print selected_keywords to verify it's being set
+            print(f"[DEBUG] selected_keywords (empty case) before adding to analysis_data: {selected_keywords}, type: {type(selected_keywords)}, is_empty: {selected_keywords == {}}")
+            
             analysis_data = {
                 "processing_time": processing_time,
                 "category": {
@@ -462,9 +481,12 @@ async def get_market_research_history_detail(
                 },
                 "ai_interpretation": ai_interpretation,
                 "structured_analysis": item_meta.get("structured_analysis"),
-                "selected_keywords": selected_keywords,  # Now properly formatted as dict
+                "selected_keywords": selected_keywords,  # Always included, even if empty dict {}
                 "available_keywords": available_keywords  # Now properly formatted as dict
             }
+            
+            # Debug: Verify selected_keywords is in analysis_data
+            print(f"[DEBUG] analysis_data['selected_keywords'] (empty case): {analysis_data.get('selected_keywords')}, type: {type(analysis_data.get('selected_keywords'))}, keys: {list(analysis_data.get('selected_keywords', {}).keys())}")
             
             # Build research section
             platforms = item_meta.get("platforms")
@@ -514,6 +536,15 @@ async def get_market_research_history_detail(
                 "data": [],
                 "pagination": pagination_section
             }
+            
+            # Ensure selected_keywords is explicitly in analysis before returning
+            if "analysis" in research_section and "selected_keywords" not in research_section["analysis"]:
+                research_section["analysis"]["selected_keywords"] = {}
+            elif "analysis" in research_section and research_section["analysis"].get("selected_keywords") is None:
+                research_section["analysis"]["selected_keywords"] = {}
+            
+            # Final debug check
+            print(f"[DEBUG] Final check (empty case) - research_section['analysis']['selected_keywords']: {research_section.get('analysis', {}).get('selected_keywords')}")
             
             return MarketResearchDetailResponseV2(
                 research=research_section,
@@ -613,6 +644,25 @@ async def get_market_research_history_detail(
             except:
                 available_keywords = None
         
+        # Ensure selected_keywords is always a dict (even if empty)
+        # Make sure it's explicitly set - empty dict {} is valid and should be included
+        if selected_keywords is None:
+            selected_keywords = {}
+        elif not isinstance(selected_keywords, dict):
+            # Convert to dict if it's not already
+            try:
+                if hasattr(selected_keywords, 'model_dump_exclude_empty'):
+                    selected_keywords = selected_keywords.model_dump_exclude_empty()
+                elif hasattr(selected_keywords, 'dict'):
+                    selected_keywords = selected_keywords.dict(exclude_none=True)
+                else:
+                    selected_keywords = dict(selected_keywords) if selected_keywords else {}
+            except:
+                selected_keywords = {}
+        
+        # Debug: Print selected_keywords to verify it's being set
+        print(f"[DEBUG] selected_keywords before adding to analysis_data: {selected_keywords}, type: {type(selected_keywords)}, is_empty: {selected_keywords == {}}")
+        
         analysis_data = {
             "processing_time": processing_time,
             "category": {
@@ -622,9 +672,12 @@ async def get_market_research_history_detail(
             },
             "ai_interpretation": ai_interpretation,
             "structured_analysis": item_meta.get("structured_analysis"),
-            "selected_keywords": selected_keywords,  # Now properly formatted as dict
+            "selected_keywords": selected_keywords,  # Always included, even if empty dict {}
             "available_keywords": available_keywords  # Now properly formatted as dict
         }
+        
+        # Debug: Verify selected_keywords is in analysis_data
+        print(f"[DEBUG] analysis_data['selected_keywords']: {analysis_data.get('selected_keywords')}, type: {type(analysis_data.get('selected_keywords'))}, keys: {list(analysis_data.get('selected_keywords', {}).keys())}")
         
         # Build research section
         platforms = item_meta.get("platforms")
@@ -644,6 +697,9 @@ async def get_market_research_history_detail(
             "platforms": platforms,
             "platforms_fetched_at": platforms_fetched_at
         }
+        
+        # Debug: Verify selected_keywords is in research_section
+        print(f"[DEBUG] research_section['analysis']['selected_keywords']: {research_section.get('analysis', {}).get('selected_keywords')}")
         
         # Build products section with pagination
         # Determine next page unlock status
@@ -679,6 +735,15 @@ async def get_market_research_history_detail(
         }
         
         print(f"[DB PAGINATION] History {history_id}: Page {page}/{total_pages}, Showing {len(paginated_products)}/{total_products} products (DB-level slice)")
+        
+        # Ensure selected_keywords is explicitly in analysis before returning
+        if "analysis" in research_section and "selected_keywords" not in research_section["analysis"]:
+            research_section["analysis"]["selected_keywords"] = {}
+        elif "analysis" in research_section and research_section["analysis"].get("selected_keywords") is None:
+            research_section["analysis"]["selected_keywords"] = {}
+        
+        # Final debug check
+        print(f"[DEBUG] Final check - research_section['analysis']['selected_keywords']: {research_section.get('analysis', {}).get('selected_keywords')}")
         
         return MarketResearchDetailResponseV2(
             research=research_section,
@@ -1365,6 +1430,12 @@ async def market_research_analyze(
         if history_id:
             # Update existing history with new analysis data
             try:
+                # Check if selected_keywords exists, if not initialize it
+                existing_item = await market_research_history_col.find_one(
+                    {"_id": ObjectId(history_id), "user_id": user_id},
+                    {"selected_keywords": 1}
+                )
+                
                 update_data = {
                     "structured_analysis": structured_analysis.model_dump(),
                     "available_keywords": keywords.model_dump_exclude_empty(),
@@ -1372,6 +1443,22 @@ async def market_research_analyze(
                     "tag": tag,  # Update tag in case it changed
                     "notes": notes  # Update notes
                 }
+                
+                # Handle selected_keywords: save if provided, initialize if missing
+                selected_keywords_payload = payload.get("selected_keywords")
+                if selected_keywords_payload:
+                    # Save provided selected_keywords
+                    try:
+                        selected_keywords_obj = ProductKeywords(**selected_keywords_payload)
+                        update_data["selected_keywords"] = selected_keywords_obj.model_dump_exclude_empty()
+                        print(f"[AUTO-SAVE] Saving selected_keywords to history {history_id}")
+                    except Exception as e:
+                        print(f"[AUTO-SAVE] Warning: Could not parse selected_keywords: {e}, initializing empty")
+                        update_data["selected_keywords"] = ProductKeywords().model_dump_exclude_empty()
+                elif existing_item and existing_item.get("selected_keywords") is None:
+                    # Initialize selected_keywords if it doesn't exist
+                    update_data["selected_keywords"] = ProductKeywords().model_dump_exclude_empty()
+                
                 # Add input_url if provided
                 if input_url:
                     update_data["input_url"] = input_url
@@ -1387,6 +1474,19 @@ async def market_research_analyze(
             # 🔹 IMPORTANT: Always create new history item when no history_id provided (never match/reuse existing entries)
             # Updates only happen when history_id is explicitly provided (PATCH/UPDATE operations)
             try:
+                # Handle selected_keywords: use provided value or initialize empty
+                selected_keywords_payload = payload.get("selected_keywords")
+                if selected_keywords_payload:
+                    try:
+                        selected_keywords_obj = ProductKeywords(**selected_keywords_payload)
+                        selected_keywords_value = selected_keywords_obj.model_dump_exclude_empty()
+                        print(f"[AUTO-SAVE] Saving selected_keywords when creating new history")
+                    except Exception as e:
+                        print(f"[AUTO-SAVE] Warning: Could not parse selected_keywords: {e}, initializing empty")
+                        selected_keywords_value = ProductKeywords().model_dump_exclude_empty()
+                else:
+                    selected_keywords_value = ProductKeywords().model_dump_exclude_empty()
+                
                 history_doc = {
                     "user_id": user_id,
                     "name": name,
@@ -1396,6 +1496,7 @@ async def market_research_analyze(
                     "input_data": input_data_value,
                     "structured_analysis": structured_analysis.model_dump(),
                     "available_keywords": keywords.model_dump_exclude_empty(),
+                    "selected_keywords": selected_keywords_value,  # Use provided or empty
                     "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
                 }
                 # Add input_url if provided
@@ -2083,6 +2184,7 @@ async def market_research(
                     "input_data": input_data_value,
                     "notes": notes,
                     "status": "in_progress",
+                    "selected_keywords": ProductKeywords().model_dump_exclude_empty(),  # Initialize empty selected_keywords
                     "created_at": (datetime.now(timezone(timedelta(hours=5, minutes=30)))).isoformat()
                 }
                 result = await market_research_history_col.insert_one(history_doc)
@@ -2619,22 +2721,88 @@ async def market_research(
             if should_include and primary_category and category_confidence in ["high", "medium"]:
                 product_category = product.get("category", "").lower() if product.get("category") else ""
                 product_subcategory = product.get("subcategory", "").lower() if product.get("subcategory") else ""
+                product_name = product.get("productName", "") or product.get("name", "")
+                product_name_lower = product_name.lower() if product_name else ""
                 
                 # Check if product category matches identified category
                 category_match = False
                 
-                # Direct category match
-                if product_category and primary_category in product_category:
-                    category_match = True
-                elif product_subcategory and primary_category in product_subcategory:
-                    category_match = True
+                # Normalize primary_category for matching (remove spaces, handle variations)
+                primary_category_lower = primary_category.lower().replace(" ", "").replace("_", "").replace("-", "")
                 
-                # Subcategory matching (more specific)
+                # Helper function to normalize category strings for comparison
+                def normalize_category(cat_str):
+                    """Normalize category string by removing spaces, underscores, hyphens"""
+                    if not cat_str:
+                        return ""
+                    return cat_str.replace(" ", "").replace("_", "").replace("-", "").strip()
+                
+                # Direct category match - normalize and compare
+                if product_category:
+                    normalized_product_category = normalize_category(product_category)
+                    # Check exact match after normalization (handles "lip care" -> "lipcare")
+                    if normalized_product_category == primary_category_lower:
+                        category_match = True
+                    else:
+                        # Split by common delimiters to handle multiple categories
+                        category_parts = re.split(r'[,;|&/]+', product_category)
+                        # Check each part after normalization
+                        for part in category_parts:
+                            normalized_part = normalize_category(part)
+                            if normalized_part == primary_category_lower:
+                                category_match = True
+                                break
+                
+                # Check subcategory if category didn't match
+                if not category_match and product_subcategory:
+                    normalized_product_subcategory = normalize_category(product_subcategory)
+                    if normalized_product_subcategory == primary_category_lower:
+                        category_match = True
+                    else:
+                        subcategory_parts = re.split(r'[,;|&/]+', product_subcategory)
+                        for part in subcategory_parts:
+                            normalized_part = normalize_category(part)
+                            if normalized_part == primary_category_lower:
+                                category_match = True
+                                break
+                
+                # Special handling for lipcare products that might be categorized as "makeup"
+                # Check if product name contains lip-related keywords
+                if not category_match and primary_category_lower == "lipcare":
+                    lip_keywords = ["lip", "balm", "lipstick", "lip gloss", "lip oil", "lip serum", "lip care"]
+                    if any(keyword in product_name_lower for keyword in lip_keywords):
+                        # If product name suggests it's a lip product, accept "makeup" category
+                        if "makeup" in product_category or "make up" in product_category:
+                            category_match = True
+                
+                # Subcategory matching (more specific) - only if category didn't match
                 if not category_match and subcategory:
-                    if product_subcategory and subcategory in product_subcategory:
-                        category_match = True
-                    elif product_category and subcategory in product_category:
-                        category_match = True
+                    subcategory_lower = subcategory.lower()
+                    normalized_subcategory = normalize_category(subcategory)
+                    
+                    if product_subcategory:
+                        normalized_product_subcategory = normalize_category(product_subcategory)
+                        if normalized_product_subcategory == normalized_subcategory:
+                            category_match = True
+                        else:
+                            subcategory_parts = re.split(r'[,;|&/]+', product_subcategory)
+                            for part in subcategory_parts:
+                                normalized_part = normalize_category(part)
+                                if normalized_part == normalized_subcategory:
+                                    category_match = True
+                                    break
+                    
+                    if not category_match and product_category:
+                        normalized_product_category = normalize_category(product_category)
+                        if normalized_product_category == normalized_subcategory:
+                            category_match = True
+                        else:
+                            category_parts = re.split(r'[,;|&/]+', product_category)
+                            for part in category_parts:
+                                normalized_part = normalize_category(part)
+                                if normalized_part == normalized_subcategory:
+                                    category_match = True
+                                    break
                 
                 # If category doesn't match, exclude the product
                 if not category_match:
@@ -3299,11 +3467,8 @@ async def market_research_products(
     
     # Get stored products (all products from original research)
     stored_products = research_result.get("products", [])
-    if not stored_products:
-        raise HTTPException(
-            status_code=400,
-            detail="No products found in history. Please run market research first."
-        )
+    # Note: Empty products list is valid - it means no products matched the category filter
+    # We'll return empty results instead of raising an error (allows frontend to handle gracefully)
     
     # Get other stored data
     ingredients = research_result.get("extracted_ingredients", [])
@@ -3330,6 +3495,22 @@ async def market_research_products(
         # Get selected_keywords and filters from payload
         selected_keywords_dict = payload.get("selected_keywords", {})
         additional_filters = payload.get("filters", {})
+        
+        # 🔹 Save selected_keywords to database if provided
+        if selected_keywords_dict:
+            try:
+                # Validate and parse selected_keywords
+                selected_keywords_obj = ProductKeywords(**selected_keywords_dict)
+                # Save to database
+                await market_research_history_col.update_one(
+                    {"_id": ObjectId(history_id), "user_id": user_id_value},
+                    {"$set": {"selected_keywords": selected_keywords_obj.model_dump_exclude_empty()}}
+                )
+                print(f"[AUTO-SAVE] Saved selected_keywords to history {history_id}")
+            except Exception as e:
+                print(f"[AUTO-SAVE] Warning: Failed to save selected_keywords: {e}")
+                import traceback
+                traceback.print_exc()
         
         # Apply keyword filtering if provided
         matched_products = stored_products.copy()  # Start with all stored products
@@ -3772,18 +3953,87 @@ async def market_research_overview(
                 if primary_category and category_confidence in ["high", "medium"]:
                     product_category = product.get("category", "").lower() if product.get("category") else ""
                     product_subcategory = product.get("subcategory", "").lower() if product.get("subcategory") else ""
+                    product_name = product.get("productName", "") or product.get("name", "")
+                    product_name_lower = product_name.lower() if product_name else ""
                     
                     category_match = False
-                    if product_category and primary_category in product_category:
-                        category_match = True
-                    elif product_subcategory and primary_category in product_subcategory:
-                        category_match = True
                     
+                    # Normalize primary_category for matching (remove spaces, handle variations)
+                    primary_category_lower = primary_category.lower().replace(" ", "").replace("_", "").replace("-", "")
+                    
+                    # Helper function to normalize category strings for comparison
+                    def normalize_category(cat_str):
+                        """Normalize category string by removing spaces, underscores, hyphens"""
+                        if not cat_str:
+                            return ""
+                        return cat_str.replace(" ", "").replace("_", "").replace("-", "").strip()
+                    
+                    # Direct category match - normalize and compare
+                    if product_category:
+                        normalized_product_category = normalize_category(product_category)
+                        # Check exact match after normalization (handles "lip care" -> "lipcare")
+                        if normalized_product_category == primary_category_lower:
+                            category_match = True
+                        else:
+                            # Split by common delimiters to handle multiple categories
+                            category_parts = re.split(r'[,;|&/]+', product_category)
+                            # Check each part after normalization
+                            for part in category_parts:
+                                normalized_part = normalize_category(part)
+                                if normalized_part == primary_category_lower:
+                                    category_match = True
+                                    break
+                    
+                    # Check subcategory if category didn't match
+                    if not category_match and product_subcategory:
+                        normalized_product_subcategory = normalize_category(product_subcategory)
+                        if normalized_product_subcategory == primary_category_lower:
+                            category_match = True
+                        else:
+                            subcategory_parts = re.split(r'[,;|&/]+', product_subcategory)
+                            for part in subcategory_parts:
+                                normalized_part = normalize_category(part)
+                                if normalized_part == primary_category_lower:
+                                    category_match = True
+                                    break
+                    
+                    # Special handling for lipcare products that might be categorized as "makeup"
+                    # Check if product name contains lip-related keywords
+                    if not category_match and primary_category_lower == "lipcare":
+                        lip_keywords = ["lip", "balm", "lipstick", "lip gloss", "lip oil", "lip serum", "lip care"]
+                        if any(keyword in product_name_lower for keyword in lip_keywords):
+                            # If product name suggests it's a lip product, accept "makeup" category
+                            if "makeup" in product_category or "make up" in product_category:
+                                category_match = True
+                    
+                    # Subcategory matching (more specific)
                     if not category_match and subcategory:
-                        if product_subcategory and subcategory in product_subcategory:
-                            category_match = True
-                        elif product_category and subcategory in product_category:
-                            category_match = True
+                        subcategory_lower = subcategory.lower()
+                        normalized_subcategory = normalize_category(subcategory)
+                        
+                        if product_subcategory:
+                            normalized_product_subcategory = normalize_category(product_subcategory)
+                            if normalized_product_subcategory == normalized_subcategory:
+                                category_match = True
+                            else:
+                                subcategory_parts = re.split(r'[,;|&/]+', product_subcategory)
+                                for part in subcategory_parts:
+                                    normalized_part = normalize_category(part)
+                                    if normalized_part == normalized_subcategory:
+                                        category_match = True
+                                        break
+                        
+                        if not category_match and product_category:
+                            normalized_product_category = normalize_category(product_category)
+                            if normalized_product_category == normalized_subcategory:
+                                category_match = True
+                            else:
+                                category_parts = re.split(r'[,;|&/]+', product_category)
+                                for part in category_parts:
+                                    normalized_part = normalize_category(part)
+                                    if normalized_part == normalized_subcategory:
+                                        category_match = True
+                                        break
                     
                     if not category_match:
                         should_include = False
