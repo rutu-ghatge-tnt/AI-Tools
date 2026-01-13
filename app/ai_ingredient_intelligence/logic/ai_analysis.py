@@ -411,6 +411,8 @@ IMPORTANT RULES:
 - If product name contains "cleanser", it is ALWAYS skincare/cleanser, NOT haircare/conditioner
 - If product name contains "face" or "facial", it is ALWAYS skincare
 - If product name contains "hair", it is ALWAYS haircare
+- If product name contains "lip" (e.g., "lip balm", "lipstick", "lip care", "lip serum"), it is ALWAYS lipcare, NOT haircare or skincare
+- If product name contains "balm" and context suggests lips (e.g., "lip balm"), it is ALWAYS lipcare
 - Product name context takes precedence over ingredient analysis when there's ambiguity
 
 OUTPUT FORMAT:
