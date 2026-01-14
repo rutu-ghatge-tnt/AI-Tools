@@ -163,9 +163,9 @@ async def register_distributor(
                 "zones": ["India"]
             }
         ],
-        "ingredientName": "Hyaluronic Acid",
-        "ingredientId": "optional_single_id",  # Optional: single ingredient ID (backward compatibility)
-        "ingredientIds": ["id1", "id2", "id3"],  # Optional: array of ingredient IDs (preferred)
+        "ingredientName": "Hyaluronic Acid",  // Optional: required only if ingredientIds not provided
+        "ingredientId": "optional_single_id",  // Optional: single ingredient ID (backward compatibility)
+        "ingredientIds": ["id1", "id2", "id3"],  // Optional: array of ingredient IDs (preferred)
         "principlesSuppliers": ["Supplier 1", "Supplier 2"],
         "yourInfo": {
             "name": "John Doe",
@@ -175,14 +175,20 @@ async def register_distributor(
         },
         "acceptTerms": true
     }
+    
+    Note: Either ingredientName or ingredientIds must be provided (or both)
     """
     try:
-        # Validate required fields
+        # Validate required fields - ingredientName is optional if ingredientIds is provided
         required_fields = ["firmName", "category", "registeredAddress", "contactPersons", 
-                         "ingredientName", "principlesSuppliers", "yourInfo", "acceptTerms"]
+                         "principlesSuppliers", "yourInfo", "acceptTerms"]
         for field in required_fields:
             if field not in payload:
                 raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
+        
+        # Validate that either ingredientName or ingredientIds is provided
+        if "ingredientName" not in payload and "ingredientIds" not in payload:
+            raise HTTPException(status_code=400, detail="Either ingredientName or ingredientIds must be provided")
         
         if not payload.get("acceptTerms"):
             raise HTTPException(status_code=400, detail="Terms and conditions must be accepted")
@@ -224,16 +230,19 @@ async def register_distributor(
             if field not in your_info or not your_info[field]:
                 raise HTTPException(status_code=400, detail=f"Your Info: Missing required field: {field}")
         
-        # Lookup ingredient IDs from branded ingredients collection by name
-        ingredient_name = payload["ingredientName"]
+        # Lookup ingredient IDs from branded ingredients collection by name (if provided)
+        ingredient_name = payload.get("ingredientName")  # Now optional
         ingredient_id_provided = payload.get("ingredientId")  # Optional single ingredient ID (backward compatibility)
         ingredient_ids_provided = payload.get("ingredientIds")  # Optional array of ingredient IDs
         ingredient_ids = []
         
-        # Clean ingredient name (remove trailing commas, extra spaces)
-        ingredient_name_clean = ingredient_name.strip().rstrip(',').strip()
+        # Clean ingredient name (remove trailing commas, extra spaces) - only if ingredientName is provided
+        ingredient_name_clean = ingredient_name.strip().rstrip(',').strip() if ingredient_name else ""
         
-        print(f"🔍 Looking up ingredient IDs for: '{ingredient_name_clean}'")
+        if ingredient_name:
+            print(f"🔍 Looking up ingredient IDs for: '{ingredient_name_clean}'")
+        else:
+            print(f"🔍 No ingredientName provided, will use ingredientIds directly")
         
         # CRITICAL: If ingredientIds array is provided from frontend, use them directly (most reliable)
         if ingredient_ids_provided:
@@ -272,8 +281,8 @@ async def register_distributor(
                 print(f"❌ WARNING: Invalid ingredient ID format {ingredient_id_provided}: {e}. Will lookup by name instead.")
                 ingredient_id_provided = None  # Fall back to name lookup
         
-        # If no valid ID provided, lookup by name
-        if not ingredient_ids:
+        # If no valid ID provided and ingredientName is available, lookup by name
+        if not ingredient_ids and ingredient_name:
             print(f"🔍 No ingredient ID provided, looking up by name: '{ingredient_name_clean}'")
             
             # Strategy 1: Try exact match on ingredient_name field (case-insensitive)
@@ -364,7 +373,10 @@ async def register_distributor(
         ingredient_ids = verified_ids  # Use only verified IDs
         
         if len(ingredient_ids) == 0:
-            print(f"❌ ERROR: No valid ingredient IDs found for '{ingredient_name_clean}'. Please check if the ingredient exists in the database.")
+            if ingredient_name:
+                print(f"❌ ERROR: No valid ingredient IDs found for '{ingredient_name_clean}'. Please check if the ingredient exists in the database.")
+            else:
+                print(f"❌ ERROR: No valid ingredient IDs provided and no ingredientName to lookup.")
         else:
             print(f"✅ Successfully found and verified {len(ingredient_ids)} ingredient ID(s): {ingredient_ids}")
         
@@ -400,7 +412,10 @@ async def register_distributor(
         
         print(f"💾 Saving distributor document:")
         print(f"   - Firm: {payload['firmName']}")
-        print(f"   - Ingredient Name: {ingredient_name_clean}")
+        if ingredient_name:
+            print(f"   - Ingredient Name: {ingredient_name_clean}")
+        else:
+            print(f"   - Ingredient Name: [Not provided - using IDs only]")
         print(f"   - Ingredient IDs: {ingredient_ids}")
         print(f"   - Contact Persons: {len(contact_persons_data)}")
         
