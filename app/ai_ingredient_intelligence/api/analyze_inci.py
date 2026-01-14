@@ -1483,12 +1483,19 @@ async def register_distributor(
     }
     """
     try:
-        # Validate required fields
+        # Validate required fields - ingredientName is optional if ingredientIds is provided
         required_fields = ["firmName", "category", "registeredAddress", "contactPersons", 
-                         "ingredientName", "principlesSuppliers", "yourInfo", "acceptTerms"]
+                         "principlesSuppliers", "yourInfo", "acceptTerms"]
         for field in required_fields:
             if field not in payload:
                 raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
+        
+        # Validate that either ingredientName or ingredientIds is provided
+        has_ingredient_name = "ingredientName" in payload and payload["ingredientName"]
+        has_ingredient_ids = "ingredientIds" in payload and payload["ingredientIds"]
+        
+        if not has_ingredient_name and not has_ingredient_ids:
+            raise HTTPException(status_code=400, detail="Either ingredientName or ingredientIds must be provided")
         
         if not payload.get("acceptTerms"):
             raise HTTPException(status_code=400, detail="Terms and conditions must be accepted")
@@ -1533,35 +1540,63 @@ async def register_distributor(
         # Prepare distributor document
         from datetime import datetime
         
-        # Lookup ingredient IDs from branded ingredients collection by name
-        ingredient_name = payload["ingredientName"]
-        ingredient_id_provided = payload.get("ingredientId")  # Optional ingredient ID from frontend
+        # Handle ingredient identification - support both ingredientName and ingredientIds
         ingredient_ids = []
         
-        # Clean ingredient name (remove trailing commas, extra spaces)
-        ingredient_name_clean = ingredient_name.strip().rstrip(',').strip()
+        # CRITICAL: If ingredientIds array is provided from frontend, use them directly (most reliable)
+        ingredient_ids_provided = payload.get("ingredientIds")  # Optional array of ingredient IDs
+        if ingredient_ids_provided:
+            if isinstance(ingredient_ids_provided, list) and len(ingredient_ids_provided) > 0:
+                print(f"✅✅✅ Using provided ingredient IDs array: {ingredient_ids_provided}")
+                for ing_id_str in ingredient_ids_provided:
+                    try:
+                        ing_id_obj = ObjectId(ing_id_str)
+                        # Verify that ID exists in the collection
+                        verify_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
+                        if verify_doc:
+                            if str(ing_id_obj) not in ingredient_ids:
+                                ingredient_ids.append(str(ing_id_obj))
+                                print(f"   ✅ Verified ingredient ID: {ing_id_str} -> '{verify_doc.get('ingredient_name', 'N/A')}'")
+                        else:
+                            print(f"   ❌ WARNING: Provided ingredient ID {ing_id_str} not found!")
+                    except Exception as e:
+                        print(f"   ❌ WARNING: Invalid ingredient ID format {ing_id_str}: {e}")
+            else:
+                print(f"⚠️ WARNING: ingredientIds provided but not a valid non-empty array.")
         
-        print(f"🔍 Looking up ingredient IDs for: '{ingredient_name_clean}'")
+        # If no ingredient IDs found but ingredientIds was provided, continue with empty array
+        if len(ingredient_ids) == 0 and ingredient_ids_provided:
+            print(f"⚠️ WARNING: No valid ingredient IDs found from provided IDs, but continuing with empty array")
         
-        # CRITICAL: If ingredientId is provided from frontend, use it directly (most reliable)
-        if ingredient_id_provided:
-            try:
-                ing_id_obj = ObjectId(ingredient_id_provided)
-                # Verify the ID exists in the collection
-                verify_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
-                if verify_doc:
-                    ingredient_ids.append(str(ing_id_obj))
-                    print(f"✅✅✅ Using provided ingredient ID: {ingredient_id_provided}")
-                    print(f"   Verified: Ingredient '{verify_doc.get('ingredient_name', 'N/A')}' exists with this ID")
-                else:
-                    print(f"❌ WARNING: Provided ingredient ID {ingredient_id_provided} not found! Will lookup by name instead.")
+        # Fallback: If no ingredientIds provided, try ingredientName (old format)
+        if not ingredient_ids_provided and "ingredientName" in payload:
+            ingredient_name = payload["ingredientName"]
+            ingredient_id_provided = payload.get("ingredientId")  # Optional ingredient ID from frontend
+            
+            # Clean ingredient name (remove trailing commas, extra spaces)
+            ingredient_name_clean = ingredient_name.strip().rstrip(',').strip()
+            
+            print(f"🔍 Looking up ingredient IDs for: '{ingredient_name_clean}'")
+            
+            # CRITICAL: If ingredientId is provided from frontend, use it directly (most reliable)
+            if ingredient_id_provided:
+                try:
+                    ing_id_obj = ObjectId(ingredient_id_provided)
+                    # Verify the ID exists in the collection
+                    verify_doc = await branded_ingredients_col.find_one({"_id": ing_id_obj})
+                    if verify_doc:
+                        ingredient_ids.append(str(ing_id_obj))
+                        print(f"✅✅✅ Using provided ingredient ID: {ingredient_id_provided}")
+                        print(f"   Verified: Ingredient '{verify_doc.get('ingredient_name', 'N/A')}' exists with this ID")
+                    else:
+                        print(f"❌ WARNING: Provided ingredient ID {ingredient_id_provided} not found! Will lookup by name instead.")
+                        ingredient_id_provided = None  # Fall back to name lookup
+                except Exception as e:
+                    print(f"❌ WARNING: Invalid ingredient ID format {ingredient_id_provided}: {e}. Will lookup by name instead.")
                     ingredient_id_provided = None  # Fall back to name lookup
-            except Exception as e:
-                print(f"❌ WARNING: Invalid ingredient ID format {ingredient_id_provided}: {e}. Will lookup by name instead.")
-                ingredient_id_provided = None  # Fall back to name lookup
         
-        # If no valid ID provided, lookup by name
-        if not ingredient_ids:
+        # If no valid ID provided and we're using ingredientName, lookup by name
+        if not ingredient_ids and not ingredient_ids_provided and "ingredientName" in payload:
             print(f"🔍 No ingredient ID provided, looking up by name: '{ingredient_name_clean}'")
             
             # Strategy 1: Try exact match on ingredient_name field (case-insensitive)
@@ -1695,14 +1730,19 @@ async def register_distributor(
         ingredient_ids = verified_ids  # Use only verified IDs
         
         if len(ingredient_ids) == 0:
-            print(f"❌ ERROR: No valid ingredient IDs found for '{ingredient_name_clean}'. Please check if the ingredient exists in the database.")
-            print(f"   Searched in: ingredient_name field and INCI names")
-            # Let's also show what ingredients exist with similar names for debugging
-            print(f"   Debug: Searching for similar ingredient names...")
-            async for similar in branded_ingredients_col.find(
-                {"ingredient_name": {"$regex": ingredient_name_clean[:5] if len(ingredient_name_clean) > 5 else ingredient_name_clean, "$options": "i"}}
-            ).limit(5):
-                print(f"   Similar: '{similar.get('ingredient_name', 'N/A')}' (ID: {similar['_id']})")
+            if ingredient_ids_provided:
+                # If ingredientIds was provided but none were valid, continue with empty array
+                print(f"⚠️ WARNING: No valid ingredient IDs found from provided ingredientIds, but continuing with empty array as per frontend request")
+            else:
+                # If using ingredientName and no IDs found, show detailed error
+                print(f"❌ ERROR: No valid ingredient IDs found for '{ingredient_name_clean}'. Please check if the ingredient exists in the database.")
+                print(f"   Searched in: ingredient_name field and INCI names")
+                # Let's also show what ingredients exist with similar names for debugging
+                print(f"   Debug: Searching for similar ingredient names...")
+                async for similar in branded_ingredients_col.find(
+                    {"ingredient_name": {"$regex": ingredient_name_clean[:5] if len(ingredient_name_clean) > 5 else ingredient_name_clean, "$options": "i"}}
+                ).limit(5):
+                    print(f"   Similar: '{similar.get('ingredient_name', 'N/A')}' (ID: {similar['_id']})")
         else:
             print(f"✅ Successfully found and verified {len(ingredient_ids)} ingredient ID(s): {ingredient_ids}")
         

@@ -186,11 +186,14 @@ async def register_distributor(
                 raise HTTPException(status_code=400, detail=f"Missing required field: {field}")
         
         # Validate that either ingredientName or ingredientIds is provided
-        if "ingredientName" not in payload and "ingredientIds" not in payload:
+        has_ingredient_name = "ingredientName" in payload and payload["ingredientName"]
+        has_ingredient_ids = "ingredientIds" in payload and payload["ingredientIds"]
+        
+        if not has_ingredient_name and not has_ingredient_ids:
             raise HTTPException(status_code=400, detail="Either ingredientName or ingredientIds must be provided")
         
-        # If only ingredientName is provided without ingredientIds, that's the old format - allow it
-        # If only ingredientIds is provided without ingredientName, that's the new format - allow it
+        # If ingredientIds is provided, we don't need ingredientName even if ingredient IDs are invalid
+        # The frontend will handle the case where no valid ingredients are found
         
         if not payload.get("acceptTerms"):
             raise HTTPException(status_code=400, detail="Terms and conditions must be accepted")
@@ -257,8 +260,11 @@ async def register_distributor(
             else:
                 print(f"⚠️ WARNING: ingredientIds provided but not a valid non-empty array.")
         
-        # If no ingredient IDs found, show error
-        if len(ingredient_ids) == 0:
+        # If no ingredient IDs found but ingredientIds was provided, continue with empty array
+        # This allows the frontend to handle the case where no valid ingredients were found
+        if len(ingredient_ids) == 0 and ingredient_ids_provided:
+            print(f"⚠️ WARNING: No valid ingredient IDs found from provided IDs, but continuing with empty array as per frontend request")
+        elif len(ingredient_ids) == 0:
             print(f"❌ ERROR: No valid ingredient IDs provided.")
         else:
             print(f"✅ Successfully found and verified {len(ingredient_ids)} ingredient ID(s): {ingredient_ids}")
@@ -299,7 +305,7 @@ async def register_distributor(
         print(f"   - Contact Persons: {len(contact_persons_data)}")
         
         if len(ingredient_ids) == 0:
-            print(f"\n⚠️⚠️⚠️ WARNING: No valid ingredient IDs to save! Distributor will be saved with empty ingredientIds array.")
+            print(f"\n⚠️ INFO: Saving distributor with empty ingredientIds array (frontend will handle validation)")
         
         # Insert into distributor collection
         try:
