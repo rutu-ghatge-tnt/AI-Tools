@@ -31,6 +31,10 @@ from app.ai_ingredient_intelligence.logic.ai_analysis import (
     extract_structured_product_info_with_ai,
     claude_client  # Import claude_client directly
 )
+from app.ai_ingredient_intelligence.logic.formulynx_taxonomy import (
+    get_available_keywords_for_analysis,
+    ENHANCED_FORMULYNX_TAXONOMY
+)
 from app.ai_ingredient_intelligence.logic.serper_product_search import fetch_platforms
 import os  # For claude_api_key check
 
@@ -1201,11 +1205,16 @@ async def market_research_analyze(
             except Exception as e:
                 print(f"⚠️  Error auto-saving to history: {e}")
         
+        # 🆕 ENHANCED TAXONOMY ANALYSIS
+        # Generate available keywords based on analysis with relationships
+        keywords_for_taxonomy = keywords.model_dump()
+        enhanced_available_keywords = get_available_keywords_for_analysis(keywords_for_taxonomy)
+        
         processing_time = round(time.time() - start, 2)
         
         return ProductAnalysisResponse(
             structured_analysis=structured_analysis,
-            available_keywords=keywords,
+            available_keywords=enhanced_available_keywords,  # 🆕 Enhanced with taxonomy
             extracted_ingredients=ingredients,
             processing_time=processing_time,
             history_id=history_id
@@ -3250,6 +3259,20 @@ async def market_research_products(
             filtered_by_price = []
             for product in matched_products:
                 product_price = product.get("price", 0) or 0
+                
+                # Convert to float if it's a string, or skip if invalid
+                try:
+                    if isinstance(product_price, str):
+                        # Remove currency symbols and convert to float
+                        product_price = float(product_price.replace('₹', '').replace(',', '').strip())
+                    elif product_price is None:
+                        product_price = 0
+                    else:
+                        product_price = float(product_price)
+                except (ValueError, TypeError):
+                    # Skip products with invalid price data
+                    continue
+                
                 if min_price is not None and product_price < min_price:
                     continue
                 if max_price is not None and product_price > max_price:

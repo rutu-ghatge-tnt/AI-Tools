@@ -626,7 +626,7 @@ class ProductAnalysisRequest(BaseModel):
 class ProductAnalysisResponse(BaseModel):
     """Response schema for product analysis endpoint"""
     structured_analysis: ProductStructuredAnalysis = Field(..., description="Structured analysis data")
-    available_keywords: ProductKeywords = Field(..., description="All available keywords organized by feature category")
+    available_keywords: Dict[str, Any] = Field(..., description="Available keywords with taxonomy relationships (form, mrp, application, functionality, concerns, benefits, product_types, relationships)")
     extracted_ingredients: List[str] = Field(default_factory=list, description="Extracted ingredients list")
     processing_time: float = Field(..., description="Time taken for processing")
     history_id: Optional[str] = Field(None, description="History item ID if saved")
