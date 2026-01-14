@@ -1492,7 +1492,7 @@ async def register_distributor(
         
         # Validate that either ingredientName or ingredientIds is provided
         has_ingredient_name = "ingredientName" in payload and payload["ingredientName"]
-        has_ingredient_ids = "ingredientIds" in payload and payload["ingredientIds"]
+        has_ingredient_ids = "ingredientIds" in payload and payload["ingredientIds"] is not None
         
         if not has_ingredient_name and not has_ingredient_ids:
             raise HTTPException(status_code=400, detail="Either ingredientName or ingredientIds must be provided")
@@ -1542,6 +1542,7 @@ async def register_distributor(
         
         # Handle ingredient identification - support both ingredientName and ingredientIds
         ingredient_ids = []
+        ingredient_name_clean = None  # Initialize to avoid scoping issues
         
         # CRITICAL: If ingredientIds array is provided from frontend, use them directly (most reliable)
         ingredient_ids_provided = payload.get("ingredientIds")  # Optional array of ingredient IDs
@@ -1597,10 +1598,11 @@ async def register_distributor(
         
         # If no valid ID provided and we're using ingredientName, lookup by name
         if not ingredient_ids and not ingredient_ids_provided and "ingredientName" in payload:
-            print(f"🔍 No ingredient ID provided, looking up by name: '{ingredient_name_clean}'")
-            
-            # Strategy 1: Try exact match on ingredient_name field (case-insensitive)
-            print(f"🔍 Strategy 1: Exact match search for '{ingredient_name_clean}'")
+            if ingredient_name_clean:  # Only proceed if we have a cleaned name
+                print(f"🔍 No ingredient ID provided, looking up by name: '{ingredient_name_clean}'")
+                
+                # Strategy 1: Try exact match on ingredient_name field (case-insensitive)
+                print(f"🔍 Strategy 1: Exact match search for '{ingredient_name_clean}'")
             count_found = 0
             async for branded_ingredient in branded_ingredients_col.find(
                 {"ingredient_name": {"$regex": f"^{ingredient_name_clean}$", "$options": "i"}}
@@ -1735,14 +1737,15 @@ async def register_distributor(
                 print(f"⚠️ WARNING: No valid ingredient IDs found from provided ingredientIds, but continuing with empty array as per frontend request")
             else:
                 # If using ingredientName and no IDs found, show detailed error
-                print(f"❌ ERROR: No valid ingredient IDs found for '{ingredient_name_clean}'. Please check if the ingredient exists in the database.")
-                print(f"   Searched in: ingredient_name field and INCI names")
-                # Let's also show what ingredients exist with similar names for debugging
-                print(f"   Debug: Searching for similar ingredient names...")
-                async for similar in branded_ingredients_col.find(
-                    {"ingredient_name": {"$regex": ingredient_name_clean[:5] if len(ingredient_name_clean) > 5 else ingredient_name_clean, "$options": "i"}}
-                ).limit(5):
-                    print(f"   Similar: '{similar.get('ingredient_name', 'N/A')}' (ID: {similar['_id']})")
+                if ingredient_name_clean:  # Only show error if we have a cleaned name
+                    print(f"❌ ERROR: No valid ingredient IDs found for '{ingredient_name_clean}'. Please check if the ingredient exists in the database.")
+                    print(f"   Searched in: ingredient_name field and INCI names")
+                    # Let's also show what ingredients exist with similar names for debugging
+                    print(f"   Debug: Searching for similar ingredient names...")
+                    async for similar in branded_ingredients_col.find(
+                        {"ingredient_name": {"$regex": ingredient_name_clean[:5] if len(ingredient_name_clean) > 5 else ingredient_name_clean, "$options": "i"}}
+                    ).limit(5):
+                        print(f"   Similar: '{similar.get('ingredient_name', 'N/A')}' (ID: {similar['_id']})")
         else:
             print(f"✅ Successfully found and verified {len(ingredient_ids)} ingredient ID(s): {ingredient_ids}")
         

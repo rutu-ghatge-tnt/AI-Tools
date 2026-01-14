@@ -187,7 +187,7 @@ async def register_distributor(
         
         # Validate that either ingredientName or ingredientIds is provided
         has_ingredient_name = "ingredientName" in payload and payload["ingredientName"]
-        has_ingredient_ids = "ingredientIds" in payload and payload["ingredientIds"]
+        has_ingredient_ids = "ingredientIds" in payload and payload["ingredientIds"] is not None
         
         if not has_ingredient_name and not has_ingredient_ids:
             raise HTTPException(status_code=400, detail="Either ingredientName or ingredientIds must be provided")
