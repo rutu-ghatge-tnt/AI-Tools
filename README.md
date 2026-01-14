@@ -77,6 +77,16 @@ git clone <repository-url>
 cd SkinBB_AI_Tools
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+### **Using Python 3.11 (Recommended)**
+To ensure compatibility, we recommend using Python 3.11. Here's how to set it up:
+
+```
+Run project in 3.11 version python
+
+```bash
+py -3.11 -m venv venv311
+venv311\Scripts\activate.ps1
 ```
 
 ### **2. Install Dependencies**
