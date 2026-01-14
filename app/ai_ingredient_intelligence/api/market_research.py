@@ -3071,7 +3071,9 @@ async def market_research_products(
             }
             
             if input_type_from_history == "url":
-                market_research_payload["url"] = input_data
+                # Use input_url if available, otherwise fallback to input_data
+                url_to_use = history_item.get("input_url") or input_data
+                market_research_payload["url"] = url_to_use
             elif input_type_from_history == "inci":
                 # input_data is stored as comma-separated string, convert to array for market_research endpoint
                 if isinstance(input_data, str):

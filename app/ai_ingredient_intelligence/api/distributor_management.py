@@ -189,6 +189,9 @@ async def register_distributor(
         if "ingredientName" not in payload and "ingredientIds" not in payload:
             raise HTTPException(status_code=400, detail="Either ingredientName or ingredientIds must be provided")
         
+        # If only ingredientName is provided without ingredientIds, that's the old format - allow it
+        # If only ingredientIds is provided without ingredientName, that's the new format - allow it
+        
         if not payload.get("acceptTerms"):
             raise HTTPException(status_code=400, detail="Terms and conditions must be accepted")
         
