@@ -2484,31 +2484,31 @@ async def market_research(
             if should_include:
                 matches_found += 1
                 
-                # Get product image - prioritize s3Image/s3Images, fallback to image/images
+                # Get product image - prioritize image/images, fallback to s3Image/s3Images
                 image = None
                 images = []
                 
-                # Try S3 images first (preferred)
-                if "s3Image" in product and product["s3Image"]:
-                    image = product["s3Image"]
+                # Try regular images first (preferred)
+                if "image" in product and product["image"]:
+                    image = product["image"]
                     if isinstance(image, str):
                         images = [image]
                 
-                if "s3Images" in product and product["s3Images"]:
-                    if isinstance(product["s3Images"], list) and len(product["s3Images"]) > 0:
-                        images = product["s3Images"]
+                if "images" in product and product["images"]:
+                    if isinstance(product["images"], list) and len(product["images"]) > 0:
+                        images = product["images"]
                         if not image and images:
                             image = images[0]
                 
-                # Fallback to regular images if S3 not available
-                if not image and "image" in product and product["image"]:
-                    image = product["image"]
+                # Fallback to S3 images if regular not available
+                if not image and "s3Image" in product and product["s3Image"]:
+                    image = product["s3Image"]
                     if isinstance(image, str) and image not in images:
                         images.insert(0, image)
                 
-                if "images" in product and product["images"]:
-                    if isinstance(product["images"], list):
-                        for img in product["images"]:
+                if "s3Images" in product and product["s3Images"]:
+                    if isinstance(product["s3Images"], list):
+                        for img in product["s3Images"]:
                             if img and img not in images:
                                 images.append(img)
                         if not image and images:
