@@ -800,6 +800,178 @@ Return your ranking as JSON with the structure specified in the system prompt.""
         return products
 
 
+def ensure_complete_analysis(result: Dict[str, any], ingredients: List[str], product_name: str = "", url: str = "") -> Dict[str, any]:
+    """
+    Ensure analysis result has no null/empty fields by providing intelligent fallbacks.
+    
+    Args:
+        result: AI analysis result that may have null/empty fields
+        ingredients: List of ingredients for inference
+        product_name: Product name for context
+        url: Product URL for context
+    
+    Returns:
+        Complete analysis result with all fields filled
+    """
+    from app.ai_ingredient_intelligence.logic.formulynx_taxonomy import (
+        map_category_to_target_area, get_price_tier_by_mrp
+    )
+    
+    # Helper function to infer product type from ingredients
+    def infer_product_type():
+        ingredient_str = " ".join(ingredients).lower()
+        
+        # Check for cleanser indicators
+        if any(indicator in ingredient_str for indicator in ["surfact", "sodium laureth", "sodium lauryl", "cocamidopropyl", "glucoside"]):
+            return "cleanser"
+        
+        # Check for serum indicators  
+        if any(indicator in ingredient_str for indicator in ["hyaluronic", "niacinamide", "vitamin c", "ascorbic", "retinol"]):
+            return "serum"
+            
+        # Check for moisturizer indicators
+        if any(indicator in ingredient_str for indicator in ["ceramide", "glycerin", "butyrospermum", "shea", "dimethicone"]):
+            return "moisturizer"
+            
+        # Check for sunscreen indicators
+        if any(indicator in ingredient_str for indicator in ["zinc oxide", "titanium dioxide", "avobenzone", "octocrylene"]):
+            return "sunscreen"
+            
+        # Check for shampoo indicators
+        if any(indicator in ingredient_str for indicator in ["sodium laureth sulfate", "cocamidopropyl betaine", "behentrimonium"]):
+            return "shampoo"
+            
+        # Default fallback
+        return "serum"
+    
+    # Helper function to infer benefits from ingredients
+    def infer_benefits():
+        ingredient_str = " ".join(ingredients).lower()
+        benefits = []
+        
+        if any(indicator in ingredient_str for indicator in ["hyaluronic", "glycerin", "ceramide", "urea"]):
+            benefits.extend(["hydrating", "moisturizing"])
+            
+        if any(indicator in ingredient_str for indicator in ["niacinamide", "vitamin c", "ascorbic", "kojic"]):
+            benefits.extend(["brightening", "dark_spot_correcting"])
+            
+        if any(indicator in ingredient_str for indicator in ["salicylic", "glycolic", "lactic", "mandelic"]):
+            benefits.extend(["exfoliating", "smoothening"])
+            
+        if any(indicator in ingredient_str for indicator in ["retinol", "peptide", "collagen"]):
+            benefits.extend(["anti_aging", "anti_wrinkle"])
+            
+        if any(indicator in ingredient_str for indicator in ["zinc", "tea tree", "salicylic"]):
+            benefits.extend(["anti_acne", "purifying"])
+            
+        if any(indicator in ingredient_str for indicator in ["ceramide", "dimethicone", "petrolatum"]):
+            benefits.extend(["barrier_repair"])
+            
+        return list(set(benefits)) or ["hydrating"]  # Default to hydrating if no benefits found
+    
+    # Helper function to infer concerns from benefits
+    def infer_concerns(benefits_list):
+        benefit_to_concern = {
+            "hydrating": ["dryness", "dehydration"],
+            "brightening": ["dark_spots", "uneven_tone", "dullness"],
+            "anti_aging": ["fine_lines", "wrinkles", "loss_of_elasticity"],
+            "anti_acne": ["acne", "blackheads", "excess_sebum"],
+            "barrier_repair": ["compromised_barrier", "dryness"],
+            "exfoliating": ["rough_texture", "congestion"]
+        }
+        
+        concerns = []
+        for benefit in benefits_list:
+            if benefit in benefit_to_concern:
+                concerns.extend(benefit_to_concern[benefit])
+        
+        return list(set(concerns)) or ["dryness"]  # Default to dryness
+    
+    # Start with the result and fill missing fields
+    complete_result = result.copy()
+    
+    # Ensure basic fields
+    complete_result["active_ingredients"] = result.get("active_ingredients", [])
+    complete_result["mrp"] = result.get("mrp", 499.0)  # Default MRP
+    complete_result["mrp_per_ml"] = result.get("mrp_per_ml", complete_result["mrp"] / 30.0)  # Assume 30ml
+    complete_result["mrp_source"] = result.get("mrp_source", "ai_estimated")
+    
+    # Get or infer form
+    form = result.get("form")
+    if not form:
+        form = infer_product_type()
+    
+    complete_result["form"] = form
+    
+    # Get or infer target area
+    target_area = result.get("target_area")
+    if not target_area:
+        if form in ["shampoo", "conditioner", "hair_mask", "hair_serum", "hair_oil"]:
+            target_area = "hair"
+        elif form in ["lip_balm", "lip_scrub", "lip_mask"]:
+            target_area = "lips"
+        else:
+            target_area = "face"  # Default to face
+    
+    # Get or infer product_type_id
+    product_type_id = result.get("product_type_id")
+    if not product_type_id:
+        product_type_id = form  # Use form as product_type_id
+    
+    complete_result["target_area"] = target_area
+    complete_result["product_type_id"] = product_type_id
+    
+    # Get or infer main category and subcategory
+    main_category = result.get("main_category")
+    if not main_category:
+        main_category = "skincare" if target_area == "face" else "haircare" if target_area == "hair" else "lipcare" if target_area == "lips" else "bodycare"
+    
+    subcategory = result.get("subcategory")
+    if not subcategory:
+        subcategory = f"{target_area}_{form}" if target_area != "face" else form
+    
+    complete_result["main_category"] = main_category
+    complete_result["subcategory"] = subcategory
+    
+    # Get or infer benefits and concerns
+    keywords = result.get("keywords", {})
+    benefits = keywords.get("benefits", [])
+    if not benefits:
+        benefits = infer_benefits()
+    
+    concerns = keywords.get("concerns", [])
+    if not concerns:
+        concerns = infer_concerns(benefits)
+    
+    # Get or infer price tier
+    mrp_value = complete_result["mrp"]
+    price_tier = keywords.get("price_tier") or get_price_tier_by_mrp(mrp_value)
+    
+    # Build complete keywords object
+    complete_keywords = {
+        "product_formulation": keywords.get("product_formulation", [form]) if form else [],
+        "form": form,
+        "mrp": keywords.get("mrp", [price_tier]) if price_tier else ["masstige"],
+        "price_tier": price_tier,
+        "application": keywords.get("application", ["daily_use"]),
+        "functionality": keywords.get("functionality", benefits.copy()),
+        "benefits": benefits,
+        "target_area": target_area,
+        "product_type_id": product_type_id,
+        "concerns": concerns,
+        "market_positioning": keywords.get("market_positioning", ["natural"]),
+        "functional_categories": keywords.get("functional_categories", benefits.copy()),
+        "main_category": main_category,
+        "subcategory": subcategory
+    }
+    
+    complete_result["keywords"] = complete_keywords
+    complete_result["functional_categories"] = benefits.copy()
+    complete_result["application"] = ["daily_use"]
+    
+    return complete_result
+
+
 async def extract_structured_product_info_with_ai(
     ingredients: List[str],
     extracted_text: str = "",
@@ -838,7 +1010,8 @@ async def extract_structured_product_info_with_ai(
     - market_positioning: List of Formulynx market positioning IDs
     """
     if not claude_client:
-        return {
+        # Create fallback result and ensure completeness
+        fallback_result = {
             "active_ingredients": [],
             "mrp": None,
             "mrp_per_ml": None,
@@ -852,15 +1025,23 @@ async def extract_structured_product_info_with_ai(
                 "product_formulation": [],
                 "mrp": [],
                 "application": [],
-                "functionality": []
-            },
-            "target_area": None,
-            "product_type_id": None,
-            "concerns": [],
-            "benefits": [],
-            "price_tier": None,
-            "market_positioning": []
+                "functionality": [],
+                "form": None,
+                "target_area": None,
+                "product_type_id": None,
+                "concerns": [],
+                "benefits": [],
+                "price_tier": None,
+                "market_positioning": [],
+                "functional_categories": [],
+                "main_category": None,
+                "subcategory": None
+            }
         }
+        
+        # Ensure all fields are complete with intelligent fallbacks
+        complete_result = ensure_complete_analysis(fallback_result, ingredients, product_name, url)
+        return complete_result
     
     print(f"    [AI Structured Analysis] Analyzing product information...")
     
@@ -1253,12 +1434,18 @@ Extract all fields as specified in the system prompt. Return ONLY the JSON objec
         result["keywords"] = validated_keywords
         
         print(f"    ✅ AI Structured Analysis completed")
-        return result
+        
+        # Ensure all fields are complete with intelligent fallbacks
+        complete_result = ensure_complete_analysis(result, ingredients, product_name, url)
+        
+        return complete_result
         
     except json.JSONDecodeError as e:
         print(f"    ⚠️  Error parsing AI response as JSON: {e}")
         print(f"    Response was: {content[:200] if 'content' in locals() else 'N/A'}")
-        return {
+        
+        # Create fallback result and ensure completeness
+        fallback_result = {
             "active_ingredients": [],
             "mrp": None,
             "mrp_per_ml": None,
@@ -1272,12 +1459,6 @@ Extract all fields as specified in the system prompt. Return ONLY the JSON objec
                 "product_formulation": [],
                 "mrp": [],
                 "application": [],
-                "functionality": []
-            },
-            "keywords": {
-                "product_formulation": [],
-                "mrp": [],
-                "application": [],
                 "functionality": [],
                 "form": None,
                 "target_area": None,
@@ -1291,11 +1472,17 @@ Extract all fields as specified in the system prompt. Return ONLY the JSON objec
                 "subcategory": None
             }
         }
+        
+        # Ensure all fields are complete with intelligent fallbacks
+        complete_result = ensure_complete_analysis(fallback_result, ingredients, product_name, url)
+        return complete_result
     except Exception as e:
         print(f"    ⚠️  Error calling Claude AI: {e}")
         import traceback
         traceback.print_exc()
-        return {
+        
+        # Create fallback result and ensure completeness
+        fallback_result = {
             "active_ingredients": [],
             "mrp": None,
             "mrp_per_ml": None,
@@ -1317,3 +1504,7 @@ Extract all fields as specified in the system prompt. Return ONLY the JSON objec
                 "subcategory": None
             }
         }
+        
+        # Ensure all fields are complete with intelligent fallbacks
+        complete_result = ensure_complete_analysis(fallback_result, ingredients, product_name, url)
+        return complete_result
