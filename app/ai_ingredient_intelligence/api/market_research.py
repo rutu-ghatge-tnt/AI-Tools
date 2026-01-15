@@ -31,6 +31,10 @@ from app.ai_ingredient_intelligence.logic.ai_analysis import (
     extract_structured_product_info_with_ai,
     claude_client  # Import claude_client directly
 )
+from app.ai_ingredient_intelligence.logic.formulynx_taxonomy import (
+    get_available_keywords_for_analysis,
+    ENHANCED_FORMULYNX_TAXONOMY
+)
 from app.ai_ingredient_intelligence.logic.serper_product_search import fetch_platforms
 import os  # For claude_api_key check
 
@@ -1201,11 +1205,16 @@ async def market_research_analyze(
             except Exception as e:
                 print(f"⚠️  Error auto-saving to history: {e}")
         
+        # 🆕 ENHANCED TAXONOMY ANALYSIS
+        # Generate available keywords based on analysis with relationships
+        keywords_for_taxonomy = keywords.model_dump()
+        enhanced_available_keywords = get_available_keywords_for_analysis(keywords_for_taxonomy)
+        
         processing_time = round(time.time() - start, 2)
         
         return ProductAnalysisResponse(
             structured_analysis=structured_analysis,
-            available_keywords=keywords,
+            available_keywords=enhanced_available_keywords,  # 🆕 Enhanced with taxonomy
             extracted_ingredients=ingredients,
             processing_time=processing_time,
             history_id=history_id
@@ -2475,31 +2484,31 @@ async def market_research(
             if should_include:
                 matches_found += 1
                 
-                # Get product image - prioritize s3Image/s3Images, fallback to image/images
+                # Get product image - prioritize image/images, fallback to s3Image/s3Images
                 image = None
                 images = []
                 
-                # Try S3 images first (preferred)
-                if "s3Image" in product and product["s3Image"]:
-                    image = product["s3Image"]
+                # Try regular images first (preferred)
+                if "image" in product and product["image"]:
+                    image = product["image"]
                     if isinstance(image, str):
                         images = [image]
                 
-                if "s3Images" in product and product["s3Images"]:
-                    if isinstance(product["s3Images"], list) and len(product["s3Images"]) > 0:
-                        images = product["s3Images"]
+                if "images" in product and product["images"]:
+                    if isinstance(product["images"], list) and len(product["images"]) > 0:
+                        images = product["images"]
                         if not image and images:
                             image = images[0]
                 
-                # Fallback to regular images if S3 not available
-                if not image and "image" in product and product["image"]:
-                    image = product["image"]
+                # Fallback to S3 images if regular not available
+                if not image and "s3Image" in product and product["s3Image"]:
+                    image = product["s3Image"]
                     if isinstance(image, str) and image not in images:
                         images.insert(0, image)
                 
-                if "images" in product and product["images"]:
-                    if isinstance(product["images"], list):
-                        for img in product["images"]:
+                if "s3Images" in product and product["s3Images"]:
+                    if isinstance(product["s3Images"], list):
+                        for img in product["s3Images"]:
                             if img and img not in images:
                                 images.append(img)
                         if not image and images:
@@ -3062,7 +3071,9 @@ async def market_research_products(
             }
             
             if input_type_from_history == "url":
-                market_research_payload["url"] = input_data
+                # Use input_url if available, otherwise fallback to input_data
+                url_to_use = history_item.get("input_url") or input_data
+                market_research_payload["url"] = url_to_use
             elif input_type_from_history == "inci":
                 # input_data is stored as comma-separated string, convert to array for market_research endpoint
                 if isinstance(input_data, str):
@@ -3250,6 +3261,20 @@ async def market_research_products(
             filtered_by_price = []
             for product in matched_products:
                 product_price = product.get("price", 0) or 0
+                
+                # Convert to float if it's a string, or skip if invalid
+                try:
+                    if isinstance(product_price, str):
+                        # Remove currency symbols and convert to float
+                        product_price = float(product_price.replace('₹', '').replace(',', '').strip())
+                    elif product_price is None:
+                        product_price = 0
+                    else:
+                        product_price = float(product_price)
+                except (ValueError, TypeError):
+                    # Skip products with invalid price data
+                    continue
+                
                 if min_price is not None and product_price < min_price:
                     continue
                 if max_price is not None and product_price > max_price:

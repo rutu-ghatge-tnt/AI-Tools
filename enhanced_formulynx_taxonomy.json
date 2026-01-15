@@ -1,0 +1,8526 @@
+{
+  "skin_concerns": {
+    "aging": {
+      "id": "aging",
+      "label": "Aging",
+      "icon": "⏳",
+      "category": "aging",
+      "is_parent": true,
+      "related_concerns": [
+        "fine_lines",
+        "wrinkles",
+        "deep_wrinkles",
+        "sagging",
+        "loss_of_elasticity",
+        "crepey_skin",
+        "volume_loss",
+        "age_spots"
+      ],
+      "addressed_by_benefits": [
+        "anti_aging",
+        "anti_wrinkle",
+        "firming",
+        "lifting",
+        "plumping",
+        "collagen_boosting"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "aging",
+        "mature skin",
+        "signs of aging",
+        "ageing"
+      ],
+      "india_priority": null
+    },
+    "fine_lines": {
+      "id": "fine_lines",
+      "label": "Fine Lines",
+      "icon": "〰️",
+      "category": "aging",
+      "is_parent": false,
+      "related_concerns": [
+        "aging",
+        "wrinkles",
+        "dehydration",
+        "dullness"
+      ],
+      "addressed_by_benefits": [
+        "anti_wrinkle",
+        "plumping",
+        "hydrating",
+        "smoothening"
+      ],
+      "location_variants": [
+        "under_eye_lines",
+        "forehead_lines",
+        "smile_lines",
+        "crows_feet"
+      ],
+      "search_terms": [
+        "fine lines",
+        "expression lines",
+        "first wrinkles"
+      ],
+      "india_priority": null
+    },
+    "wrinkles": {
+      "id": "wrinkles",
+      "label": "Wrinkles",
+      "icon": "🔀",
+      "category": "aging",
+      "is_parent": false,
+      "related_concerns": [
+        "aging",
+        "fine_lines",
+        "deep_wrinkles",
+        "sagging"
+      ],
+      "addressed_by_benefits": [
+        "anti_wrinkle",
+        "anti_aging",
+        "firming",
+        "collagen_boosting"
+      ],
+      "location_variants": [
+        "forehead_wrinkles",
+        "crows_feet",
+        "nasolabial_folds",
+        "neck_wrinkles"
+      ],
+      "search_terms": [
+        "wrinkles",
+        "creases",
+        "aging lines"
+      ],
+      "india_priority": null
+    },
+    "deep_wrinkles": {
+      "id": "deep_wrinkles",
+      "label": "Deep Wrinkles",
+      "icon": "📉",
+      "category": "aging",
+      "is_parent": false,
+      "related_concerns": [
+        "wrinkles",
+        "sagging",
+        "volume_loss"
+      ],
+      "addressed_by_benefits": [
+        "anti_wrinkle",
+        "firming",
+        "collagen_boosting",
+        "plumping"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "deep wrinkles",
+        "severe wrinkles",
+        "set-in lines"
+      ],
+      "india_priority": null
+    },
+    "sagging": {
+      "id": "sagging",
+      "label": "Sagging Skin",
+      "icon": "⬇️",
+      "category": "aging",
+      "is_parent": false,
+      "related_concerns": [
+        "aging",
+        "loss_of_elasticity",
+        "volume_loss"
+      ],
+      "addressed_by_benefits": [
+        "firming",
+        "lifting",
+        "tightening",
+        "collagen_boosting"
+      ],
+      "location_variants": [
+        "jowls",
+        "jawline_sagging",
+        "neck_sagging"
+      ],
+      "search_terms": [
+        "sagging",
+        "loose skin",
+        "droopy"
+      ],
+      "india_priority": null
+    },
+    "loss_of_elasticity": {
+      "id": "loss_of_elasticity",
+      "label": "Loss of Elasticity",
+      "icon": "🎚️",
+      "category": "aging",
+      "is_parent": false,
+      "related_concerns": [
+        "aging",
+        "sagging",
+        "fine_lines",
+        "wrinkles"
+      ],
+      "addressed_by_benefits": [
+        "elasticity_improving",
+        "firming",
+        "collagen_boosting"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "elasticity",
+        "bouncy skin",
+        "skin firmness"
+      ],
+      "india_priority": null
+    },
+    "crepey_skin": {
+      "id": "crepey_skin",
+      "label": "Crepey Skin",
+      "icon": "📜",
+      "category": "aging",
+      "is_parent": false,
+      "related_concerns": [
+        "aging",
+        "wrinkles",
+        "dehydration"
+      ],
+      "addressed_by_benefits": [
+        "moisturizing",
+        "firming",
+        "collagen_boosting"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "crepey",
+        "papery skin",
+        "thin skin"
+      ],
+      "india_priority": null
+    },
+    "volume_loss": {
+      "id": "volume_loss",
+      "label": "Volume Loss",
+      "icon": "📦",
+      "category": "aging",
+      "is_parent": false,
+      "related_concerns": [
+        "aging",
+        "sagging",
+        "deep_wrinkles"
+      ],
+      "addressed_by_benefits": [
+        "plumping",
+        "collagen_boosting"
+      ],
+      "location_variants": [
+        "hollow_cheeks",
+        "sunken_eyes",
+        "temple_hollowing"
+      ],
+      "search_terms": [
+        "volume loss",
+        "hollow",
+        "sunken"
+      ],
+      "india_priority": null
+    },
+    "pigmentation": {
+      "id": "pigmentation",
+      "label": "Pigmentation",
+      "icon": "🎨",
+      "category": "tone",
+      "is_parent": true,
+      "related_concerns": [
+        "dark_spots",
+        "uneven_tone",
+        "melasma",
+        "pih",
+        "sun_spots",
+        "dullness",
+        "tan",
+        "dark_circles"
+      ],
+      "addressed_by_benefits": [
+        "brightening",
+        "dark_spot_correcting",
+        "tone_evening",
+        "detan"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "pigmentation",
+        "discoloration",
+        "dark patches",
+        "hyperpigmentation"
+      ],
+      "india_priority": null
+    },
+    "dark_spots": {
+      "id": "dark_spots",
+      "label": "Dark Spots",
+      "icon": "⚫",
+      "category": "tone",
+      "is_parent": false,
+      "related_concerns": [
+        "pigmentation",
+        "uneven_tone",
+        "melasma",
+        "pih",
+        "sun_spots",
+        "acne_scars"
+      ],
+      "addressed_by_benefits": [
+        "dark_spot_correcting",
+        "brightening",
+        "exfoliating",
+        "tone_evening"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "dark spots",
+        "brown spots",
+        "age spots",
+        "marks on face",
+        "blemish marks"
+      ],
+      "india_priority": null
+    },
+    "uneven_tone": {
+      "id": "uneven_tone",
+      "label": "Uneven Skin Tone",
+      "icon": "🔲",
+      "category": "tone",
+      "is_parent": false,
+      "related_concerns": [
+        "pigmentation",
+        "dark_spots",
+        "dullness",
+        "tan",
+        "redness"
+      ],
+      "addressed_by_benefits": [
+        "tone_evening",
+        "brightening",
+        "dark_spot_correcting",
+        "radiance_boosting"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "uneven tone",
+        "patchy skin",
+        "blotchy",
+        "uneven complexion"
+      ],
+      "india_priority": null
+    },
+    "melasma": {
+      "id": "melasma",
+      "label": "Melasma",
+      "icon": "🦋",
+      "category": "tone",
+      "is_parent": false,
+      "related_concerns": [
+        "pigmentation",
+        "dark_spots",
+        "uneven_tone",
+        "sun_spots"
+      ],
+      "addressed_by_benefits": [
+        "dark_spot_correcting",
+        "brightening",
+        "tone_evening",
+        "sun_protection"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "melasma",
+        "pregnancy mask",
+        "hormonal pigmentation",
+        "chloasma"
+      ],
+      "india_priority": null
+    },
+    "pih": {
+      "id": "pih",
+      "label": "Post-Acne Marks (PIH)",
+      "icon": "🔴",
+      "category": "tone",
+      "is_parent": false,
+      "related_concerns": [
+        "pigmentation",
+        "dark_spots",
+        "acne_scars",
+        "uneven_tone"
+      ],
+      "addressed_by_benefits": [
+        "dark_spot_correcting",
+        "brightening",
+        "exfoliating",
+        "cell_renewal"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "PIH",
+        "post-acne marks",
+        "pimple marks",
+        "acne dark spots"
+      ],
+      "india_priority": null
+    },
+    "sun_spots": {
+      "id": "sun_spots",
+      "label": "Sun Spots",
+      "icon": "☀️",
+      "category": "tone",
+      "is_parent": false,
+      "related_concerns": [
+        "pigmentation",
+        "dark_spots",
+        "tan",
+        "melasma"
+      ],
+      "addressed_by_benefits": [
+        "dark_spot_correcting",
+        "brightening",
+        "detan",
+        "exfoliating"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "sun spots",
+        "solar lentigines",
+        "sun damage spots"
+      ],
+      "india_priority": null
+    },
+    "dullness": {
+      "id": "dullness",
+      "label": "Dullness",
+      "icon": "😶",
+      "category": "tone",
+      "is_parent": false,
+      "related_concerns": [
+        "pigmentation",
+        "uneven_tone",
+        "dehydration",
+        "rough_texture"
+      ],
+      "addressed_by_benefits": [
+        "brightening",
+        "radiance_boosting",
+        "exfoliating",
+        "hydrating",
+        "glow_enhancing"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "dull skin",
+        "no glow",
+        "tired skin",
+        "lackluster",
+        "lifeless"
+      ],
+      "india_priority": null
+    },
+    "tan": {
+      "id": "tan",
+      "label": "Tan",
+      "icon": "🏖️",
+      "category": "tone",
+      "is_parent": false,
+      "related_concerns": [
+        "pigmentation",
+        "uneven_tone",
+        "dark_spots",
+        "sun_spots"
+      ],
+      "addressed_by_benefits": [
+        "detan",
+        "brightening",
+        "exfoliating",
+        "tone_evening"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "tan",
+        "sun tan",
+        "tanning",
+        "dark tan",
+        "remove tan",
+        "de-tan"
+      ],
+      "india_priority": "high"
+    },
+    "sallowness": {
+      "id": "sallowness",
+      "label": "Sallowness",
+      "icon": "💛",
+      "category": "tone",
+      "is_parent": false,
+      "related_concerns": [
+        "dullness",
+        "uneven_tone",
+        "aging"
+      ],
+      "addressed_by_benefits": [
+        "brightening",
+        "radiance_boosting",
+        "tone_evening"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "sallow",
+        "yellow skin",
+        "yellowish tone"
+      ],
+      "india_priority": null
+    },
+    "dark_circles": {
+      "id": "dark_circles",
+      "label": "Dark Circles",
+      "icon": "👁️",
+      "category": "tone",
+      "is_parent": false,
+      "related_concerns": [
+        "pigmentation",
+        "dark_spots",
+        "dullness",
+        "puffiness"
+      ],
+      "addressed_by_benefits": [
+        "dark_circle_correcting",
+        "brightening",
+        "depuffing"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "dark circles",
+        "under eye dark circles",
+        "tired eyes",
+        "raccoon eyes"
+      ],
+      "india_priority": "high"
+    },
+    "acne": {
+      "id": "acne",
+      "label": "Acne & Breakouts",
+      "icon": "🔴",
+      "category": "acne",
+      "is_parent": true,
+      "related_concerns": [
+        "blackheads",
+        "whiteheads",
+        "cystic_acne",
+        "fungal_acne",
+        "hormonal_acne",
+        "acne_scars",
+        "excess_sebum",
+        "congestion"
+      ],
+      "addressed_by_benefits": [
+        "anti_acne",
+        "oil_control",
+        "clarifying",
+        "antibacterial"
+      ],
+      "location_variants": [
+        "chin_acne",
+        "forehead_acne",
+        "cheek_acne",
+        "jawline_acne",
+        "back_acne"
+      ],
+      "search_terms": [
+        "acne",
+        "pimples",
+        "zits",
+        "breakouts",
+        "blemishes"
+      ],
+      "india_priority": null
+    },
+    "blackheads": {
+      "id": "blackheads",
+      "label": "Blackheads",
+      "icon": "⚫",
+      "category": "acne",
+      "is_parent": false,
+      "related_concerns": [
+        "acne",
+        "whiteheads",
+        "congestion",
+        "large_pores",
+        "excess_sebum"
+      ],
+      "addressed_by_benefits": [
+        "clarifying",
+        "pore_minimizing",
+        "exfoliating",
+        "purifying"
+      ],
+      "location_variants": [
+        "nose_blackheads",
+        "chin_blackheads",
+        "t_zone_blackheads"
+      ],
+      "search_terms": [
+        "blackheads",
+        "black dots",
+        "clogged pores",
+        "open comedones"
+      ],
+      "india_priority": null
+    },
+    "whiteheads": {
+      "id": "whiteheads",
+      "label": "Whiteheads",
+      "icon": "⚪",
+      "category": "acne",
+      "is_parent": false,
+      "related_concerns": [
+        "acne",
+        "blackheads",
+        "congestion",
+        "milia"
+      ],
+      "addressed_by_benefits": [
+        "clarifying",
+        "exfoliating",
+        "anti_acne",
+        "purifying"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "whiteheads",
+        "closed comedones",
+        "small bumps",
+        "under skin bumps"
+      ],
+      "india_priority": null
+    },
+    "cystic_acne": {
+      "id": "cystic_acne",
+      "label": "Cystic Acne",
+      "icon": "🔵",
+      "category": "acne",
+      "is_parent": false,
+      "related_concerns": [
+        "acne",
+        "hormonal_acne",
+        "acne_scars"
+      ],
+      "addressed_by_benefits": [
+        "anti_acne",
+        "anti_inflammatory",
+        "antibacterial"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "cystic acne",
+        "deep pimples",
+        "painful acne",
+        "nodular acne"
+      ],
+      "india_priority": null
+    },
+    "fungal_acne": {
+      "id": "fungal_acne",
+      "label": "Fungal Acne",
+      "icon": "🍄",
+      "category": "acne",
+      "is_parent": false,
+      "related_concerns": [
+        "acne",
+        "congestion"
+      ],
+      "addressed_by_benefits": [
+        "anti_fungal",
+        "clarifying"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "fungal acne",
+        "malassezia",
+        "pityrosporum folliculitis"
+      ],
+      "india_priority": null
+    },
+    "hormonal_acne": {
+      "id": "hormonal_acne",
+      "label": "Hormonal Acne",
+      "icon": "🌙",
+      "category": "acne",
+      "is_parent": false,
+      "related_concerns": [
+        "acne",
+        "cystic_acne"
+      ],
+      "addressed_by_benefits": [
+        "anti_acne",
+        "oil_control",
+        "anti_inflammatory"
+      ],
+      "location_variants": [
+        "chin_acne",
+        "jawline_acne"
+      ],
+      "search_terms": [
+        "hormonal acne",
+        "period acne",
+        "adult acne"
+      ],
+      "india_priority": null
+    },
+    "acne_scars": {
+      "id": "acne_scars",
+      "label": "Acne Scars",
+      "icon": "🕳️",
+      "category": "acne",
+      "is_parent": false,
+      "related_concerns": [
+        "acne",
+        "pih",
+        "uneven_texture",
+        "dark_spots"
+      ],
+      "addressed_by_benefits": [
+        "resurfacing",
+        "dark_spot_correcting",
+        "exfoliating",
+        "collagen_boosting"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "acne scars",
+        "pimple scars",
+        "pitted skin",
+        "acne marks",
+        "ice pick scars"
+      ],
+      "india_priority": null
+    },
+    "excess_sebum": {
+      "id": "excess_sebum",
+      "label": "Excess Oil/Sebum",
+      "icon": "💧",
+      "category": "acne",
+      "is_parent": false,
+      "related_concerns": [
+        "oiliness",
+        "acne",
+        "blackheads",
+        "large_pores"
+      ],
+      "addressed_by_benefits": [
+        "oil_control",
+        "mattifying",
+        "pore_minimizing",
+        "clarifying"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "oily skin",
+        "excess sebum",
+        "greasy skin",
+        "oil production"
+      ],
+      "india_priority": null
+    },
+    "congestion": {
+      "id": "congestion",
+      "label": "Congestion",
+      "icon": "🚧",
+      "category": "acne",
+      "is_parent": false,
+      "related_concerns": [
+        "blackheads",
+        "whiteheads",
+        "large_pores",
+        "milia"
+      ],
+      "addressed_by_benefits": [
+        "clarifying",
+        "exfoliating",
+        "purifying",
+        "pore_minimizing"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "congested skin",
+        "clogged pores",
+        "blocked pores",
+        "bumps under skin"
+      ],
+      "india_priority": null
+    },
+    "texture_issues": {
+      "id": "texture_issues",
+      "label": "Texture Issues",
+      "icon": "🧱",
+      "category": "texture",
+      "is_parent": true,
+      "related_concerns": [
+        "large_pores",
+        "rough_texture",
+        "uneven_texture",
+        "congestion",
+        "milia"
+      ],
+      "addressed_by_benefits": [
+        "smoothening",
+        "exfoliating",
+        "resurfacing",
+        "pore_minimizing"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "skin texture",
+        "bumpy skin",
+        "rough skin",
+        "uneven skin"
+      ],
+      "india_priority": null
+    },
+    "large_pores": {
+      "id": "large_pores",
+      "label": "Large Pores",
+      "icon": "⭕",
+      "category": "texture",
+      "is_parent": false,
+      "related_concerns": [
+        "texture_issues",
+        "rough_texture",
+        "blackheads",
+        "oiliness",
+        "congestion"
+      ],
+      "addressed_by_benefits": [
+        "pore_minimizing",
+        "oil_control",
+        "clarifying",
+        "tightening"
+      ],
+      "location_variants": [
+        "nose_pores",
+        "cheek_pores",
+        "t_zone_pores"
+      ],
+      "search_terms": [
+        "large pores",
+        "visible pores",
+        "open pores",
+        "big pores",
+        "enlarged pores"
+      ],
+      "india_priority": null
+    },
+    "rough_texture": {
+      "id": "rough_texture",
+      "label": "Rough Texture",
+      "icon": "🪨",
+      "category": "texture",
+      "is_parent": false,
+      "related_concerns": [
+        "texture_issues",
+        "uneven_texture",
+        "flakiness",
+        "dryness"
+      ],
+      "addressed_by_benefits": [
+        "smoothening",
+        "exfoliating",
+        "hydrating",
+        "resurfacing"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "rough skin",
+        "bumpy texture",
+        "not smooth",
+        "grainy skin"
+      ],
+      "india_priority": null
+    },
+    "uneven_texture": {
+      "id": "uneven_texture",
+      "label": "Uneven Texture",
+      "icon": "📊",
+      "category": "texture",
+      "is_parent": false,
+      "related_concerns": [
+        "texture_issues",
+        "rough_texture",
+        "large_pores",
+        "acne_scars"
+      ],
+      "addressed_by_benefits": [
+        "smoothening",
+        "resurfacing",
+        "exfoliating",
+        "cell_renewal"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "uneven texture",
+        "textured skin",
+        "bumps",
+        "irregular surface"
+      ],
+      "india_priority": null
+    },
+    "milia": {
+      "id": "milia",
+      "label": "Milia",
+      "icon": "🫧",
+      "category": "texture",
+      "is_parent": false,
+      "related_concerns": [
+        "texture_issues",
+        "whiteheads",
+        "congestion"
+      ],
+      "addressed_by_benefits": [
+        "exfoliating",
+        "clarifying",
+        "cell_renewal"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "milia",
+        "tiny white bumps",
+        "hard white bumps",
+        "milk spots"
+      ],
+      "india_priority": null
+    },
+    "dryness": {
+      "id": "dryness",
+      "label": "Dryness",
+      "icon": "🏜️",
+      "category": "hydration",
+      "is_parent": true,
+      "related_concerns": [
+        "dehydration",
+        "flakiness",
+        "tight_skin",
+        "rough_texture",
+        "compromised_barrier"
+      ],
+      "addressed_by_benefits": [
+        "moisturizing",
+        "hydrating",
+        "barrier_repair",
+        "nourishing"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "dry skin",
+        "dry patches",
+        "peeling skin",
+        "cracking",
+        "parched"
+      ],
+      "india_priority": null
+    },
+    "dehydration": {
+      "id": "dehydration",
+      "label": "Dehydration",
+      "icon": "🥤",
+      "category": "hydration",
+      "is_parent": false,
+      "related_concerns": [
+        "dryness",
+        "dullness",
+        "fine_lines",
+        "tight_skin"
+      ],
+      "addressed_by_benefits": [
+        "hydrating",
+        "plumping",
+        "barrier_repair"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "dehydrated skin",
+        "thirsty skin",
+        "water loss",
+        "lacks moisture"
+      ],
+      "india_priority": null
+    },
+    "flakiness": {
+      "id": "flakiness",
+      "label": "Flakiness",
+      "icon": "❄️",
+      "category": "hydration",
+      "is_parent": false,
+      "related_concerns": [
+        "dryness",
+        "rough_texture",
+        "compromised_barrier"
+      ],
+      "addressed_by_benefits": [
+        "moisturizing",
+        "exfoliating",
+        "barrier_repair"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "flaky skin",
+        "peeling",
+        "shedding skin",
+        "dry flakes"
+      ],
+      "india_priority": null
+    },
+    "tight_skin": {
+      "id": "tight_skin",
+      "label": "Tight Skin",
+      "icon": "🎯",
+      "category": "hydration",
+      "is_parent": false,
+      "related_concerns": [
+        "dryness",
+        "dehydration",
+        "compromised_barrier"
+      ],
+      "addressed_by_benefits": [
+        "hydrating",
+        "moisturizing",
+        "soothing"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "tight skin",
+        "skin feels tight",
+        "uncomfortable skin"
+      ],
+      "india_priority": null
+    },
+    "compromised_barrier": {
+      "id": "compromised_barrier",
+      "label": "Damaged Skin Barrier",
+      "icon": "🛡️",
+      "category": "hydration",
+      "is_parent": false,
+      "related_concerns": [
+        "dryness",
+        "sensitivity",
+        "redness",
+        "irritation",
+        "tight_skin"
+      ],
+      "addressed_by_benefits": [
+        "barrier_repair",
+        "moisturizing",
+        "soothing",
+        "strengthening"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "damaged barrier",
+        "skin barrier",
+        "over-exfoliated",
+        "stripped skin"
+      ],
+      "india_priority": null
+    },
+    "sensitivity": {
+      "id": "sensitivity",
+      "label": "Sensitivity",
+      "icon": "🌡️",
+      "category": "sensitivity",
+      "is_parent": true,
+      "related_concerns": [
+        "redness",
+        "rosacea",
+        "irritation",
+        "reactive_skin",
+        "eczema"
+      ],
+      "addressed_by_benefits": [
+        "soothing",
+        "calming",
+        "barrier_repair",
+        "anti_inflammatory"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "sensitive skin",
+        "easily irritated",
+        "reactive",
+        "delicate skin"
+      ],
+      "india_priority": null
+    },
+    "redness": {
+      "id": "redness",
+      "label": "Redness",
+      "icon": "🔴",
+      "category": "sensitivity",
+      "is_parent": false,
+      "related_concerns": [
+        "sensitivity",
+        "rosacea",
+        "irritation"
+      ],
+      "addressed_by_benefits": [
+        "redness_reducing",
+        "soothing",
+        "anti_inflammatory",
+        "calming"
+      ],
+      "location_variants": [
+        "cheek_redness",
+        "nose_redness",
+        "chin_redness"
+      ],
+      "search_terms": [
+        "redness",
+        "red face",
+        "flushing",
+        "red patches",
+        "blotchy"
+      ],
+      "india_priority": null
+    },
+    "rosacea": {
+      "id": "rosacea",
+      "label": "Rosacea",
+      "icon": "🦋",
+      "category": "sensitivity",
+      "is_parent": false,
+      "related_concerns": [
+        "sensitivity",
+        "redness"
+      ],
+      "addressed_by_benefits": [
+        "redness_reducing",
+        "soothing",
+        "anti_inflammatory",
+        "calming"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "rosacea",
+        "chronic redness",
+        "facial redness",
+        "rosacea-prone"
+      ],
+      "india_priority": null
+    },
+    "irritation": {
+      "id": "irritation",
+      "label": "Irritation",
+      "icon": "⚠️",
+      "category": "sensitivity",
+      "is_parent": false,
+      "related_concerns": [
+        "sensitivity",
+        "redness",
+        "compromised_barrier"
+      ],
+      "addressed_by_benefits": [
+        "soothing",
+        "calming",
+        "barrier_repair",
+        "anti_inflammatory"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "irritated skin",
+        "stinging",
+        "burning",
+        "uncomfortable"
+      ],
+      "india_priority": null
+    },
+    "reactive_skin": {
+      "id": "reactive_skin",
+      "label": "Reactive Skin",
+      "icon": "⚡",
+      "category": "sensitivity",
+      "is_parent": false,
+      "related_concerns": [
+        "sensitivity",
+        "redness",
+        "irritation"
+      ],
+      "addressed_by_benefits": [
+        "soothing",
+        "calming",
+        "barrier_repair"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "reactive skin",
+        "easily irritated",
+        "flares up"
+      ],
+      "india_priority": null
+    },
+    "eczema": {
+      "id": "eczema",
+      "label": "Eczema",
+      "icon": "🩹",
+      "category": "sensitivity",
+      "is_parent": false,
+      "related_concerns": [
+        "sensitivity",
+        "dryness",
+        "irritation",
+        "flakiness"
+      ],
+      "addressed_by_benefits": [
+        "soothing",
+        "moisturizing",
+        "barrier_repair",
+        "anti_inflammatory"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "eczema",
+        "atopic dermatitis",
+        "dry itchy skin"
+      ],
+      "india_priority": null
+    },
+    "oiliness": {
+      "id": "oiliness",
+      "label": "Oily Skin",
+      "icon": "💧",
+      "category": "oil",
+      "is_parent": true,
+      "related_concerns": [
+        "excess_sebum",
+        "shine",
+        "large_pores",
+        "acne",
+        "combination_skin"
+      ],
+      "addressed_by_benefits": [
+        "oil_control",
+        "mattifying",
+        "pore_minimizing",
+        "clarifying"
+      ],
+      "location_variants": [
+        "oily_t_zone",
+        "oily_nose",
+        "oily_forehead"
+      ],
+      "search_terms": [
+        "oily skin",
+        "greasy",
+        "shiny",
+        "slick",
+        "excess oil"
+      ],
+      "india_priority": null
+    },
+    "combination_skin": {
+      "id": "combination_skin",
+      "label": "Combination Skin",
+      "icon": "⚖️",
+      "category": "oil",
+      "is_parent": false,
+      "related_concerns": [
+        "oiliness",
+        "dryness"
+      ],
+      "addressed_by_benefits": [
+        "oil_control",
+        "hydrating",
+        "balancing"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "combination skin",
+        "oily and dry",
+        "mixed skin",
+        "t-zone oily"
+      ],
+      "india_priority": null
+    },
+    "shine": {
+      "id": "shine",
+      "label": "Shine/Greasy Look",
+      "icon": "✨",
+      "category": "oil",
+      "is_parent": false,
+      "related_concerns": [
+        "oiliness",
+        "excess_sebum",
+        "large_pores"
+      ],
+      "addressed_by_benefits": [
+        "mattifying",
+        "oil_control",
+        "pore_minimizing"
+      ],
+      "location_variants": [],
+      "search_terms": [
+        "shiny skin",
+        "greasy look",
+        "oily shine",
+        "midday shine"
+      ],
+      "india_priority": null
+    },
+    "puffiness": {
+      "id": "puffiness",
+      "label": "Puffiness",
+      "icon": "💫",
+      "category": "other",
+      "is_parent": false,
+      "related_concerns": [
+        "dark_circles"
+      ],
+      "addressed_by_benefits": [
+        "depuffing",
+        "cooling",
+        "firming"
+      ],
+      "location_variants": [
+        "under_eye_puffiness",
+        "face_puffiness"
+      ],
+      "search_terms": [
+        "puffy",
+        "puffiness",
+        "swollen",
+        "eye bags",
+        "puffy eyes"
+      ],
+      "india_priority": null
+    }
+  },
+  "skin_benefits": {
+    "anti_aging": {
+      "id": "anti_aging",
+      "label": "Anti-Aging",
+      "icon": "⏳",
+      "category": "aging",
+      "is_parent": true,
+      "related_benefits": [
+        "anti_wrinkle",
+        "firming",
+        "lifting",
+        "tightening",
+        "plumping",
+        "collagen_boosting",
+        "elasticity_improving",
+        "smoothening",
+        "cell_renewal"
+      ],
+      "addresses_concerns": [
+        "aging",
+        "fine_lines",
+        "wrinkles",
+        "deep_wrinkles",
+        "sagging",
+        "loss_of_elasticity",
+        "crepey_skin",
+        "volume_loss"
+      ],
+      "key_ingredients": [
+        "retinol",
+        "retinal",
+        "peptides",
+        "vitamin_c",
+        "hyaluronic_acid",
+        "bakuchiol",
+        "niacinamide",
+        "coq10"
+      ],
+      "search_terms": [
+        "anti-aging",
+        "anti-ageing",
+        "youthful",
+        "age-defying",
+        "rejuvenating"
+      ],
+      "india_priority": null
+    },
+    "anti_wrinkle": {
+      "id": "anti_wrinkle",
+      "label": "Anti-Wrinkle",
+      "icon": "〰️",
+      "category": "aging",
+      "is_parent": false,
+      "related_benefits": [
+        "anti_aging",
+        "smoothening",
+        "plumping",
+        "firming",
+        "collagen_boosting",
+        "elasticity_improving"
+      ],
+      "addresses_concerns": [
+        "fine_lines",
+        "wrinkles",
+        "deep_wrinkles"
+      ],
+      "key_ingredients": [
+        "retinol",
+        "retinal",
+        "peptides",
+        "matrixyl",
+        "argireline",
+        "hyaluronic_acid",
+        "adenosine"
+      ],
+      "search_terms": [
+        "anti-wrinkle",
+        "wrinkle cream",
+        "line reducer",
+        "smooth lines"
+      ],
+      "india_priority": null
+    },
+    "firming": {
+      "id": "firming",
+      "label": "Firming",
+      "icon": "💪",
+      "category": "aging",
+      "is_parent": false,
+      "related_benefits": [
+        "anti_aging",
+        "lifting",
+        "tightening",
+        "collagen_boosting",
+        "elasticity_improving"
+      ],
+      "addresses_concerns": [
+        "sagging",
+        "loss_of_elasticity",
+        "volume_loss"
+      ],
+      "key_ingredients": [
+        "peptides",
+        "dmae",
+        "caffeine",
+        "retinol",
+        "vitamin_c",
+        "ginseng",
+        "niacinamide"
+      ],
+      "search_terms": [
+        "firming",
+        "firm skin",
+        "taut",
+        "tight skin",
+        "less sagging"
+      ],
+      "india_priority": null
+    },
+    "lifting": {
+      "id": "lifting",
+      "label": "Lifting",
+      "icon": "⬆️",
+      "category": "aging",
+      "is_parent": false,
+      "related_benefits": [
+        "firming",
+        "tightening",
+        "anti_aging",
+        "collagen_boosting"
+      ],
+      "addresses_concerns": [
+        "sagging",
+        "loss_of_elasticity",
+        "volume_loss"
+      ],
+      "key_ingredients": [
+        "peptides",
+        "dmae",
+        "ginseng",
+        "caffeine",
+        "retinol"
+      ],
+      "search_terms": [
+        "lifting",
+        "face lift",
+        "contour",
+        "v-shape",
+        "jawline"
+      ],
+      "india_priority": null
+    },
+    "tightening": {
+      "id": "tightening",
+      "label": "Tightening",
+      "icon": "🎯",
+      "category": "aging",
+      "is_parent": false,
+      "related_benefits": [
+        "firming",
+        "lifting",
+        "pore_minimizing",
+        "elasticity_improving"
+      ],
+      "addresses_concerns": [
+        "sagging",
+        "large_pores",
+        "loss_of_elasticity"
+      ],
+      "key_ingredients": [
+        "peptides",
+        "witch_hazel",
+        "niacinamide",
+        "dmae"
+      ],
+      "search_terms": [
+        "tightening",
+        "tight pores",
+        "tight skin",
+        "pore tightening"
+      ],
+      "india_priority": null
+    },
+    "plumping": {
+      "id": "plumping",
+      "label": "Plumping",
+      "icon": "🎈",
+      "category": "aging",
+      "is_parent": false,
+      "related_benefits": [
+        "hydrating",
+        "anti_wrinkle",
+        "moisturizing"
+      ],
+      "addresses_concerns": [
+        "fine_lines",
+        "dehydration",
+        "volume_loss"
+      ],
+      "key_ingredients": [
+        "hyaluronic_acid",
+        "squalane",
+        "peptides",
+        "polyglutamic_acid",
+        "collagen",
+        "sodium_pca"
+      ],
+      "search_terms": [
+        "plumping",
+        "plump skin",
+        "bouncy",
+        "juicy skin",
+        "dewy"
+      ],
+      "india_priority": null
+    },
+    "collagen_boosting": {
+      "id": "collagen_boosting",
+      "label": "Collagen Boosting",
+      "icon": "🔬",
+      "category": "aging",
+      "is_parent": false,
+      "related_benefits": [
+        "firming",
+        "elasticity_improving",
+        "anti_wrinkle",
+        "anti_aging",
+        "plumping"
+      ],
+      "addresses_concerns": [
+        "fine_lines",
+        "wrinkles",
+        "sagging",
+        "loss_of_elasticity"
+      ],
+      "key_ingredients": [
+        "vitamin_c",
+        "retinol",
+        "peptides",
+        "collagen",
+        "copper_peptides",
+        "growth_factors"
+      ],
+      "search_terms": [
+        "collagen",
+        "collagen boost",
+        "collagen production"
+      ],
+      "india_priority": null
+    },
+    "elasticity_improving": {
+      "id": "elasticity_improving",
+      "label": "Elasticity Improving",
+      "icon": "🔄",
+      "category": "aging",
+      "is_parent": false,
+      "related_benefits": [
+        "firming",
+        "collagen_boosting",
+        "lifting",
+        "anti_aging",
+        "tightening"
+      ],
+      "addresses_concerns": [
+        "loss_of_elasticity",
+        "sagging",
+        "crepey_skin",
+        "fine_lines"
+      ],
+      "key_ingredients": [
+        "peptides",
+        "retinol",
+        "vitamin_c",
+        "elastin",
+        "centella",
+        "bakuchiol"
+      ],
+      "search_terms": [
+        "elasticity",
+        "elastic skin",
+        "bouncy skin",
+        "snap back"
+      ],
+      "india_priority": null
+    },
+    "brightening": {
+      "id": "brightening",
+      "label": "Brightening",
+      "icon": "✨",
+      "category": "tone",
+      "is_parent": true,
+      "related_benefits": [
+        "dark_spot_correcting",
+        "tone_evening",
+        "radiance_boosting",
+        "detan",
+        "glow_enhancing",
+        "luminizing"
+      ],
+      "addresses_concerns": [
+        "dullness",
+        "dark_spots",
+        "uneven_tone",
+        "sallowness",
+        "tan",
+        "melasma",
+        "pih"
+      ],
+      "key_ingredients": [
+        "vitamin_c",
+        "niacinamide",
+        "alpha_arbutin",
+        "kojic_acid",
+        "tranexamic_acid",
+        "licorice_extract",
+        "azelaic_acid"
+      ],
+      "search_terms": [
+        "brightening",
+        "bright skin",
+        "glow",
+        "radiant",
+        "luminous",
+        "glowing"
+      ],
+      "india_priority": null
+    },
+    "dark_spot_correcting": {
+      "id": "dark_spot_correcting",
+      "label": "Dark Spot Correcting",
+      "icon": "🎯",
+      "category": "tone",
+      "is_parent": false,
+      "related_benefits": [
+        "brightening",
+        "tone_evening",
+        "exfoliating",
+        "cell_renewal"
+      ],
+      "addresses_concerns": [
+        "dark_spots",
+        "pih",
+        "melasma",
+        "sun_spots",
+        "acne_scars"
+      ],
+      "key_ingredients": [
+        "vitamin_c",
+        "tranexamic_acid",
+        "alpha_arbutin",
+        "azelaic_acid",
+        "kojic_acid",
+        "niacinamide",
+        "retinol"
+      ],
+      "search_terms": [
+        "dark spot",
+        "spot corrector",
+        "pigmentation",
+        "marks remover",
+        "spot fading"
+      ],
+      "india_priority": null
+    },
+    "tone_evening": {
+      "id": "tone_evening",
+      "label": "Tone Evening",
+      "icon": "⚖️",
+      "category": "tone",
+      "is_parent": false,
+      "related_benefits": [
+        "brightening",
+        "dark_spot_correcting",
+        "redness_reducing",
+        "radiance_boosting"
+      ],
+      "addresses_concerns": [
+        "uneven_tone",
+        "dark_spots",
+        "redness",
+        "sallowness",
+        "pih"
+      ],
+      "key_ingredients": [
+        "niacinamide",
+        "vitamin_c",
+        "licorice_extract",
+        "arbutin",
+        "azelaic_acid"
+      ],
+      "search_terms": [
+        "even tone",
+        "uniform skin",
+        "balanced complexion",
+        "tone correcting"
+      ],
+      "india_priority": null
+    },
+    "radiance_boosting": {
+      "id": "radiance_boosting",
+      "label": "Radiance Boosting",
+      "icon": "💫",
+      "category": "tone",
+      "is_parent": false,
+      "related_benefits": [
+        "brightening",
+        "glow_enhancing",
+        "hydrating",
+        "exfoliating"
+      ],
+      "addresses_concerns": [
+        "dullness",
+        "sallowness",
+        "dehydration"
+      ],
+      "key_ingredients": [
+        "vitamin_c",
+        "niacinamide",
+        "aha",
+        "turmeric",
+        "pearl_extract"
+      ],
+      "search_terms": [
+        "radiance",
+        "radiant skin",
+        "glowing",
+        "lit from within",
+        "healthy glow"
+      ],
+      "india_priority": null
+    },
+    "detan": {
+      "id": "detan",
+      "label": "De-Tan",
+      "icon": "🏖️",
+      "category": "tone",
+      "is_parent": false,
+      "related_benefits": [
+        "brightening",
+        "exfoliating",
+        "tone_evening",
+        "dark_spot_correcting",
+        "radiance_boosting"
+      ],
+      "addresses_concerns": [
+        "tan",
+        "uneven_tone",
+        "sun_spots",
+        "dullness"
+      ],
+      "key_ingredients": [
+        "vitamin_c",
+        "kojic_acid",
+        "lactic_acid",
+        "papaya_enzyme",
+        "licorice",
+        "mulberry"
+      ],
+      "search_terms": [
+        "de-tan",
+        "tan removal",
+        "sun tan",
+        "tan free",
+        "remove tan",
+        "anti-tan"
+      ],
+      "india_priority": "high"
+    },
+    "glow_enhancing": {
+      "id": "glow_enhancing",
+      "label": "Glow Enhancing",
+      "icon": "🌟",
+      "category": "tone",
+      "is_parent": false,
+      "related_benefits": [
+        "radiance_boosting",
+        "brightening",
+        "hydrating"
+      ],
+      "addresses_concerns": [
+        "dullness",
+        "dehydration",
+        "sallowness"
+      ],
+      "key_ingredients": [
+        "vitamin_c",
+        "hyaluronic_acid",
+        "glycolic_acid",
+        "niacinamide",
+        "squalane"
+      ],
+      "search_terms": [
+        "glow",
+        "glowing skin",
+        "healthy glow",
+        "glass skin",
+        "honey skin",
+        "dewy"
+      ],
+      "india_priority": null
+    },
+    "dark_circle_correcting": {
+      "id": "dark_circle_correcting",
+      "label": "Dark Circle Correcting",
+      "icon": "👁️",
+      "category": "tone",
+      "is_parent": false,
+      "related_benefits": [
+        "brightening",
+        "depuffing",
+        "firming"
+      ],
+      "addresses_concerns": [
+        "dark_circles",
+        "puffiness",
+        "fine_lines"
+      ],
+      "key_ingredients": [
+        "vitamin_c",
+        "vitamin_k",
+        "caffeine",
+        "peptides",
+        "niacinamide",
+        "retinol",
+        "arnica"
+      ],
+      "search_terms": [
+        "dark circles",
+        "under eye brightening",
+        "eye brightener",
+        "dark circle cream"
+      ],
+      "india_priority": "high"
+    },
+    "anti_acne": {
+      "id": "anti_acne",
+      "label": "Anti-Acne",
+      "icon": "🎯",
+      "category": "acne",
+      "is_parent": true,
+      "related_benefits": [
+        "oil_control",
+        "pore_minimizing",
+        "clarifying",
+        "purifying",
+        "antibacterial",
+        "anti_inflammatory"
+      ],
+      "addresses_concerns": [
+        "acne",
+        "blackheads",
+        "whiteheads",
+        "cystic_acne",
+        "fungal_acne",
+        "hormonal_acne",
+        "excess_sebum",
+        "congestion"
+      ],
+      "key_ingredients": [
+        "salicylic_acid",
+        "benzoyl_peroxide",
+        "niacinamide",
+        "tea_tree",
+        "retinol",
+        "azelaic_acid",
+        "sulfur",
+        "zinc"
+      ],
+      "search_terms": [
+        "anti-acne",
+        "acne treatment",
+        "pimple control",
+        "blemish",
+        "breakout",
+        "clear skin"
+      ],
+      "india_priority": null
+    },
+    "oil_control": {
+      "id": "oil_control",
+      "label": "Oil Control",
+      "icon": "🚫",
+      "category": "acne",
+      "is_parent": false,
+      "related_benefits": [
+        "anti_acne",
+        "mattifying",
+        "pore_minimizing",
+        "clarifying"
+      ],
+      "addresses_concerns": [
+        "oiliness",
+        "excess_sebum",
+        "shine",
+        "large_pores",
+        "combination_skin"
+      ],
+      "key_ingredients": [
+        "niacinamide",
+        "zinc",
+        "salicylic_acid",
+        "clay",
+        "charcoal",
+        "witch_hazel",
+        "green_tea"
+      ],
+      "search_terms": [
+        "oil control",
+        "oil-free",
+        "control sebum",
+        "less oily",
+        "no shine"
+      ],
+      "india_priority": null
+    },
+    "mattifying": {
+      "id": "mattifying",
+      "label": "Mattifying",
+      "icon": "🌫️",
+      "category": "acne",
+      "is_parent": false,
+      "related_benefits": [
+        "oil_control",
+        "pore_minimizing"
+      ],
+      "addresses_concerns": [
+        "oiliness",
+        "shine",
+        "large_pores"
+      ],
+      "key_ingredients": [
+        "silica",
+        "kaolin",
+        "niacinamide",
+        "zinc",
+        "rice",
+        "bamboo_powder"
+      ],
+      "search_terms": [
+        "matte",
+        "mattifying",
+        "shine-free",
+        "no shine",
+        "matte finish"
+      ],
+      "india_priority": null
+    },
+    "pore_minimizing": {
+      "id": "pore_minimizing",
+      "label": "Pore Minimizing",
+      "icon": "⭕",
+      "category": "acne",
+      "is_parent": false,
+      "related_benefits": [
+        "oil_control",
+        "clarifying",
+        "smoothening",
+        "tightening",
+        "exfoliating"
+      ],
+      "addresses_concerns": [
+        "large_pores",
+        "blackheads",
+        "congestion",
+        "oiliness",
+        "uneven_texture"
+      ],
+      "key_ingredients": [
+        "niacinamide",
+        "bha",
+        "retinol",
+        "clay",
+        "witch_hazel",
+        "aha"
+      ],
+      "search_terms": [
+        "pore minimizing",
+        "small pores",
+        "pore-refining",
+        "tighten pores",
+        "poreless"
+      ],
+      "india_priority": null
+    },
+    "clarifying": {
+      "id": "clarifying",
+      "label": "Clarifying",
+      "icon": "💎",
+      "category": "acne",
+      "is_parent": false,
+      "related_benefits": [
+        "purifying",
+        "exfoliating",
+        "pore_minimizing",
+        "brightening"
+      ],
+      "addresses_concerns": [
+        "congestion",
+        "blackheads",
+        "whiteheads",
+        "dullness",
+        "milia"
+      ],
+      "key_ingredients": [
+        "salicylic_acid",
+        "glycolic_acid",
+        "willow_bark",
+        "charcoal",
+        "tea_tree",
+        "clay"
+      ],
+      "search_terms": [
+        "clarifying",
+        "clear skin",
+        "decongest",
+        "unclog",
+        "clean pores"
+      ],
+      "india_priority": null
+    },
+    "purifying": {
+      "id": "purifying",
+      "label": "Purifying",
+      "icon": "🧹",
+      "category": "acne",
+      "is_parent": false,
+      "related_benefits": [
+        "clarifying",
+        "oil_control"
+      ],
+      "addresses_concerns": [
+        "congestion",
+        "excess_sebum",
+        "blackheads"
+      ],
+      "key_ingredients": [
+        "charcoal",
+        "clay",
+        "tea_tree",
+        "green_tea",
+        "moringa",
+        "neem"
+      ],
+      "search_terms": [
+        "purifying",
+        "detox",
+        "deep cleanse",
+        "pure skin",
+        "purify"
+      ],
+      "india_priority": null
+    },
+    "antibacterial": {
+      "id": "antibacterial",
+      "label": "Antibacterial",
+      "icon": "🛡️",
+      "category": "acne",
+      "is_parent": false,
+      "related_benefits": [
+        "anti_acne",
+        "clarifying"
+      ],
+      "addresses_concerns": [
+        "acne",
+        "blackheads"
+      ],
+      "key_ingredients": [
+        "tea_tree",
+        "benzoyl_peroxide",
+        "neem",
+        "salicylic_acid",
+        "sulfur",
+        "zinc"
+      ],
+      "search_terms": [
+        "antibacterial",
+        "anti-bacterial",
+        "kills bacteria"
+      ],
+      "india_priority": null
+    },
+    "hydrating": {
+      "id": "hydrating",
+      "label": "Hydrating",
+      "icon": "💧",
+      "category": "hydration",
+      "is_parent": true,
+      "related_benefits": [
+        "moisturizing",
+        "barrier_repair",
+        "plumping",
+        "soothing"
+      ],
+      "addresses_concerns": [
+        "dryness",
+        "dehydration",
+        "flakiness",
+        "tight_skin",
+        "dullness"
+      ],
+      "key_ingredients": [
+        "hyaluronic_acid",
+        "glycerin",
+        "aloe_vera",
+        "beta_glucan",
+        "panthenol",
+        "sodium_pca",
+        "urea"
+      ],
+      "search_terms": [
+        "hydrating",
+        "hydration",
+        "water boost",
+        "moisture",
+        "quench"
+      ],
+      "india_priority": null
+    },
+    "moisturizing": {
+      "id": "moisturizing",
+      "label": "Moisturizing",
+      "icon": "🧴",
+      "category": "hydration",
+      "is_parent": false,
+      "related_benefits": [
+        "hydrating",
+        "nourishing",
+        "barrier_repair",
+        "softening"
+      ],
+      "addresses_concerns": [
+        "dryness",
+        "flakiness",
+        "rough_texture",
+        "compromised_barrier",
+        "tight_skin"
+      ],
+      "key_ingredients": [
+        "ceramides",
+        "shea_butter",
+        "squalane",
+        "fatty_acids",
+        "oils",
+        "petrolatum"
+      ],
+      "search_terms": [
+        "moisturizing",
+        "moisture",
+        "nourishing",
+        "rich",
+        "emollient"
+      ],
+      "india_priority": null
+    },
+    "barrier_repair": {
+      "id": "barrier_repair",
+      "label": "Barrier Repair",
+      "icon": "🛡️",
+      "category": "hydration",
+      "is_parent": true,
+      "related_benefits": [
+        "moisturizing",
+        "soothing",
+        "strengthening",
+        "hydrating"
+      ],
+      "addresses_concerns": [
+        "compromised_barrier",
+        "sensitivity",
+        "dryness",
+        "irritation",
+        "redness"
+      ],
+      "key_ingredients": [
+        "ceramides",
+        "cholesterol",
+        "fatty_acids",
+        "niacinamide",
+        "madecassoside",
+        "panthenol",
+        "centella"
+      ],
+      "search_terms": [
+        "barrier repair",
+        "skin barrier",
+        "restore barrier",
+        "strengthen barrier",
+        "repair"
+      ],
+      "india_priority": null
+    },
+    "nourishing": {
+      "id": "nourishing",
+      "label": "Nourishing",
+      "icon": "🌿",
+      "category": "hydration",
+      "is_parent": false,
+      "related_benefits": [
+        "moisturizing",
+        "strengthening"
+      ],
+      "addresses_concerns": [
+        "dryness",
+        "dullness"
+      ],
+      "key_ingredients": [
+        "oils",
+        "vitamins",
+        "antioxidants",
+        "botanical_extracts",
+        "fatty_acids",
+        "peptides"
+      ],
+      "search_terms": [
+        "nourishing",
+        "nourishment",
+        "feed skin",
+        "nutrient-rich"
+      ],
+      "india_priority": null
+    },
+    "softening": {
+      "id": "softening",
+      "label": "Softening",
+      "icon": "☁️",
+      "category": "hydration",
+      "is_parent": false,
+      "related_benefits": [
+        "moisturizing",
+        "smoothening",
+        "hydrating"
+      ],
+      "addresses_concerns": [
+        "rough_texture",
+        "dryness",
+        "flakiness"
+      ],
+      "key_ingredients": [
+        "shea_butter",
+        "oils",
+        "urea",
+        "lactic_acid",
+        "glycerin",
+        "allantoin"
+      ],
+      "search_terms": [
+        "softening",
+        "soft skin",
+        "silky",
+        "smooth",
+        "touchable"
+      ],
+      "india_priority": null
+    },
+    "soothing": {
+      "id": "soothing",
+      "label": "Soothing",
+      "icon": "🌸",
+      "category": "sensitivity",
+      "is_parent": true,
+      "related_benefits": [
+        "calming",
+        "anti_inflammatory",
+        "redness_reducing",
+        "cooling",
+        "barrier_repair"
+      ],
+      "addresses_concerns": [
+        "irritation",
+        "redness",
+        "sensitivity",
+        "reactive_skin"
+      ],
+      "key_ingredients": [
+        "centella_asiatica",
+        "aloe_vera",
+        "allantoin",
+        "bisabolol",
+        "oat",
+        "chamomile",
+        "calendula"
+      ],
+      "search_terms": [
+        "soothing",
+        "calm",
+        "gentle",
+        "comfort",
+        "relief",
+        "sensitive skin"
+      ],
+      "india_priority": null
+    },
+    "calming": {
+      "id": "calming",
+      "label": "Calming",
+      "icon": "😌",
+      "category": "sensitivity",
+      "is_parent": false,
+      "related_benefits": [
+        "soothing",
+        "anti_inflammatory",
+        "redness_reducing",
+        "cooling"
+      ],
+      "addresses_concerns": [
+        "redness",
+        "irritation",
+        "reactive_skin",
+        "sensitivity"
+      ],
+      "key_ingredients": [
+        "centella",
+        "chamomile",
+        "green_tea",
+        "licorice",
+        "blue_tansy",
+        "lavender"
+      ],
+      "search_terms": [
+        "calming",
+        "calm skin",
+        "reduce irritation",
+        "settle skin"
+      ],
+      "india_priority": null
+    },
+    "anti_inflammatory": {
+      "id": "anti_inflammatory",
+      "label": "Anti-Inflammatory",
+      "icon": "🩹",
+      "category": "sensitivity",
+      "is_parent": false,
+      "related_benefits": [
+        "soothing",
+        "redness_reducing",
+        "calming",
+        "anti_acne"
+      ],
+      "addresses_concerns": [
+        "redness",
+        "irritation",
+        "acne",
+        "rosacea",
+        "eczema"
+      ],
+      "key_ingredients": [
+        "niacinamide",
+        "centella",
+        "green_tea",
+        "licorice",
+        "azelaic_acid",
+        "turmeric",
+        "willow_bark"
+      ],
+      "search_terms": [
+        "anti-inflammatory",
+        "reduce inflammation",
+        "calm redness"
+      ],
+      "india_priority": null
+    },
+    "redness_reducing": {
+      "id": "redness_reducing",
+      "label": "Redness Reducing",
+      "icon": "🎀",
+      "category": "sensitivity",
+      "is_parent": false,
+      "related_benefits": [
+        "soothing",
+        "anti_inflammatory",
+        "tone_evening",
+        "calming"
+      ],
+      "addresses_concerns": [
+        "redness",
+        "rosacea",
+        "irritation"
+      ],
+      "key_ingredients": [
+        "niacinamide",
+        "centella",
+        "green_tea",
+        "azelaic_acid",
+        "licorice",
+        "vitamin_k"
+      ],
+      "search_terms": [
+        "redness",
+        "anti-redness",
+        "reduce redness",
+        "less red",
+        "calm redness"
+      ],
+      "india_priority": null
+    },
+    "cooling": {
+      "id": "cooling",
+      "label": "Cooling",
+      "icon": "❄️",
+      "category": "sensitivity",
+      "is_parent": false,
+      "related_benefits": [
+        "soothing",
+        "calming",
+        "depuffing"
+      ],
+      "addresses_concerns": [
+        "irritation",
+        "puffiness"
+      ],
+      "key_ingredients": [
+        "menthol",
+        "aloe_vera",
+        "cucumber",
+        "mint",
+        "camphor"
+      ],
+      "search_terms": [
+        "cooling",
+        "cool",
+        "refresh",
+        "chill",
+        "ice"
+      ],
+      "india_priority": null
+    },
+    "depuffing": {
+      "id": "depuffing",
+      "label": "Depuffing",
+      "icon": "💫",
+      "category": "sensitivity",
+      "is_parent": false,
+      "related_benefits": [
+        "cooling",
+        "firming",
+        "dark_circle_correcting"
+      ],
+      "addresses_concerns": [
+        "puffiness",
+        "dark_circles"
+      ],
+      "key_ingredients": [
+        "caffeine",
+        "green_tea",
+        "cucumber",
+        "peptides",
+        "ginger"
+      ],
+      "search_terms": [
+        "depuffing",
+        "reduce puffiness",
+        "less puffy",
+        "eye bags",
+        "deflate"
+      ],
+      "india_priority": null
+    },
+    "exfoliating": {
+      "id": "exfoliating",
+      "label": "Exfoliating",
+      "icon": "✨",
+      "category": "texture",
+      "is_parent": true,
+      "related_benefits": [
+        "smoothening",
+        "resurfacing",
+        "cell_renewal",
+        "brightening",
+        "clarifying",
+        "pore_minimizing"
+      ],
+      "addresses_concerns": [
+        "rough_texture",
+        "uneven_texture",
+        "dullness",
+        "congestion",
+        "flakiness",
+        "large_pores",
+        "fine_lines"
+      ],
+      "key_ingredients": [
+        "glycolic_acid",
+        "lactic_acid",
+        "salicylic_acid",
+        "pha",
+        "enzymes",
+        "retinol",
+        "urea"
+      ],
+      "search_terms": [
+        "exfoliating",
+        "exfoliation",
+        "peel",
+        "scrub",
+        "renew",
+        "resurface",
+        "polish"
+      ],
+      "india_priority": null
+    },
+    "smoothening": {
+      "id": "smoothening",
+      "label": "Smoothening",
+      "icon": "🧈",
+      "category": "texture",
+      "is_parent": false,
+      "related_benefits": [
+        "exfoliating",
+        "resurfacing",
+        "softening"
+      ],
+      "addresses_concerns": [
+        "rough_texture",
+        "uneven_texture",
+        "fine_lines"
+      ],
+      "key_ingredients": [
+        "aha",
+        "pha",
+        "retinol",
+        "niacinamide",
+        "urea",
+        "lactic_acid"
+      ],
+      "search_terms": [
+        "smooth",
+        "smoothing",
+        "soft skin",
+        "refined",
+        "polished"
+      ],
+      "india_priority": null
+    },
+    "resurfacing": {
+      "id": "resurfacing",
+      "label": "Resurfacing",
+      "icon": "🔄",
+      "category": "texture",
+      "is_parent": false,
+      "related_benefits": [
+        "exfoliating",
+        "cell_renewal",
+        "smoothening",
+        "brightening"
+      ],
+      "addresses_concerns": [
+        "rough_texture",
+        "uneven_texture",
+        "acne_scars",
+        "fine_lines"
+      ],
+      "key_ingredients": [
+        "retinol",
+        "glycolic_acid",
+        "lactic_acid",
+        "vitamin_c",
+        "peptides"
+      ],
+      "search_terms": [
+        "resurface",
+        "resurfacing",
+        "renew",
+        "retexturize",
+        "new skin"
+      ],
+      "india_priority": null
+    },
+    "cell_renewal": {
+      "id": "cell_renewal",
+      "label": "Cell Renewal",
+      "icon": "🔬",
+      "category": "texture",
+      "is_parent": false,
+      "related_benefits": [
+        "exfoliating",
+        "resurfacing",
+        "anti_aging",
+        "brightening"
+      ],
+      "addresses_concerns": [
+        "dullness",
+        "rough_texture",
+        "fine_lines",
+        "uneven_tone",
+        "aging"
+      ],
+      "key_ingredients": [
+        "retinol",
+        "glycolic_acid",
+        "stem_cells",
+        "growth_factors",
+        "pha",
+        "bakuchiol"
+      ],
+      "search_terms": [
+        "cell renewal",
+        "turnover",
+        "regenerate",
+        "new cells",
+        "renew"
+      ],
+      "india_priority": null
+    },
+    "sun_protection": {
+      "id": "sun_protection",
+      "label": "Sun Protection",
+      "icon": "☀️",
+      "category": "protection",
+      "is_parent": true,
+      "related_benefits": [
+        "antioxidant",
+        "pollution_protection",
+        "blue_light_protection",
+        "anti_aging"
+      ],
+      "addresses_concerns": [
+        "sun_spots",
+        "dark_spots",
+        "aging",
+        "tan",
+        "melasma"
+      ],
+      "key_ingredients": [
+        "zinc_oxide",
+        "titanium_dioxide",
+        "avobenzone",
+        "tinosorb",
+        "uvinul"
+      ],
+      "search_terms": [
+        "SPF",
+        "sunscreen",
+        "sun protection",
+        "UV protection",
+        "sunblock"
+      ],
+      "india_priority": null
+    },
+    "antioxidant": {
+      "id": "antioxidant",
+      "label": "Antioxidant",
+      "icon": "🍇",
+      "category": "protection",
+      "is_parent": false,
+      "related_benefits": [
+        "pollution_protection",
+        "anti_aging",
+        "brightening"
+      ],
+      "addresses_concerns": [
+        "dullness",
+        "fine_lines",
+        "uneven_tone"
+      ],
+      "key_ingredients": [
+        "vitamin_c",
+        "vitamin_e",
+        "niacinamide",
+        "green_tea",
+        "resveratrol",
+        "ferulic_acid",
+        "coq10"
+      ],
+      "search_terms": [
+        "antioxidant",
+        "free radical",
+        "protect",
+        "defend"
+      ],
+      "india_priority": null
+    },
+    "pollution_protection": {
+      "id": "pollution_protection",
+      "label": "Pollution Protection",
+      "icon": "🏙️",
+      "category": "protection",
+      "is_parent": false,
+      "related_benefits": [
+        "antioxidant",
+        "barrier_repair",
+        "clarifying"
+      ],
+      "addresses_concerns": [
+        "dullness",
+        "congestion"
+      ],
+      "key_ingredients": [
+        "niacinamide",
+        "vitamin_c",
+        "green_tea",
+        "moringa",
+        "algae",
+        "activated_charcoal"
+      ],
+      "search_terms": [
+        "anti-pollution",
+        "pollution shield",
+        "urban protection",
+        "city skin"
+      ],
+      "india_priority": null
+    },
+    "blue_light_protection": {
+      "id": "blue_light_protection",
+      "label": "Blue Light Protection",
+      "icon": "📱",
+      "category": "protection",
+      "is_parent": false,
+      "related_benefits": [
+        "antioxidant",
+        "pollution_protection",
+        "anti_aging"
+      ],
+      "addresses_concerns": [
+        "aging",
+        "dark_spots"
+      ],
+      "key_ingredients": [
+        "lutein",
+        "iron_oxides",
+        "antioxidants",
+        "licochalcone_a",
+        "carnosine"
+      ],
+      "search_terms": [
+        "blue light",
+        "screen protection",
+        "digital aging",
+        "HEV protection"
+      ],
+      "india_priority": null
+    },
+    "revitalizing": {
+      "id": "revitalizing",
+      "label": "Revitalizing",
+      "icon": "⚡",
+      "category": "vitality",
+      "is_parent": true,
+      "related_benefits": [
+        "nourishing",
+        "strengthening"
+      ],
+      "addresses_concerns": [
+        "dullness"
+      ],
+      "key_ingredients": [
+        "caffeine",
+        "ginseng",
+        "vitamin_c",
+        "b_vitamins",
+        "coq10",
+        "green_tea"
+      ],
+      "search_terms": [
+        "revitalizing",
+        "revive",
+        "energize",
+        "awaken",
+        "refresh"
+      ],
+      "india_priority": null
+    },
+    "strengthening": {
+      "id": "strengthening",
+      "label": "Strengthening",
+      "icon": "💪",
+      "category": "vitality",
+      "is_parent": false,
+      "related_benefits": [
+        "barrier_repair",
+        "nourishing"
+      ],
+      "addresses_concerns": [
+        "compromised_barrier"
+      ],
+      "key_ingredients": [
+        "peptides",
+        "ceramides",
+        "proteins",
+        "amino_acids",
+        "niacinamide"
+      ],
+      "search_terms": [
+        "strengthening",
+        "strong skin",
+        "fortify",
+        "resilient"
+      ],
+      "india_priority": null
+    }
+  },
+  "hair_concerns": {
+    "dry_hair": {
+      "id": "dry_hair",
+      "label": "Dry Hair",
+      "icon": "🏜️",
+      "category": "moisture",
+      "is_parent": true,
+      "related_concerns": [
+        "rough_hair",
+        "dull_hair",
+        "brittle_hair",
+        "dry_ends",
+        "frizz"
+      ],
+      "addressed_by_benefits": [
+        "moisturizing_hair",
+        "hydrating_hair",
+        "nourishing_hair",
+        "conditioning"
+      ],
+      "search_terms": [
+        "dry hair",
+        "thirsty hair",
+        "parched",
+        "dehydrated hair"
+      ],
+      "india_priority": null
+    },
+    "rough_hair": {
+      "id": "rough_hair",
+      "label": "Rough Hair",
+      "icon": "🪨",
+      "category": "moisture",
+      "is_parent": false,
+      "related_concerns": [
+        "dry_hair",
+        "dull_hair",
+        "frizz",
+        "damage"
+      ],
+      "addressed_by_benefits": [
+        "smoothing",
+        "softening",
+        "conditioning",
+        "moisturizing_hair"
+      ],
+      "search_terms": [
+        "rough hair",
+        "coarse",
+        "not smooth",
+        "harsh texture"
+      ],
+      "india_priority": null
+    },
+    "dull_hair": {
+      "id": "dull_hair",
+      "label": "Dull Hair",
+      "icon": "😶",
+      "category": "moisture",
+      "is_parent": false,
+      "related_concerns": [
+        "dry_hair",
+        "damage",
+        "product_buildup"
+      ],
+      "addressed_by_benefits": [
+        "shine_enhancing",
+        "moisturizing_hair",
+        "clarifying_hair"
+      ],
+      "search_terms": [
+        "dull hair",
+        "no shine",
+        "lifeless",
+        "lackluster hair"
+      ],
+      "india_priority": null
+    },
+    "dry_ends": {
+      "id": "dry_ends",
+      "label": "Dry Ends",
+      "icon": "✂️",
+      "category": "moisture",
+      "is_parent": false,
+      "related_concerns": [
+        "dry_hair",
+        "split_ends",
+        "breakage",
+        "damage"
+      ],
+      "addressed_by_benefits": [
+        "moisturizing_hair",
+        "repair",
+        "sealing"
+      ],
+      "search_terms": [
+        "dry ends",
+        "rough ends",
+        "damaged ends"
+      ],
+      "india_priority": null
+    },
+    "frizz": {
+      "id": "frizz",
+      "label": "Frizz",
+      "icon": "💨",
+      "category": "texture",
+      "is_parent": true,
+      "related_concerns": [
+        "flyaways",
+        "humidity_damage",
+        "dry_hair",
+        "unmanageable_hair"
+      ],
+      "addressed_by_benefits": [
+        "frizz_control",
+        "smoothing",
+        "humidity_protection",
+        "moisturizing_hair"
+      ],
+      "search_terms": [
+        "frizzy hair",
+        "frizz",
+        "puffy",
+        "unruly",
+        "fluffy hair"
+      ],
+      "india_priority": null
+    },
+    "flyaways": {
+      "id": "flyaways",
+      "label": "Flyaways",
+      "icon": "🪶",
+      "category": "texture",
+      "is_parent": false,
+      "related_concerns": [
+        "frizz",
+        "static",
+        "breakage"
+      ],
+      "addressed_by_benefits": [
+        "frizz_control",
+        "smoothing"
+      ],
+      "search_terms": [
+        "flyaways",
+        "baby hairs",
+        "wispy",
+        "static"
+      ],
+      "india_priority": null
+    },
+    "unmanageable_hair": {
+      "id": "unmanageable_hair",
+      "label": "Unmanageable Hair",
+      "icon": "😤",
+      "category": "texture",
+      "is_parent": false,
+      "related_concerns": [
+        "frizz",
+        "tangles",
+        "coarse_hair"
+      ],
+      "addressed_by_benefits": [
+        "manageability",
+        "detangling",
+        "smoothing",
+        "conditioning"
+      ],
+      "search_terms": [
+        "unmanageable",
+        "difficult to style",
+        "won't behave",
+        "stubborn hair"
+      ],
+      "india_priority": null
+    },
+    "tangles": {
+      "id": "tangles",
+      "label": "Tangles & Knots",
+      "icon": "🔗",
+      "category": "texture",
+      "is_parent": false,
+      "related_concerns": [
+        "unmanageable_hair",
+        "dry_hair",
+        "damage"
+      ],
+      "addressed_by_benefits": [
+        "detangling",
+        "conditioning",
+        "smoothing"
+      ],
+      "search_terms": [
+        "tangles",
+        "knots",
+        "tangled hair",
+        "matted",
+        "knotty"
+      ],
+      "india_priority": null
+    },
+    "damage": {
+      "id": "damage",
+      "label": "Hair Damage",
+      "icon": "⚠️",
+      "category": "damage",
+      "is_parent": true,
+      "related_concerns": [
+        "breakage",
+        "split_ends",
+        "chemical_damage",
+        "heat_damage",
+        "color_damage",
+        "weak_hair"
+      ],
+      "addressed_by_benefits": [
+        "repair",
+        "bond_repair",
+        "strengthening_hair",
+        "protein_treatment"
+      ],
+      "search_terms": [
+        "damaged hair",
+        "hair damage",
+        "broken hair",
+        "fried hair"
+      ],
+      "india_priority": null
+    },
+    "breakage": {
+      "id": "breakage",
+      "label": "Breakage",
+      "icon": "💔",
+      "category": "damage",
+      "is_parent": false,
+      "related_concerns": [
+        "damage",
+        "weak_hair",
+        "split_ends",
+        "brittle_hair"
+      ],
+      "addressed_by_benefits": [
+        "anti_breakage",
+        "strengthening_hair",
+        "bond_repair",
+        "protein_treatment"
+      ],
+      "search_terms": [
+        "hair breakage",
+        "breaking hair",
+        "snapping",
+        "short broken pieces"
+      ],
+      "india_priority": null
+    },
+    "split_ends": {
+      "id": "split_ends",
+      "label": "Split Ends",
+      "icon": "✂️",
+      "category": "damage",
+      "is_parent": false,
+      "related_concerns": [
+        "damage",
+        "breakage",
+        "dry_ends",
+        "weak_hair"
+      ],
+      "addressed_by_benefits": [
+        "repair",
+        "sealing",
+        "strengthening_hair",
+        "moisturizing_hair"
+      ],
+      "search_terms": [
+        "split ends",
+        "splitting",
+        "frayed ends",
+        "damaged ends"
+      ],
+      "india_priority": null
+    },
+    "chemical_damage": {
+      "id": "chemical_damage",
+      "label": "Chemical Damage",
+      "icon": "🧪",
+      "category": "damage",
+      "is_parent": false,
+      "related_concerns": [
+        "damage",
+        "color_damage",
+        "weak_hair",
+        "breakage"
+      ],
+      "addressed_by_benefits": [
+        "bond_repair",
+        "repair",
+        "protein_treatment",
+        "strengthening_hair"
+      ],
+      "search_terms": [
+        "chemical damage",
+        "bleach damage",
+        "perm damage",
+        "relaxer damage"
+      ],
+      "india_priority": null
+    },
+    "heat_damage": {
+      "id": "heat_damage",
+      "label": "Heat Damage",
+      "icon": "🔥",
+      "category": "damage",
+      "is_parent": false,
+      "related_concerns": [
+        "damage",
+        "breakage",
+        "dry_hair",
+        "weak_hair",
+        "dull_hair"
+      ],
+      "addressed_by_benefits": [
+        "repair",
+        "heat_protection",
+        "moisturizing_hair",
+        "strengthening_hair"
+      ],
+      "search_terms": [
+        "heat damage",
+        "styling damage",
+        "blow dry damage",
+        "iron damage"
+      ],
+      "india_priority": null
+    },
+    "color_damage": {
+      "id": "color_damage",
+      "label": "Color Damage",
+      "icon": "🎨",
+      "category": "damage",
+      "is_parent": false,
+      "related_concerns": [
+        "damage",
+        "chemical_damage",
+        "dry_hair",
+        "fading_color",
+        "breakage"
+      ],
+      "addressed_by_benefits": [
+        "color_protection",
+        "repair",
+        "bond_repair",
+        "moisturizing_hair"
+      ],
+      "search_terms": [
+        "color damage",
+        "dyed hair damage",
+        "bleached damage"
+      ],
+      "india_priority": null
+    },
+    "weak_hair": {
+      "id": "weak_hair",
+      "label": "Weak Hair",
+      "icon": "😔",
+      "category": "damage",
+      "is_parent": false,
+      "related_concerns": [
+        "damage",
+        "breakage",
+        "thin_hair",
+        "limp_hair"
+      ],
+      "addressed_by_benefits": [
+        "strengthening_hair",
+        "protein_treatment",
+        "anti_breakage"
+      ],
+      "search_terms": [
+        "weak hair",
+        "fragile",
+        "thin strands",
+        "easily breaks"
+      ],
+      "india_priority": null
+    },
+    "dandruff": {
+      "id": "dandruff",
+      "label": "Dandruff",
+      "icon": "❄️",
+      "category": "scalp",
+      "is_parent": true,
+      "related_concerns": [
+        "flaky_scalp",
+        "itchy_scalp",
+        "dry_scalp",
+        "oily_scalp"
+      ],
+      "addressed_by_benefits": [
+        "anti_dandruff",
+        "scalp_soothing",
+        "scalp_purifying",
+        "scalp_health"
+      ],
+      "search_terms": [
+        "dandruff",
+        "flakes",
+        "white flakes",
+        "scalp flakes"
+      ],
+      "india_priority": null
+    },
+    "oily_scalp": {
+      "id": "oily_scalp",
+      "label": "Oily Scalp",
+      "icon": "💧",
+      "category": "scalp",
+      "is_parent": false,
+      "related_concerns": [
+        "greasy_roots",
+        "scalp_buildup",
+        "limp_hair",
+        "flat_hair",
+        "dandruff"
+      ],
+      "addressed_by_benefits": [
+        "scalp_purifying",
+        "scalp_balancing",
+        "clarifying_hair"
+      ],
+      "search_terms": [
+        "oily scalp",
+        "greasy scalp",
+        "oily roots",
+        "greasy hair"
+      ],
+      "india_priority": null
+    },
+    "dry_scalp": {
+      "id": "dry_scalp",
+      "label": "Dry Scalp",
+      "icon": "🏜️",
+      "category": "scalp",
+      "is_parent": false,
+      "related_concerns": [
+        "itchy_scalp",
+        "flaky_scalp",
+        "dandruff"
+      ],
+      "addressed_by_benefits": [
+        "scalp_soothing",
+        "scalp_nourishing",
+        "moisturizing_hair",
+        "scalp_health"
+      ],
+      "search_terms": [
+        "dry scalp",
+        "tight scalp",
+        "scalp dryness"
+      ],
+      "india_priority": null
+    },
+    "itchy_scalp": {
+      "id": "itchy_scalp",
+      "label": "Itchy Scalp",
+      "icon": "😣",
+      "category": "scalp",
+      "is_parent": false,
+      "related_concerns": [
+        "dandruff",
+        "dry_scalp",
+        "scalp_sensitivity"
+      ],
+      "addressed_by_benefits": [
+        "scalp_soothing",
+        "anti_dandruff",
+        "scalp_health"
+      ],
+      "search_terms": [
+        "itchy scalp",
+        "scalp itch",
+        "scratching head",
+        "irritated scalp"
+      ],
+      "india_priority": null
+    },
+    "scalp_buildup": {
+      "id": "scalp_buildup",
+      "label": "Product Buildup",
+      "icon": "🚧",
+      "category": "scalp",
+      "is_parent": false,
+      "related_concerns": [
+        "oily_scalp",
+        "limp_hair",
+        "dull_hair",
+        "dandruff"
+      ],
+      "addressed_by_benefits": [
+        "scalp_purifying",
+        "clarifying_hair"
+      ],
+      "search_terms": [
+        "product buildup",
+        "scalp buildup",
+        "residue",
+        "heavy hair"
+      ],
+      "india_priority": null
+    },
+    "flaky_scalp": {
+      "id": "flaky_scalp",
+      "label": "Flaky Scalp",
+      "icon": "❄️",
+      "category": "scalp",
+      "is_parent": false,
+      "related_concerns": [
+        "dandruff",
+        "dry_scalp",
+        "itchy_scalp"
+      ],
+      "addressed_by_benefits": [
+        "anti_dandruff",
+        "scalp_soothing"
+      ],
+      "search_terms": [
+        "flaky scalp",
+        "scalp flakes",
+        "peeling scalp"
+      ],
+      "india_priority": null
+    },
+    "scalp_sensitivity": {
+      "id": "scalp_sensitivity",
+      "label": "Scalp Sensitivity",
+      "icon": "🌡️",
+      "category": "scalp",
+      "is_parent": false,
+      "related_concerns": [
+        "itchy_scalp",
+        "dry_scalp"
+      ],
+      "addressed_by_benefits": [
+        "scalp_soothing"
+      ],
+      "search_terms": [
+        "sensitive scalp",
+        "scalp sensitivity",
+        "tender scalp"
+      ],
+      "india_priority": null
+    },
+    "hair_fall": {
+      "id": "hair_fall",
+      "label": "Hair Fall",
+      "icon": "⬇️",
+      "category": "hairfall",
+      "is_parent": true,
+      "related_concerns": [
+        "thinning_hair",
+        "weak_roots",
+        "hair_loss",
+        "bald_patches"
+      ],
+      "addressed_by_benefits": [
+        "hair_fall_control",
+        "root_strengthening",
+        "hair_growth",
+        "strengthening_hair"
+      ],
+      "search_terms": [
+        "hair fall",
+        "falling hair",
+        "losing hair",
+        "hair in drain",
+        "shedding"
+      ],
+      "india_priority": "high"
+    },
+    "thinning_hair": {
+      "id": "thinning_hair",
+      "label": "Thinning Hair",
+      "icon": "📏",
+      "category": "hairfall",
+      "is_parent": false,
+      "related_concerns": [
+        "hair_fall",
+        "fine_hair",
+        "volume_loss_hair"
+      ],
+      "addressed_by_benefits": [
+        "thickening",
+        "volumizing",
+        "hair_growth",
+        "hair_fall_control"
+      ],
+      "search_terms": [
+        "thinning hair",
+        "less volume",
+        "see scalp",
+        "sparse"
+      ],
+      "india_priority": null
+    },
+    "weak_roots": {
+      "id": "weak_roots",
+      "label": "Weak Roots",
+      "icon": "🌱",
+      "category": "hairfall",
+      "is_parent": false,
+      "related_concerns": [
+        "hair_fall",
+        "limp_hair"
+      ],
+      "addressed_by_benefits": [
+        "root_strengthening",
+        "hair_fall_control",
+        "strengthening_hair"
+      ],
+      "search_terms": [
+        "weak roots",
+        "no hold",
+        "flat roots",
+        "limp roots"
+      ],
+      "india_priority": null
+    },
+    "receding_hairline": {
+      "id": "receding_hairline",
+      "label": "Receding Hairline",
+      "icon": "📉",
+      "category": "hairfall",
+      "is_parent": false,
+      "related_concerns": [
+        "hair_fall",
+        "thinning_hair",
+        "hair_loss"
+      ],
+      "addressed_by_benefits": [
+        "hair_growth",
+        "hair_fall_control"
+      ],
+      "search_terms": [
+        "receding hairline",
+        "hairline thinning",
+        "forehead growing"
+      ],
+      "india_priority": null
+    },
+    "flat_hair": {
+      "id": "flat_hair",
+      "label": "Flat Hair",
+      "icon": "➖",
+      "category": "volume",
+      "is_parent": true,
+      "related_concerns": [
+        "limp_hair",
+        "fine_hair",
+        "oily_scalp"
+      ],
+      "addressed_by_benefits": [
+        "volumizing",
+        "root_lifting",
+        "body_building",
+        "thickening"
+      ],
+      "search_terms": [
+        "flat hair",
+        "no lift",
+        "stuck to head",
+        "no bounce",
+        "plastered"
+      ],
+      "india_priority": null
+    },
+    "limp_hair": {
+      "id": "limp_hair",
+      "label": "Limp Hair",
+      "icon": "😔",
+      "category": "volume",
+      "is_parent": false,
+      "related_concerns": [
+        "flat_hair",
+        "fine_hair",
+        "dull_hair",
+        "weak_hair"
+      ],
+      "addressed_by_benefits": [
+        "volumizing",
+        "body_building",
+        "strengthening_hair"
+      ],
+      "search_terms": [
+        "limp hair",
+        "lifeless",
+        "no energy",
+        "droopy",
+        "flat"
+      ],
+      "india_priority": null
+    },
+    "fine_hair": {
+      "id": "fine_hair",
+      "label": "Fine Hair",
+      "icon": "🧵",
+      "category": "volume",
+      "is_parent": false,
+      "related_concerns": [
+        "thin_hair",
+        "flat_hair",
+        "limp_hair"
+      ],
+      "addressed_by_benefits": [
+        "volumizing",
+        "thickening",
+        "body_building"
+      ],
+      "search_terms": [
+        "fine hair",
+        "thin strands",
+        "delicate hair",
+        "baby fine"
+      ],
+      "india_priority": null
+    },
+    "fading_color": {
+      "id": "fading_color",
+      "label": "Color Fading",
+      "icon": "🌅",
+      "category": "color",
+      "is_parent": true,
+      "related_concerns": [
+        "color_damage",
+        "brassiness"
+      ],
+      "addressed_by_benefits": [
+        "color_protection",
+        "fade_prevention"
+      ],
+      "search_terms": [
+        "color fading",
+        "faded color",
+        "losing color",
+        "washed out"
+      ],
+      "india_priority": null
+    },
+    "brassiness": {
+      "id": "brassiness",
+      "label": "Brassiness",
+      "icon": "🟠",
+      "category": "color",
+      "is_parent": false,
+      "related_concerns": [
+        "fading_color"
+      ],
+      "addressed_by_benefits": [
+        "purple_toning"
+      ],
+      "search_terms": [
+        "brassy hair",
+        "yellow hair",
+        "orange tones",
+        "warm tones",
+        "brass"
+      ],
+      "india_priority": null
+    },
+    "grey_hair": {
+      "id": "grey_hair",
+      "label": "Grey Hair",
+      "icon": "🩶",
+      "category": "color",
+      "is_parent": false,
+      "related_concerns": [
+        "premature_greying"
+      ],
+      "addressed_by_benefits": [
+        "grey_coverage",
+        "anti_greying"
+      ],
+      "search_terms": [
+        "grey hair",
+        "white hair",
+        "silver hair",
+        "greying"
+      ],
+      "india_priority": "high"
+    },
+    "premature_greying": {
+      "id": "premature_greying",
+      "label": "Premature Greying",
+      "icon": "⏰",
+      "category": "color",
+      "is_parent": false,
+      "related_concerns": [
+        "grey_hair"
+      ],
+      "addressed_by_benefits": [
+        "anti_greying"
+      ],
+      "search_terms": [
+        "premature grey",
+        "early greying",
+        "young grey hair"
+      ],
+      "india_priority": "high"
+    }
+  },
+  "hair_benefits": {
+    "moisturizing_hair": {
+      "id": "moisturizing_hair",
+      "label": "Moisturizing",
+      "icon": "💧",
+      "category": "moisture",
+      "is_parent": true,
+      "related_benefits": [
+        "hydrating_hair",
+        "nourishing_hair",
+        "softening",
+        "conditioning"
+      ],
+      "addresses_concerns": [
+        "dry_hair",
+        "rough_hair",
+        "dull_hair",
+        "brittle_hair"
+      ],
+      "key_ingredients": [
+        "argan_oil",
+        "coconut_oil",
+        "shea_butter",
+        "glycerin",
+        "hyaluronic_acid",
+        "avocado_oil"
+      ],
+      "search_terms": [
+        "moisturizing",
+        "hydrating",
+        "moisture",
+        "nourishing"
+      ],
+      "india_priority": null
+    },
+    "hydrating_hair": {
+      "id": "hydrating_hair",
+      "label": "Hydrating",
+      "icon": "🌊",
+      "category": "moisture",
+      "is_parent": false,
+      "related_benefits": [
+        "moisturizing_hair",
+        "softening",
+        "conditioning"
+      ],
+      "addresses_concerns": [
+        "dry_hair"
+      ],
+      "key_ingredients": [
+        "hyaluronic_acid",
+        "glycerin",
+        "aloe_vera",
+        "panthenol",
+        "honey"
+      ],
+      "search_terms": [
+        "hydrating",
+        "water-based",
+        "moisture boost",
+        "quench"
+      ],
+      "india_priority": null
+    },
+    "nourishing_hair": {
+      "id": "nourishing_hair",
+      "label": "Nourishing",
+      "icon": "🌿",
+      "category": "moisture",
+      "is_parent": false,
+      "related_benefits": [
+        "moisturizing_hair",
+        "strengthening_hair",
+        "conditioning"
+      ],
+      "addresses_concerns": [
+        "dry_hair",
+        "damage",
+        "dull_hair"
+      ],
+      "key_ingredients": [
+        "oils",
+        "vitamins",
+        "proteins",
+        "botanical_extracts",
+        "amino_acids"
+      ],
+      "search_terms": [
+        "nourishing",
+        "feeding hair",
+        "nutrient-rich"
+      ],
+      "india_priority": null
+    },
+    "softening": {
+      "id": "softening",
+      "label": "Softening",
+      "icon": "☁️",
+      "category": "moisture",
+      "is_parent": false,
+      "related_benefits": [
+        "moisturizing_hair",
+        "smoothing",
+        "conditioning"
+      ],
+      "addresses_concerns": [
+        "rough_hair",
+        "coarse_hair",
+        "dry_hair"
+      ],
+      "key_ingredients": [
+        "silicones",
+        "oils",
+        "shea_butter",
+        "fatty_alcohols",
+        "keratin"
+      ],
+      "search_terms": [
+        "softening",
+        "soft hair",
+        "silky",
+        "touchable"
+      ],
+      "india_priority": null
+    },
+    "conditioning": {
+      "id": "conditioning",
+      "label": "Conditioning",
+      "icon": "🧴",
+      "category": "moisture",
+      "is_parent": false,
+      "related_benefits": [
+        "moisturizing_hair",
+        "softening",
+        "detangling",
+        "smoothing"
+      ],
+      "addresses_concerns": [
+        "dry_hair",
+        "tangles",
+        "rough_hair",
+        "unmanageable_hair"
+      ],
+      "key_ingredients": [
+        "quaternary_ammonium_compounds",
+        "fatty_alcohols",
+        "oils",
+        "silicones",
+        "proteins"
+      ],
+      "search_terms": [
+        "conditioning",
+        "conditioned",
+        "smooth",
+        "manageable"
+      ],
+      "india_priority": null
+    },
+    "frizz_control": {
+      "id": "frizz_control",
+      "label": "Frizz Control",
+      "icon": "🎯",
+      "category": "frizz",
+      "is_parent": true,
+      "related_benefits": [
+        "smoothing",
+        "humidity_protection",
+        "moisturizing_hair"
+      ],
+      "addresses_concerns": [
+        "frizz",
+        "flyaways",
+        "humidity_damage",
+        "unmanageable_hair"
+      ],
+      "key_ingredients": [
+        "silicones",
+        "argan_oil",
+        "keratin",
+        "coconut_oil",
+        "shea_butter",
+        "polymers"
+      ],
+      "search_terms": [
+        "frizz control",
+        "anti-frizz",
+        "no frizz",
+        "frizz-free",
+        "smooth"
+      ],
+      "india_priority": null
+    },
+    "smoothing": {
+      "id": "smoothing",
+      "label": "Smoothing",
+      "icon": "🧈",
+      "category": "frizz",
+      "is_parent": false,
+      "related_benefits": [
+        "frizz_control",
+        "shine_enhancing",
+        "softening"
+      ],
+      "addresses_concerns": [
+        "frizz",
+        "rough_hair",
+        "unmanageable_hair"
+      ],
+      "key_ingredients": [
+        "keratin",
+        "silicones",
+        "argan_oil",
+        "amino_acids",
+        "proteins"
+      ],
+      "search_terms": [
+        "smoothing",
+        "smooth hair",
+        "sleek",
+        "polished"
+      ],
+      "india_priority": null
+    },
+    "humidity_protection": {
+      "id": "humidity_protection",
+      "label": "Humidity Protection",
+      "icon": "🌧️",
+      "category": "frizz",
+      "is_parent": false,
+      "related_benefits": [
+        "frizz_control",
+        "smoothing"
+      ],
+      "addresses_concerns": [
+        "frizz",
+        "humidity_damage"
+      ],
+      "key_ingredients": [
+        "polymers",
+        "silicones",
+        "keratin"
+      ],
+      "search_terms": [
+        "humidity",
+        "anti-humidity",
+        "weather protection",
+        "monsoon"
+      ],
+      "india_priority": null
+    },
+    "strengthening_hair": {
+      "id": "strengthening_hair",
+      "label": "Strengthening",
+      "icon": "💪",
+      "category": "strength",
+      "is_parent": true,
+      "related_benefits": [
+        "repair",
+        "bond_repair",
+        "protein_treatment",
+        "anti_breakage"
+      ],
+      "addresses_concerns": [
+        "breakage",
+        "weak_hair",
+        "damage",
+        "split_ends"
+      ],
+      "key_ingredients": [
+        "keratin",
+        "protein",
+        "biotin",
+        "amino_acids",
+        "bond_builders",
+        "collagen"
+      ],
+      "search_terms": [
+        "strengthening",
+        "strong hair",
+        "fortify",
+        "less breakage"
+      ],
+      "india_priority": null
+    },
+    "repair": {
+      "id": "repair",
+      "label": "Repair",
+      "icon": "🔧",
+      "category": "strength",
+      "is_parent": false,
+      "related_benefits": [
+        "bond_repair",
+        "strengthening_hair",
+        "protein_treatment"
+      ],
+      "addresses_concerns": [
+        "damage",
+        "breakage",
+        "chemical_damage",
+        "heat_damage",
+        "split_ends"
+      ],
+      "key_ingredients": [
+        "keratin",
+        "proteins",
+        "amino_acids",
+        "ceramides",
+        "bond_builders"
+      ],
+      "search_terms": [
+        "repair",
+        "fix damage",
+        "restore",
+        "heal hair"
+      ],
+      "india_priority": null
+    },
+    "bond_repair": {
+      "id": "bond_repair",
+      "label": "Bond Repair",
+      "icon": "🔗",
+      "category": "strength",
+      "is_parent": false,
+      "related_benefits": [
+        "repair",
+        "strengthening_hair"
+      ],
+      "addresses_concerns": [
+        "chemical_damage",
+        "color_damage",
+        "breakage"
+      ],
+      "key_ingredients": [
+        "bis_aminopropyl_diglycol_dimaleate",
+        "bond_builders",
+        "maleic_acid",
+        "proteins"
+      ],
+      "search_terms": [
+        "bond repair",
+        "bond building",
+        "olaplex",
+        "bond"
+      ],
+      "india_priority": null
+    },
+    "anti_breakage": {
+      "id": "anti_breakage",
+      "label": "Anti-Breakage",
+      "icon": "🛡️",
+      "category": "strength",
+      "is_parent": false,
+      "related_benefits": [
+        "strengthening_hair",
+        "protein_treatment"
+      ],
+      "addresses_concerns": [
+        "breakage",
+        "weak_hair",
+        "split_ends"
+      ],
+      "key_ingredients": [
+        "keratin",
+        "proteins",
+        "biotin",
+        "amino_acids",
+        "ceramides"
+      ],
+      "search_terms": [
+        "anti-breakage",
+        "stop breakage",
+        "prevent breaking",
+        "no breakage"
+      ],
+      "india_priority": null
+    },
+    "protein_treatment": {
+      "id": "protein_treatment",
+      "label": "Protein Treatment",
+      "icon": "🥚",
+      "category": "strength",
+      "is_parent": false,
+      "related_benefits": [
+        "strengthening_hair",
+        "repair"
+      ],
+      "addresses_concerns": [
+        "weak_hair",
+        "damage",
+        "limp_hair"
+      ],
+      "key_ingredients": [
+        "keratin",
+        "collagen",
+        "silk_protein",
+        "wheat_protein",
+        "amino_acids"
+      ],
+      "search_terms": [
+        "protein",
+        "keratin treatment",
+        "protein mask"
+      ],
+      "india_priority": null
+    },
+    "volumizing": {
+      "id": "volumizing",
+      "label": "Volumizing",
+      "icon": "📈",
+      "category": "volume",
+      "is_parent": true,
+      "related_benefits": [
+        "thickening",
+        "body_building",
+        "root_lifting"
+      ],
+      "addresses_concerns": [
+        "flat_hair",
+        "limp_hair",
+        "fine_hair",
+        "thin_hair"
+      ],
+      "key_ingredients": [
+        "biotin",
+        "panthenol",
+        "rice_protein",
+        "bamboo",
+        "wheat_protein",
+        "polymers"
+      ],
+      "search_terms": [
+        "volume",
+        "volumizing",
+        "big hair",
+        "lift",
+        "body",
+        "bouncy"
+      ],
+      "india_priority": null
+    },
+    "thickening": {
+      "id": "thickening",
+      "label": "Thickening",
+      "icon": "📏",
+      "category": "volume",
+      "is_parent": false,
+      "related_benefits": [
+        "volumizing"
+      ],
+      "addresses_concerns": [
+        "thin_hair",
+        "fine_hair",
+        "thinning_hair"
+      ],
+      "key_ingredients": [
+        "biotin",
+        "caffeine",
+        "proteins",
+        "polymers",
+        "minoxidil"
+      ],
+      "search_terms": [
+        "thickening",
+        "thick hair",
+        "fuller",
+        "more hair",
+        "dense"
+      ],
+      "india_priority": null
+    },
+    "root_lifting": {
+      "id": "root_lifting",
+      "label": "Root Lifting",
+      "icon": "⬆️",
+      "category": "volume",
+      "is_parent": false,
+      "related_benefits": [
+        "volumizing",
+        "body_building"
+      ],
+      "addresses_concerns": [
+        "flat_hair",
+        "limp_hair"
+      ],
+      "key_ingredients": [
+        "polymers",
+        "panthenol",
+        "rice_protein",
+        "bamboo_extract"
+      ],
+      "search_terms": [
+        "root lift",
+        "lift at roots",
+        "bouncy roots",
+        "volume at roots"
+      ],
+      "india_priority": null
+    },
+    "body_building": {
+      "id": "body_building",
+      "label": "Body Building",
+      "icon": "🏗️",
+      "category": "volume",
+      "is_parent": false,
+      "related_benefits": [
+        "volumizing",
+        "thickening"
+      ],
+      "addresses_concerns": [
+        "flat_hair",
+        "limp_hair"
+      ],
+      "key_ingredients": [
+        "proteins",
+        "polymers",
+        "panthenol"
+      ],
+      "search_terms": [
+        "body",
+        "bounce",
+        "movement",
+        "life",
+        "texture"
+      ],
+      "india_priority": null
+    },
+    "scalp_health": {
+      "id": "scalp_health",
+      "label": "Scalp Health",
+      "icon": "🧠",
+      "category": "scalp",
+      "is_parent": true,
+      "related_benefits": [
+        "anti_dandruff",
+        "scalp_soothing",
+        "scalp_purifying",
+        "scalp_balancing"
+      ],
+      "addresses_concerns": [
+        "dandruff",
+        "oily_scalp",
+        "dry_scalp",
+        "itchy_scalp",
+        "scalp_buildup"
+      ],
+      "key_ingredients": [
+        "tea_tree",
+        "salicylic_acid",
+        "zinc_pyrithione",
+        "niacinamide",
+        "centella",
+        "peppermint"
+      ],
+      "search_terms": [
+        "scalp care",
+        "scalp health",
+        "scalp treatment",
+        "healthy scalp"
+      ],
+      "india_priority": null
+    },
+    "anti_dandruff": {
+      "id": "anti_dandruff",
+      "label": "Anti-Dandruff",
+      "icon": "❄️",
+      "category": "scalp",
+      "is_parent": true,
+      "related_benefits": [
+        "scalp_health",
+        "scalp_soothing",
+        "scalp_purifying"
+      ],
+      "addresses_concerns": [
+        "dandruff",
+        "flaky_scalp",
+        "itchy_scalp",
+        "dry_scalp"
+      ],
+      "key_ingredients": [
+        "zinc_pyrithione",
+        "ketoconazole",
+        "salicylic_acid",
+        "tea_tree",
+        "piroctone_olamine",
+        "selenium_sulfide"
+      ],
+      "search_terms": [
+        "anti-dandruff",
+        "no flakes",
+        "dandruff control",
+        "flake-free"
+      ],
+      "india_priority": null
+    },
+    "scalp_soothing": {
+      "id": "scalp_soothing",
+      "label": "Scalp Soothing",
+      "icon": "🌸",
+      "category": "scalp",
+      "is_parent": false,
+      "related_benefits": [
+        "scalp_health",
+        "anti_dandruff"
+      ],
+      "addresses_concerns": [
+        "itchy_scalp",
+        "scalp_sensitivity",
+        "dry_scalp"
+      ],
+      "key_ingredients": [
+        "centella",
+        "aloe_vera",
+        "tea_tree",
+        "menthol",
+        "chamomile",
+        "oat"
+      ],
+      "search_terms": [
+        "scalp soothing",
+        "calm scalp",
+        "no itch",
+        "scalp relief"
+      ],
+      "india_priority": null
+    },
+    "scalp_purifying": {
+      "id": "scalp_purifying",
+      "label": "Scalp Purifying",
+      "icon": "🧹",
+      "category": "scalp",
+      "is_parent": false,
+      "related_benefits": [
+        "scalp_health",
+        "clarifying_hair"
+      ],
+      "addresses_concerns": [
+        "scalp_buildup",
+        "oily_scalp"
+      ],
+      "key_ingredients": [
+        "salicylic_acid",
+        "charcoal",
+        "clay",
+        "tea_tree",
+        "apple_cider_vinegar"
+      ],
+      "search_terms": [
+        "scalp purifying",
+        "scalp detox",
+        "deep cleanse scalp",
+        "remove buildup"
+      ],
+      "india_priority": null
+    },
+    "scalp_balancing": {
+      "id": "scalp_balancing",
+      "label": "Scalp Balancing",
+      "icon": "⚖️",
+      "category": "scalp",
+      "is_parent": false,
+      "related_benefits": [
+        "scalp_health"
+      ],
+      "addresses_concerns": [
+        "oily_scalp",
+        "dry_scalp"
+      ],
+      "key_ingredients": [
+        "niacinamide",
+        "zinc",
+        "tea_tree",
+        "willow_bark",
+        "salicylic_acid"
+      ],
+      "search_terms": [
+        "scalp balancing",
+        "balance oil",
+        "regulate scalp",
+        "normalize"
+      ],
+      "india_priority": null
+    },
+    "hair_fall_control": {
+      "id": "hair_fall_control",
+      "label": "Hair Fall Control",
+      "icon": "🛑",
+      "category": "hairfall",
+      "is_parent": true,
+      "related_benefits": [
+        "root_strengthening",
+        "hair_growth",
+        "strengthening_hair"
+      ],
+      "addresses_concerns": [
+        "hair_fall",
+        "thinning_hair",
+        "weak_roots"
+      ],
+      "key_ingredients": [
+        "biotin",
+        "caffeine",
+        "minoxidil",
+        "onion",
+        "bhringraj",
+        "redensyl",
+        "procapil"
+      ],
+      "search_terms": [
+        "hair fall",
+        "stop hair fall",
+        "anti-hair loss",
+        "less hair fall"
+      ],
+      "india_priority": "high"
+    },
+    "root_strengthening": {
+      "id": "root_strengthening",
+      "label": "Root Strengthening",
+      "icon": "🌱",
+      "category": "hairfall",
+      "is_parent": false,
+      "related_benefits": [
+        "hair_fall_control",
+        "strengthening_hair"
+      ],
+      "addresses_concerns": [
+        "weak_roots",
+        "hair_fall",
+        "limp_hair"
+      ],
+      "key_ingredients": [
+        "biotin",
+        "caffeine",
+        "ginseng",
+        "peptides",
+        "keratin"
+      ],
+      "search_terms": [
+        "strong roots",
+        "root strength",
+        "anchor hair",
+        "firm roots"
+      ],
+      "india_priority": null
+    },
+    "hair_growth": {
+      "id": "hair_growth",
+      "label": "Hair Growth",
+      "icon": "📈",
+      "category": "hairfall",
+      "is_parent": false,
+      "related_benefits": [
+        "hair_fall_control",
+        "thickening"
+      ],
+      "addresses_concerns": [
+        "thinning_hair",
+        "hair_fall",
+        "receding_hairline"
+      ],
+      "key_ingredients": [
+        "minoxidil",
+        "redensyl",
+        "procapil",
+        "caffeine",
+        "biotin",
+        "rosemary",
+        "peppermint"
+      ],
+      "search_terms": [
+        "hair growth",
+        "grow hair",
+        "longer hair",
+        "faster growth",
+        "regrow"
+      ],
+      "india_priority": null
+    },
+    "shine_enhancing": {
+      "id": "shine_enhancing",
+      "label": "Shine Enhancing",
+      "icon": "✨",
+      "category": "shine",
+      "is_parent": true,
+      "related_benefits": [
+        "gloss",
+        "smoothing"
+      ],
+      "addresses_concerns": [
+        "dull_hair"
+      ],
+      "key_ingredients": [
+        "oils",
+        "silicones",
+        "ceramides",
+        "vinegar",
+        "panthenol"
+      ],
+      "search_terms": [
+        "shine",
+        "shiny hair",
+        "glossy",
+        "lustrous",
+        "brilliant"
+      ],
+      "india_priority": null
+    },
+    "gloss": {
+      "id": "gloss",
+      "label": "Gloss",
+      "icon": "💎",
+      "category": "shine",
+      "is_parent": false,
+      "related_benefits": [
+        "shine_enhancing",
+        "smoothing"
+      ],
+      "addresses_concerns": [
+        "dull_hair"
+      ],
+      "key_ingredients": [
+        "silicones",
+        "oils",
+        "ceramides"
+      ],
+      "search_terms": [
+        "gloss",
+        "glossy",
+        "mirror shine",
+        "high shine",
+        "glass-like"
+      ],
+      "india_priority": null
+    },
+    "color_protection": {
+      "id": "color_protection",
+      "label": "Color Protection",
+      "icon": "🎨",
+      "category": "color",
+      "is_parent": true,
+      "related_benefits": [
+        "fade_prevention"
+      ],
+      "addresses_concerns": [
+        "fading_color",
+        "color_damage"
+      ],
+      "key_ingredients": [
+        "uv_filters",
+        "antioxidants",
+        "sunflower_seed_extract"
+      ],
+      "search_terms": [
+        "color protection",
+        "color safe",
+        "protect color",
+        "color-treated"
+      ],
+      "india_priority": null
+    },
+    "fade_prevention": {
+      "id": "fade_prevention",
+      "label": "Fade Prevention",
+      "icon": "🔒",
+      "category": "color",
+      "is_parent": false,
+      "related_benefits": [
+        "color_protection"
+      ],
+      "addresses_concerns": [
+        "fading_color"
+      ],
+      "key_ingredients": [
+        "uv_filters",
+        "antioxidants",
+        "acidifiers"
+      ],
+      "search_terms": [
+        "prevent fading",
+        "lock color",
+        "long-lasting color",
+        "no fade"
+      ],
+      "india_priority": null
+    },
+    "purple_toning": {
+      "id": "purple_toning",
+      "label": "Purple Toning",
+      "icon": "💜",
+      "category": "color",
+      "is_parent": false,
+      "related_benefits": [],
+      "addresses_concerns": [
+        "brassiness"
+      ],
+      "key_ingredients": [
+        "purple_pigments",
+        "violet_dye",
+        "blue_pigments"
+      ],
+      "search_terms": [
+        "purple shampoo",
+        "toning",
+        "no brass",
+        "silver shampoo"
+      ],
+      "india_priority": null
+    },
+    "detangling": {
+      "id": "detangling",
+      "label": "Detangling",
+      "icon": "🪮",
+      "category": "manageability",
+      "is_parent": true,
+      "related_benefits": [
+        "manageability",
+        "conditioning"
+      ],
+      "addresses_concerns": [
+        "tangles",
+        "unmanageable_hair"
+      ],
+      "key_ingredients": [
+        "silicones",
+        "cetrimonium_chloride",
+        "behentrimonium_chloride"
+      ],
+      "search_terms": [
+        "detangling",
+        "no tangles",
+        "easy comb",
+        "knot-free",
+        "tangle-free"
+      ],
+      "india_priority": null
+    },
+    "manageability": {
+      "id": "manageability",
+      "label": "Manageability",
+      "icon": "🎛️",
+      "category": "manageability",
+      "is_parent": false,
+      "related_benefits": [
+        "detangling",
+        "smoothing",
+        "frizz_control"
+      ],
+      "addresses_concerns": [
+        "unmanageable_hair"
+      ],
+      "key_ingredients": [
+        "silicones",
+        "conditioning_agents",
+        "proteins",
+        "oils"
+      ],
+      "search_terms": [
+        "manageable",
+        "easy to style",
+        "obedient hair",
+        "cooperative"
+      ],
+      "india_priority": null
+    },
+    "heat_protection": {
+      "id": "heat_protection",
+      "label": "Heat Protection",
+      "icon": "🔥",
+      "category": "protection",
+      "is_parent": true,
+      "related_benefits": [],
+      "addresses_concerns": [
+        "heat_damage",
+        "breakage"
+      ],
+      "key_ingredients": [
+        "silicones",
+        "polymers",
+        "proteins"
+      ],
+      "search_terms": [
+        "heat protection",
+        "thermal protect",
+        "heat shield",
+        "styling protect"
+      ],
+      "india_priority": null
+    },
+    "curl_defining": {
+      "id": "curl_defining",
+      "label": "Curl Defining",
+      "icon": "🌀",
+      "category": "styling",
+      "is_parent": false,
+      "related_benefits": [
+        "frizz_control"
+      ],
+      "addresses_concerns": [
+        "frizz"
+      ],
+      "key_ingredients": [
+        "curl_enhancers",
+        "polymers",
+        "oils",
+        "humectants",
+        "proteins"
+      ],
+      "search_terms": [
+        "curl defining",
+        "define curls",
+        "curl enhancing",
+        "bouncy curls"
+      ],
+      "india_priority": null
+    },
+    "clarifying_hair": {
+      "id": "clarifying_hair",
+      "label": "Clarifying",
+      "icon": "💎",
+      "category": "scalp",
+      "is_parent": false,
+      "related_benefits": [
+        "scalp_purifying",
+        "scalp_health"
+      ],
+      "addresses_concerns": [
+        "scalp_buildup",
+        "oily_scalp",
+        "dull_hair"
+      ],
+      "key_ingredients": [
+        "salicylic_acid",
+        "charcoal",
+        "apple_cider_vinegar",
+        "clay"
+      ],
+      "search_terms": [
+        "clarifying",
+        "deep cleanse",
+        "remove buildup",
+        "reset"
+      ],
+      "india_priority": null
+    }
+  },
+  "skin_product_types": {
+    "serum": {
+      "id": "serum",
+      "label": "Serum",
+      "icon": "💎",
+      "category": "treatment",
+      "related_types": [
+        "ampoule",
+        "essence",
+        "concentrate",
+        "booster",
+        "drops"
+      ],
+      "alternative_formats": [
+        "face_oil",
+        "night_cream",
+        "sleeping_mask"
+      ],
+      "sub_types": [
+        "vitamin_c_serum",
+        "retinol_serum",
+        "hydrating_serum",
+        "brightening_serum",
+        "anti_aging_serum",
+        "niacinamide_serum",
+        "exfoliating_serum",
+        "acne_serum"
+      ],
+      "search_terms": [
+        "serum",
+        "face serum",
+        "treatment serum"
+      ]
+    },
+    "ampoule": {
+      "id": "ampoule",
+      "label": "Ampoule",
+      "icon": "💉",
+      "category": "treatment",
+      "related_types": [
+        "serum",
+        "essence",
+        "concentrate",
+        "booster"
+      ],
+      "alternative_formats": [
+        "intensive_serum",
+        "treatment_mask"
+      ],
+      "sub_types": [
+        "hydrating_ampoule",
+        "brightening_ampoule",
+        "anti_aging_ampoule"
+      ],
+      "search_terms": [
+        "ampoule",
+        "ampule",
+        "intensive treatment"
+      ]
+    },
+    "essence": {
+      "id": "essence",
+      "label": "Essence",
+      "icon": "✨",
+      "category": "treatment",
+      "related_types": [
+        "serum",
+        "ampoule",
+        "toner",
+        "first_treatment_essence"
+      ],
+      "alternative_formats": [
+        "hydrating_toner",
+        "emulsion"
+      ],
+      "sub_types": [
+        "hydrating_essence",
+        "brightening_essence",
+        "fermented_essence"
+      ],
+      "search_terms": [
+        "essence",
+        "treatment essence",
+        "first essence"
+      ]
+    },
+    "concentrate": {
+      "id": "concentrate",
+      "label": "Concentrate",
+      "icon": "🎯",
+      "category": "treatment",
+      "related_types": [
+        "serum",
+        "ampoule",
+        "booster"
+      ],
+      "alternative_formats": [
+        "intensive_serum",
+        "spot_treatment"
+      ],
+      "sub_types": [
+        "vitamin_c_concentrate",
+        "retinol_concentrate"
+      ],
+      "search_terms": [
+        "concentrate",
+        "concentrated serum"
+      ]
+    },
+    "booster": {
+      "id": "booster",
+      "label": "Booster",
+      "icon": "🚀",
+      "category": "treatment",
+      "related_types": [
+        "serum",
+        "concentrate",
+        "drops"
+      ],
+      "alternative_formats": [
+        "mix_in_treatment",
+        "face_oil"
+      ],
+      "sub_types": [
+        "hydrating_booster",
+        "brightening_booster"
+      ],
+      "search_terms": [
+        "booster",
+        "skin booster",
+        "mix-in"
+      ]
+    },
+    "drops": {
+      "id": "drops",
+      "label": "Drops",
+      "icon": "💧",
+      "category": "treatment",
+      "related_types": [
+        "serum",
+        "booster",
+        "face_oil"
+      ],
+      "alternative_formats": [
+        "serum",
+        "treatment_oil"
+      ],
+      "sub_types": [
+        "glow_drops",
+        "hydrating_drops",
+        "self_tan_drops"
+      ],
+      "search_terms": [
+        "drops",
+        "face drops",
+        "glow drops"
+      ]
+    },
+    "spot_treatment": {
+      "id": "spot_treatment",
+      "label": "Spot Treatment",
+      "icon": "📍",
+      "category": "treatment",
+      "related_types": [
+        "pimple_patches",
+        "dark_spot_corrector"
+      ],
+      "alternative_formats": [
+        "acne_serum"
+      ],
+      "sub_types": [
+        "acne_spot_treatment",
+        "dark_spot_treatment"
+      ],
+      "search_terms": [
+        "spot treatment",
+        "pimple treatment",
+        "targeted treatment"
+      ]
+    },
+    "pimple_patches": {
+      "id": "pimple_patches",
+      "label": "Pimple Patches",
+      "icon": "🩹",
+      "category": "treatment",
+      "related_types": [
+        "spot_treatment"
+      ],
+      "alternative_formats": [
+        "drying_lotion",
+        "acne_serum"
+      ],
+      "sub_types": [
+        "hydrocolloid_patches",
+        "microneedle_patches"
+      ],
+      "search_terms": [
+        "pimple patches",
+        "acne patches",
+        "blemish patches"
+      ]
+    },
+    "moisturizer": {
+      "id": "moisturizer",
+      "label": "Moisturizer",
+      "icon": "🧴",
+      "category": "moisturizer",
+      "related_types": [
+        "cream",
+        "gel_cream",
+        "lotion",
+        "emulsion",
+        "night_cream",
+        "day_cream",
+        "sleeping_mask"
+      ],
+      "alternative_formats": [
+        "face_oil",
+        "facial_balm"
+      ],
+      "sub_types": [
+        "hydrating_moisturizer",
+        "anti_aging_moisturizer",
+        "mattifying_moisturizer"
+      ],
+      "search_terms": [
+        "moisturizer",
+        "face cream",
+        "facial moisturizer"
+      ]
+    },
+    "cream": {
+      "id": "cream",
+      "label": "Cream",
+      "icon": "🥛",
+      "category": "moisturizer",
+      "related_types": [
+        "moisturizer",
+        "gel_cream",
+        "night_cream",
+        "day_cream",
+        "lotion"
+      ],
+      "alternative_formats": [
+        "emulsion",
+        "facial_balm",
+        "sleeping_mask"
+      ],
+      "sub_types": [
+        "hydrating_cream",
+        "anti_aging_cream",
+        "brightening_cream"
+      ],
+      "search_terms": [
+        "cream",
+        "face cream",
+        "facial cream"
+      ]
+    },
+    "gel_cream": {
+      "id": "gel_cream",
+      "label": "Gel Cream",
+      "icon": "💎",
+      "category": "moisturizer",
+      "related_types": [
+        "cream",
+        "moisturizer",
+        "gel",
+        "lotion",
+        "emulsion"
+      ],
+      "alternative_formats": [
+        "light_cream",
+        "hydrating_gel"
+      ],
+      "sub_types": [
+        "hydrating_gel_cream",
+        "oil_free_gel_cream"
+      ],
+      "search_terms": [
+        "gel cream",
+        "water cream",
+        "lightweight moisturizer"
+      ]
+    },
+    "night_cream": {
+      "id": "night_cream",
+      "label": "Night Cream",
+      "icon": "🌙",
+      "category": "moisturizer",
+      "related_types": [
+        "cream",
+        "sleeping_mask",
+        "moisturizer"
+      ],
+      "alternative_formats": [
+        "face_oil",
+        "sleeping_pack",
+        "facial_balm"
+      ],
+      "sub_types": [
+        "anti_aging_night_cream",
+        "repair_night_cream",
+        "retinol_night_cream"
+      ],
+      "search_terms": [
+        "night cream",
+        "overnight cream",
+        "pm cream"
+      ]
+    },
+    "day_cream": {
+      "id": "day_cream",
+      "label": "Day Cream",
+      "icon": "☀️",
+      "category": "moisturizer",
+      "related_types": [
+        "cream",
+        "moisturizer",
+        "spf_moisturizer",
+        "gel_cream"
+      ],
+      "alternative_formats": [
+        "lotion",
+        "tinted_moisturizer"
+      ],
+      "sub_types": [
+        "hydrating_day_cream",
+        "spf_day_cream",
+        "mattifying_day_cream"
+      ],
+      "search_terms": [
+        "day cream",
+        "daytime moisturizer",
+        "am cream"
+      ]
+    },
+    "sleeping_mask": {
+      "id": "sleeping_mask",
+      "label": "Sleeping Mask",
+      "icon": "😴",
+      "category": "moisturizer",
+      "related_types": [
+        "night_cream",
+        "cream",
+        "mask"
+      ],
+      "alternative_formats": [
+        "face_oil",
+        "facial_balm"
+      ],
+      "sub_types": [
+        "hydrating_sleeping_mask",
+        "brightening_sleeping_mask"
+      ],
+      "search_terms": [
+        "sleeping mask",
+        "overnight mask",
+        "sleeping pack"
+      ]
+    },
+    "face_oil": {
+      "id": "face_oil",
+      "label": "Face Oil",
+      "icon": "🫒",
+      "category": "moisturizer",
+      "related_types": [
+        "treatment_oil",
+        "serum_oil",
+        "booster"
+      ],
+      "alternative_formats": [
+        "rich_serum",
+        "facial_balm",
+        "night_cream"
+      ],
+      "sub_types": [
+        "rosehip_oil",
+        "marula_oil",
+        "squalane_oil",
+        "argan_oil",
+        "jojoba_oil"
+      ],
+      "search_terms": [
+        "face oil",
+        "facial oil",
+        "skin oil"
+      ]
+    },
+    "lotion": {
+      "id": "lotion",
+      "label": "Lotion",
+      "icon": "🥛",
+      "category": "moisturizer",
+      "related_types": [
+        "emulsion",
+        "light_cream",
+        "moisturizer",
+        "gel_cream"
+      ],
+      "alternative_formats": [
+        "cream",
+        "gel",
+        "essence"
+      ],
+      "sub_types": [
+        "hydrating_lotion",
+        "facial_lotion"
+      ],
+      "search_terms": [
+        "lotion",
+        "face lotion",
+        "light lotion"
+      ]
+    },
+    "emulsion": {
+      "id": "emulsion",
+      "label": "Emulsion",
+      "icon": "🌫️",
+      "category": "moisturizer",
+      "related_types": [
+        "lotion",
+        "essence",
+        "milky_toner"
+      ],
+      "alternative_formats": [
+        "gel_cream",
+        "lotion",
+        "essence"
+      ],
+      "sub_types": [
+        "hydrating_emulsion",
+        "balancing_emulsion"
+      ],
+      "search_terms": [
+        "emulsion",
+        "milk",
+        "milky lotion"
+      ]
+    },
+    "facial_balm": {
+      "id": "facial_balm",
+      "label": "Facial Balm",
+      "icon": "🫙",
+      "category": "moisturizer",
+      "related_types": [
+        "face_oil",
+        "rich_cream"
+      ],
+      "alternative_formats": [
+        "night_cream",
+        "sleeping_mask",
+        "face_oil"
+      ],
+      "sub_types": [
+        "healing_balm",
+        "multi_purpose_balm"
+      ],
+      "search_terms": [
+        "balm",
+        "face balm",
+        "facial balm"
+      ]
+    },
+    "cleanser": {
+      "id": "cleanser",
+      "label": "Cleanser",
+      "icon": "🧼",
+      "category": "cleansing",
+      "related_types": [
+        "face_wash",
+        "gel_cleanser",
+        "foam_cleanser",
+        "cream_cleanser",
+        "milk_cleanser",
+        "oil_cleanser",
+        "cleansing_balm"
+      ],
+      "alternative_formats": [
+        "micellar_water",
+        "cleansing_water"
+      ],
+      "sub_types": [
+        "gentle_cleanser",
+        "hydrating_cleanser",
+        "brightening_cleanser",
+        "acne_cleanser"
+      ],
+      "search_terms": [
+        "cleanser",
+        "face cleanser",
+        "face wash"
+      ]
+    },
+    "gel_cleanser": {
+      "id": "gel_cleanser",
+      "label": "Gel Cleanser",
+      "icon": "💧",
+      "category": "cleansing",
+      "related_types": [
+        "cleanser",
+        "foam_cleanser",
+        "face_wash"
+      ],
+      "alternative_formats": [
+        "cream_cleanser",
+        "micellar_water"
+      ],
+      "sub_types": [
+        "hydrating_gel_cleanser",
+        "salicylic_gel_cleanser"
+      ],
+      "search_terms": [
+        "gel cleanser",
+        "gel wash",
+        "clear cleanser"
+      ]
+    },
+    "foam_cleanser": {
+      "id": "foam_cleanser",
+      "label": "Foam Cleanser",
+      "icon": "🫧",
+      "category": "cleansing",
+      "related_types": [
+        "cleanser",
+        "gel_cleanser",
+        "face_wash"
+      ],
+      "alternative_formats": [
+        "cream_cleanser",
+        "micellar_water"
+      ],
+      "sub_types": [
+        "hydrating_foam",
+        "brightening_foam",
+        "amino_acid_foam"
+      ],
+      "search_terms": [
+        "foam cleanser",
+        "foaming cleanser",
+        "foam wash"
+      ]
+    },
+    "cream_cleanser": {
+      "id": "cream_cleanser",
+      "label": "Cream Cleanser",
+      "icon": "🥛",
+      "category": "cleansing",
+      "related_types": [
+        "cleanser",
+        "milk_cleanser",
+        "gentle_cleanser"
+      ],
+      "alternative_formats": [
+        "cleansing_balm",
+        "oil_cleanser",
+        "micellar_water"
+      ],
+      "sub_types": [
+        "gentle_cream_cleanser",
+        "cold_cream"
+      ],
+      "search_terms": [
+        "cream cleanser",
+        "creamy cleanser",
+        "gentle cleanser"
+      ]
+    },
+    "oil_cleanser": {
+      "id": "oil_cleanser",
+      "label": "Cleansing Oil",
+      "icon": "🫒",
+      "category": "cleansing",
+      "related_types": [
+        "cleansing_balm",
+        "makeup_remover"
+      ],
+      "alternative_formats": [
+        "micellar_water",
+        "cleansing_balm"
+      ],
+      "sub_types": [
+        "lightweight_cleansing_oil",
+        "deep_cleansing_oil"
+      ],
+      "search_terms": [
+        "cleansing oil",
+        "oil cleanser",
+        "first cleanser"
+      ]
+    },
+    "cleansing_balm": {
+      "id": "cleansing_balm",
+      "label": "Cleansing Balm",
+      "icon": "🫙",
+      "category": "cleansing",
+      "related_types": [
+        "oil_cleanser",
+        "makeup_remover"
+      ],
+      "alternative_formats": [
+        "cleansing_oil",
+        "micellar_water"
+      ],
+      "sub_types": [
+        "sherbet_balm",
+        "melt_cleanser"
+      ],
+      "search_terms": [
+        "cleansing balm",
+        "balm cleanser",
+        "melt cleanser"
+      ]
+    },
+    "micellar_water": {
+      "id": "micellar_water",
+      "label": "Micellar Water",
+      "icon": "💧",
+      "category": "cleansing",
+      "related_types": [
+        "cleansing_water",
+        "makeup_remover",
+        "toner"
+      ],
+      "alternative_formats": [
+        "cleansing_oil",
+        "cleansing_balm"
+      ],
+      "sub_types": [
+        "hydrating_micellar",
+        "oil_infused_micellar"
+      ],
+      "search_terms": [
+        "micellar water",
+        "micellar",
+        "cleansing water"
+      ]
+    },
+    "toner": {
+      "id": "toner",
+      "label": "Toner",
+      "icon": "💦",
+      "category": "prep",
+      "related_types": [
+        "essence",
+        "mist",
+        "lotion_toner"
+      ],
+      "alternative_formats": [
+        "essence",
+        "emulsion"
+      ],
+      "sub_types": [
+        "hydrating_toner",
+        "exfoliating_toner",
+        "balancing_toner",
+        "pore_toner"
+      ],
+      "search_terms": [
+        "toner",
+        "face toner",
+        "skin toner"
+      ]
+    },
+    "hydrating_toner": {
+      "id": "hydrating_toner",
+      "label": "Hydrating Toner",
+      "icon": "💧",
+      "category": "prep",
+      "related_types": [
+        "toner",
+        "essence",
+        "mist"
+      ],
+      "alternative_formats": [
+        "essence",
+        "emulsion"
+      ],
+      "sub_types": [
+        "7_skin_toner",
+        "watery_toner",
+        "milky_toner"
+      ],
+      "search_terms": [
+        "hydrating toner",
+        "moisture toner",
+        "watery toner"
+      ]
+    },
+    "exfoliating_toner": {
+      "id": "exfoliating_toner",
+      "label": "Exfoliating Toner",
+      "icon": "✨",
+      "category": "prep",
+      "related_types": [
+        "toner",
+        "peel",
+        "exfoliating_pads"
+      ],
+      "alternative_formats": [
+        "peel",
+        "exfoliating_serum"
+      ],
+      "sub_types": [
+        "aha_toner",
+        "bha_toner",
+        "pha_toner",
+        "glycolic_toner"
+      ],
+      "search_terms": [
+        "exfoliating toner",
+        "acid toner",
+        "resurfacing toner"
+      ]
+    },
+    "mist": {
+      "id": "mist",
+      "label": "Mist",
+      "icon": "💨",
+      "category": "prep",
+      "related_types": [
+        "toner",
+        "setting_spray",
+        "hydrating_spray"
+      ],
+      "alternative_formats": [
+        "toner",
+        "essence"
+      ],
+      "sub_types": [
+        "hydrating_mist",
+        "setting_mist",
+        "soothing_mist",
+        "glow_mist"
+      ],
+      "search_terms": [
+        "face mist",
+        "facial mist",
+        "setting spray"
+      ]
+    },
+    "exfoliator": {
+      "id": "exfoliator",
+      "label": "Exfoliator",
+      "icon": "✨",
+      "category": "treatment",
+      "related_types": [
+        "scrub",
+        "peel",
+        "exfoliating_toner",
+        "exfoliating_pads"
+      ],
+      "alternative_formats": [
+        "exfoliating_cleanser",
+        "acid_serum"
+      ],
+      "sub_types": [
+        "physical_exfoliator",
+        "chemical_exfoliator",
+        "enzyme_exfoliator"
+      ],
+      "search_terms": [
+        "exfoliator",
+        "exfoliant",
+        "scrub",
+        "peel"
+      ]
+    },
+    "scrub": {
+      "id": "scrub",
+      "label": "Scrub",
+      "icon": "🧂",
+      "category": "treatment",
+      "related_types": [
+        "exfoliator",
+        "exfoliating_cleanser"
+      ],
+      "alternative_formats": [
+        "peel",
+        "exfoliating_toner"
+      ],
+      "sub_types": [
+        "face_scrub",
+        "body_scrub",
+        "lip_scrub"
+      ],
+      "search_terms": [
+        "scrub",
+        "face scrub",
+        "exfoliating scrub"
+      ]
+    },
+    "peel": {
+      "id": "peel",
+      "label": "Peel",
+      "icon": "🍊",
+      "category": "treatment",
+      "related_types": [
+        "exfoliator",
+        "exfoliating_toner"
+      ],
+      "alternative_formats": [
+        "exfoliating_toner",
+        "scrub"
+      ],
+      "sub_types": [
+        "glycolic_peel",
+        "lactic_peel",
+        "enzyme_peel"
+      ],
+      "search_terms": [
+        "peel",
+        "face peel",
+        "chemical peel"
+      ]
+    },
+    "exfoliating_pads": {
+      "id": "exfoliating_pads",
+      "label": "Exfoliating Pads",
+      "icon": "⚪",
+      "category": "treatment",
+      "related_types": [
+        "peel",
+        "exfoliating_toner"
+      ],
+      "alternative_formats": [
+        "exfoliating_toner",
+        "peel"
+      ],
+      "sub_types": [
+        "glycolic_pads",
+        "salicylic_pads",
+        "daily_pads"
+      ],
+      "search_terms": [
+        "exfoliating pads",
+        "peel pads",
+        "acid pads"
+      ]
+    },
+    "mask": {
+      "id": "mask",
+      "label": "Mask",
+      "icon": "🎭",
+      "category": "treatment",
+      "related_types": [
+        "sheet_mask",
+        "clay_mask",
+        "cream_mask",
+        "gel_mask",
+        "sleeping_mask",
+        "peel_off_mask"
+      ],
+      "alternative_formats": [
+        "overnight_treatment",
+        "intensive_serum"
+      ],
+      "sub_types": [
+        "hydrating_mask",
+        "purifying_mask",
+        "brightening_mask",
+        "anti_aging_mask"
+      ],
+      "search_terms": [
+        "face mask",
+        "facial mask",
+        "treatment mask"
+      ]
+    },
+    "sheet_mask": {
+      "id": "sheet_mask",
+      "label": "Sheet Mask",
+      "icon": "📄",
+      "category": "treatment",
+      "related_types": [
+        "mask",
+        "hydrogel_mask",
+        "bio_cellulose_mask"
+      ],
+      "alternative_formats": [
+        "cream_mask",
+        "sleeping_mask"
+      ],
+      "sub_types": [
+        "hydrating_sheet_mask",
+        "brightening_sheet_mask",
+        "firming_sheet_mask"
+      ],
+      "search_terms": [
+        "sheet mask",
+        "face sheet",
+        "k-beauty mask"
+      ]
+    },
+    "clay_mask": {
+      "id": "clay_mask",
+      "label": "Clay Mask",
+      "icon": "🏺",
+      "category": "treatment",
+      "related_types": [
+        "mask",
+        "mud_mask",
+        "charcoal_mask"
+      ],
+      "alternative_formats": [
+        "peel_off_mask",
+        "wash_off_mask"
+      ],
+      "sub_types": [
+        "kaolin_mask",
+        "bentonite_mask",
+        "french_clay_mask"
+      ],
+      "search_terms": [
+        "clay mask",
+        "mud mask",
+        "purifying mask",
+        "detox mask"
+      ]
+    },
+    "eye_patches": {
+      "id": "eye_patches",
+      "label": "Eye Patches",
+      "icon": "👀",
+      "category": "treatment",
+      "related_types": [
+        "eye_mask",
+        "eye_cream"
+      ],
+      "alternative_formats": [
+        "eye_cream",
+        "eye_serum"
+      ],
+      "sub_types": [
+        "hydrating_eye_patches",
+        "brightening_eye_patches"
+      ],
+      "search_terms": [
+        "eye patches",
+        "under eye patches",
+        "eye mask"
+      ]
+    },
+    "eye_cream": {
+      "id": "eye_cream",
+      "label": "Eye Cream",
+      "icon": "👁️",
+      "category": "treatment",
+      "related_types": [
+        "eye_gel",
+        "eye_serum",
+        "eye_patches"
+      ],
+      "alternative_formats": [
+        "eye_patches",
+        "face_cream"
+      ],
+      "sub_types": [
+        "anti_aging_eye_cream",
+        "brightening_eye_cream",
+        "hydrating_eye_cream",
+        "depuffing_eye_cream"
+      ],
+      "search_terms": [
+        "eye cream",
+        "under eye cream",
+        "eye treatment"
+      ]
+    },
+    "eye_serum": {
+      "id": "eye_serum",
+      "label": "Eye Serum",
+      "icon": "💎",
+      "category": "treatment",
+      "related_types": [
+        "eye_cream",
+        "eye_gel"
+      ],
+      "alternative_formats": [
+        "eye_cream",
+        "eye_patches"
+      ],
+      "sub_types": [
+        "retinol_eye_serum",
+        "vitamin_c_eye_serum",
+        "peptide_eye_serum"
+      ],
+      "search_terms": [
+        "eye serum",
+        "under eye serum"
+      ]
+    },
+    "sunscreen": {
+      "id": "sunscreen",
+      "label": "Sunscreen",
+      "icon": "☀️",
+      "category": "protection",
+      "related_types": [
+        "sun_cream",
+        "sun_gel",
+        "sun_lotion",
+        "sun_stick",
+        "sun_spray"
+      ],
+      "alternative_formats": [
+        "spf_moisturizer",
+        "bb_cream",
+        "cc_cream",
+        "tinted_moisturizer"
+      ],
+      "sub_types": [
+        "chemical_sunscreen",
+        "mineral_sunscreen",
+        "hybrid_sunscreen",
+        "tinted_sunscreen",
+        "tone_up_sunscreen"
+      ],
+      "search_terms": [
+        "sunscreen",
+        "SPF",
+        "sun protection",
+        "sunblock"
+      ]
+    },
+    "sun_gel": {
+      "id": "sun_gel",
+      "label": "Sun Gel",
+      "icon": "💎",
+      "category": "protection",
+      "related_types": [
+        "sunscreen",
+        "sun_cream",
+        "sun_essence"
+      ],
+      "alternative_formats": [
+        "sun_cream",
+        "sun_lotion"
+      ],
+      "sub_types": [
+        "hydrating_sun_gel",
+        "mattifying_sun_gel"
+      ],
+      "search_terms": [
+        "sun gel",
+        "gel sunscreen",
+        "watery sunscreen"
+      ]
+    },
+    "sun_stick": {
+      "id": "sun_stick",
+      "label": "Sun Stick",
+      "icon": "🖊️",
+      "category": "protection",
+      "related_types": [
+        "sunscreen"
+      ],
+      "alternative_formats": [
+        "sun_spray",
+        "sun_powder"
+      ],
+      "sub_types": [
+        "clear_sun_stick",
+        "tinted_sun_stick"
+      ],
+      "search_terms": [
+        "sun stick",
+        "SPF stick",
+        "sunscreen stick"
+      ]
+    }
+  },
+  "hair_product_types": {
+    "shampoo": {
+      "id": "shampoo",
+      "label": "Shampoo",
+      "icon": "🧴",
+      "category": "cleansing",
+      "related_types": [
+        "clarifying_shampoo",
+        "moisturizing_shampoo",
+        "volumizing_shampoo",
+        "color_safe_shampoo",
+        "anti_dandruff_shampoo",
+        "hair_fall_shampoo",
+        "sulfate_free_shampoo"
+      ],
+      "alternative_formats": [
+        "co_wash",
+        "cleansing_conditioner",
+        "shampoo_bar",
+        "dry_shampoo"
+      ],
+      "sub_types": [
+        "daily_shampoo",
+        "gentle_shampoo",
+        "deep_cleanse_shampoo"
+      ],
+      "search_terms": [
+        "shampoo",
+        "hair shampoo",
+        "hair wash"
+      ]
+    },
+    "clarifying_shampoo": {
+      "id": "clarifying_shampoo",
+      "label": "Clarifying Shampoo",
+      "icon": "✨",
+      "category": "cleansing",
+      "related_types": [
+        "shampoo",
+        "detox_shampoo",
+        "scalp_scrub"
+      ],
+      "alternative_formats": [
+        "scalp_scrub",
+        "pre_shampoo_treatment"
+      ],
+      "sub_types": [
+        "weekly_clarifier",
+        "buildup_remover"
+      ],
+      "search_terms": [
+        "clarifying shampoo",
+        "deep cleanse shampoo",
+        "detox shampoo"
+      ]
+    },
+    "moisturizing_shampoo": {
+      "id": "moisturizing_shampoo",
+      "label": "Moisturizing Shampoo",
+      "icon": "💧",
+      "category": "cleansing",
+      "related_types": [
+        "shampoo",
+        "hydrating_shampoo",
+        "sulfate_free_shampoo"
+      ],
+      "alternative_formats": [
+        "co_wash",
+        "cleansing_conditioner"
+      ],
+      "sub_types": [
+        "dry_hair_shampoo",
+        "damaged_hair_shampoo"
+      ],
+      "search_terms": [
+        "moisturizing shampoo",
+        "hydrating shampoo",
+        "nourishing shampoo"
+      ]
+    },
+    "volumizing_shampoo": {
+      "id": "volumizing_shampoo",
+      "label": "Volumizing Shampoo",
+      "icon": "📈",
+      "category": "cleansing",
+      "related_types": [
+        "shampoo",
+        "thickening_shampoo"
+      ],
+      "alternative_formats": [
+        "dry_shampoo",
+        "root_lifting_spray"
+      ],
+      "sub_types": [
+        "fine_hair_shampoo",
+        "flat_hair_shampoo"
+      ],
+      "search_terms": [
+        "volumizing shampoo",
+        "volume shampoo",
+        "thickening shampoo"
+      ]
+    },
+    "color_safe_shampoo": {
+      "id": "color_safe_shampoo",
+      "label": "Color-Safe Shampoo",
+      "icon": "🎨",
+      "category": "cleansing",
+      "related_types": [
+        "shampoo",
+        "sulfate_free_shampoo",
+        "purple_shampoo"
+      ],
+      "alternative_formats": [
+        "co_wash",
+        "low_poo"
+      ],
+      "sub_types": [
+        "blonde_shampoo",
+        "brunette_shampoo",
+        "color_depositing_shampoo"
+      ],
+      "search_terms": [
+        "color safe shampoo",
+        "color protect shampoo",
+        "sulfate free"
+      ]
+    },
+    "anti_dandruff_shampoo": {
+      "id": "anti_dandruff_shampoo",
+      "label": "Anti-Dandruff Shampoo",
+      "icon": "❄️",
+      "category": "cleansing",
+      "related_types": [
+        "shampoo",
+        "scalp_treatment_shampoo",
+        "medicated_shampoo"
+      ],
+      "alternative_formats": [
+        "scalp_treatment",
+        "scalp_serum"
+      ],
+      "sub_types": [
+        "zinc_pyrithione_shampoo",
+        "ketoconazole_shampoo"
+      ],
+      "search_terms": [
+        "anti-dandruff shampoo",
+        "dandruff shampoo",
+        "flake control"
+      ]
+    },
+    "hair_fall_shampoo": {
+      "id": "hair_fall_shampoo",
+      "label": "Hair Fall Shampoo",
+      "icon": "💪",
+      "category": "cleansing",
+      "related_types": [
+        "shampoo",
+        "strengthening_shampoo"
+      ],
+      "alternative_formats": [
+        "scalp_treatment",
+        "hair_growth_serum"
+      ],
+      "sub_types": [
+        "biotin_shampoo",
+        "caffeine_shampoo",
+        "onion_shampoo"
+      ],
+      "search_terms": [
+        "hair fall shampoo",
+        "anti-hair loss shampoo",
+        "strengthening shampoo"
+      ]
+    },
+    "dry_shampoo": {
+      "id": "dry_shampoo",
+      "label": "Dry Shampoo",
+      "icon": "💨",
+      "category": "cleansing",
+      "related_types": [
+        "shampoo",
+        "texturizing_spray",
+        "volumizing_powder"
+      ],
+      "alternative_formats": [
+        "dry_shampoo_powder",
+        "dry_shampoo_foam"
+      ],
+      "sub_types": [
+        "aerosol_dry_shampoo",
+        "powder_dry_shampoo"
+      ],
+      "search_terms": [
+        "dry shampoo",
+        "no wash shampoo",
+        "waterless shampoo"
+      ]
+    },
+    "co_wash": {
+      "id": "co_wash",
+      "label": "Co-Wash",
+      "icon": "🥛",
+      "category": "cleansing",
+      "related_types": [
+        "shampoo",
+        "cleansing_conditioner"
+      ],
+      "alternative_formats": [
+        "gentle_shampoo",
+        "sulfate_free_shampoo"
+      ],
+      "sub_types": [
+        "curly_hair_co_wash",
+        "moisturizing_co_wash"
+      ],
+      "search_terms": [
+        "co-wash",
+        "co wash",
+        "cleansing conditioner",
+        "no poo"
+      ]
+    },
+    "scalp_scrub": {
+      "id": "scalp_scrub",
+      "label": "Scalp Scrub",
+      "icon": "✨",
+      "category": "cleansing",
+      "related_types": [
+        "clarifying_shampoo",
+        "scalp_treatment"
+      ],
+      "alternative_formats": [
+        "clarifying_shampoo"
+      ],
+      "sub_types": [
+        "salt_scalp_scrub",
+        "sugar_scalp_scrub"
+      ],
+      "search_terms": [
+        "scalp scrub",
+        "scalp exfoliator",
+        "scalp detox"
+      ]
+    },
+    "conditioner": {
+      "id": "conditioner",
+      "label": "Conditioner",
+      "icon": "🧴",
+      "category": "conditioning",
+      "related_types": [
+        "deep_conditioner",
+        "leave_in_conditioner",
+        "detangling_conditioner"
+      ],
+      "alternative_formats": [
+        "hair_mask",
+        "leave_in",
+        "hair_oil"
+      ],
+      "sub_types": [
+        "daily_conditioner",
+        "color_safe_conditioner",
+        "volumizing_conditioner"
+      ],
+      "search_terms": [
+        "conditioner",
+        "hair conditioner"
+      ]
+    },
+    "deep_conditioner": {
+      "id": "deep_conditioner",
+      "label": "Deep Conditioner",
+      "icon": "💧",
+      "category": "conditioning",
+      "related_types": [
+        "conditioner",
+        "hair_mask",
+        "bond_repair_treatment"
+      ],
+      "alternative_formats": [
+        "hair_mask",
+        "hot_oil_treatment"
+      ],
+      "sub_types": [
+        "protein_deep_conditioner",
+        "moisture_deep_conditioner"
+      ],
+      "search_terms": [
+        "deep conditioner",
+        "intensive conditioner",
+        "treatment conditioner"
+      ]
+    },
+    "leave_in_conditioner": {
+      "id": "leave_in_conditioner",
+      "label": "Leave-In Conditioner",
+      "icon": "🌿",
+      "category": "conditioning",
+      "related_types": [
+        "conditioner",
+        "detangling_spray",
+        "hair_cream",
+        "hair_milk"
+      ],
+      "alternative_formats": [
+        "hair_cream",
+        "hair_milk",
+        "detangling_spray"
+      ],
+      "sub_types": [
+        "spray_leave_in",
+        "cream_leave_in"
+      ],
+      "search_terms": [
+        "leave-in conditioner",
+        "leave in",
+        "detangling spray"
+      ]
+    },
+    "hair_mask": {
+      "id": "hair_mask",
+      "label": "Hair Mask",
+      "icon": "🎭",
+      "category": "conditioning",
+      "related_types": [
+        "deep_conditioner",
+        "protein_mask",
+        "bond_repair_mask"
+      ],
+      "alternative_formats": [
+        "deep_conditioner",
+        "hot_oil_treatment"
+      ],
+      "sub_types": [
+        "hydrating_mask",
+        "repair_mask",
+        "strengthening_mask",
+        "color_mask"
+      ],
+      "search_terms": [
+        "hair mask",
+        "treatment mask",
+        "intensive mask"
+      ]
+    },
+    "protein_treatment": {
+      "id": "protein_treatment",
+      "label": "Protein Treatment",
+      "icon": "🥚",
+      "category": "conditioning",
+      "related_types": [
+        "hair_mask",
+        "keratin_treatment",
+        "bond_repair"
+      ],
+      "alternative_formats": [
+        "hair_mask",
+        "deep_conditioner"
+      ],
+      "sub_types": [
+        "keratin_protein_treatment",
+        "collagen_treatment"
+      ],
+      "search_terms": [
+        "protein treatment",
+        "keratin treatment",
+        "protein mask"
+      ]
+    },
+    "bond_repair_treatment": {
+      "id": "bond_repair_treatment",
+      "label": "Bond Repair Treatment",
+      "icon": "🔗",
+      "category": "conditioning",
+      "related_types": [
+        "protein_treatment",
+        "hair_mask"
+      ],
+      "alternative_formats": [
+        "hair_mask",
+        "leave_in_treatment"
+      ],
+      "sub_types": [
+        "in_salon_bond_repair",
+        "at_home_bond_repair"
+      ],
+      "search_terms": [
+        "bond repair",
+        "bond treatment",
+        "olaplex",
+        "bond builder"
+      ]
+    },
+    "hair_serum": {
+      "id": "hair_serum",
+      "label": "Hair Serum",
+      "icon": "💎",
+      "category": "treatment",
+      "related_types": [
+        "smoothing_serum",
+        "anti_frizz_serum",
+        "shine_serum",
+        "growth_serum"
+      ],
+      "alternative_formats": [
+        "hair_oil",
+        "leave_in",
+        "finishing_cream"
+      ],
+      "sub_types": [
+        "silicone_serum",
+        "oil_based_serum",
+        "lightweight_serum"
+      ],
+      "search_terms": [
+        "hair serum",
+        "smoothing serum",
+        "shine serum"
+      ]
+    },
+    "hair_oil": {
+      "id": "hair_oil",
+      "label": "Hair Oil",
+      "icon": "🫒",
+      "category": "treatment",
+      "related_types": [
+        "pre_shampoo_oil",
+        "finishing_oil",
+        "scalp_oil",
+        "hot_oil_treatment"
+      ],
+      "alternative_formats": [
+        "hair_serum",
+        "hair_mask",
+        "leave_in"
+      ],
+      "sub_types": [
+        "argan_oil",
+        "coconut_oil",
+        "moroccan_oil",
+        "castor_oil",
+        "onion_oil"
+      ],
+      "search_terms": [
+        "hair oil",
+        "oil treatment",
+        "hot oil",
+        "champi oil"
+      ]
+    },
+    "scalp_treatment": {
+      "id": "scalp_treatment",
+      "label": "Scalp Treatment",
+      "icon": "🧠",
+      "category": "treatment",
+      "related_types": [
+        "scalp_serum",
+        "scalp_tonic",
+        "scalp_oil",
+        "hair_growth_treatment"
+      ],
+      "alternative_formats": [
+        "scalp_oil",
+        "anti_dandruff_shampoo"
+      ],
+      "sub_types": [
+        "anti_dandruff_treatment",
+        "hair_growth_treatment",
+        "scalp_soothing_treatment"
+      ],
+      "search_terms": [
+        "scalp treatment",
+        "scalp serum",
+        "scalp tonic"
+      ]
+    },
+    "hair_growth_serum": {
+      "id": "hair_growth_serum",
+      "label": "Hair Growth Serum",
+      "icon": "📈",
+      "category": "treatment",
+      "related_types": [
+        "scalp_treatment",
+        "hair_tonic",
+        "minoxidil"
+      ],
+      "alternative_formats": [
+        "scalp_oil",
+        "hair_fall_shampoo"
+      ],
+      "sub_types": [
+        "biotin_serum",
+        "caffeine_serum",
+        "redensyl_serum"
+      ],
+      "search_terms": [
+        "hair growth serum",
+        "growth serum",
+        "regrowth serum"
+      ]
+    },
+    "hair_cream": {
+      "id": "hair_cream",
+      "label": "Hair Cream",
+      "icon": "🧴",
+      "category": "styling",
+      "related_types": [
+        "styling_cream",
+        "curl_cream",
+        "smoothing_cream",
+        "leave_in_conditioner"
+      ],
+      "alternative_formats": [
+        "hair_mousse",
+        "hair_gel",
+        "leave_in"
+      ],
+      "sub_types": [
+        "defining_cream",
+        "anti_frizz_cream",
+        "moisturizing_cream"
+      ],
+      "search_terms": [
+        "hair cream",
+        "styling cream",
+        "curl cream"
+      ]
+    },
+    "curl_cream": {
+      "id": "curl_cream",
+      "label": "Curl Cream",
+      "icon": "🌀",
+      "category": "styling",
+      "related_types": [
+        "hair_cream",
+        "curl_enhancer",
+        "curl_gel",
+        "curl_mousse"
+      ],
+      "alternative_formats": [
+        "curl_gel",
+        "curl_mousse"
+      ],
+      "sub_types": [
+        "light_curl_cream",
+        "heavy_curl_cream",
+        "curl_activator"
+      ],
+      "search_terms": [
+        "curl cream",
+        "curly cream",
+        "curl defining cream"
+      ]
+    },
+    "hair_gel": {
+      "id": "hair_gel",
+      "label": "Hair Gel",
+      "icon": "💎",
+      "category": "styling",
+      "related_types": [
+        "styling_gel",
+        "curl_gel",
+        "edge_control"
+      ],
+      "alternative_formats": [
+        "hair_mousse",
+        "hair_cream",
+        "pomade"
+      ],
+      "sub_types": [
+        "strong_hold_gel",
+        "flexible_hold_gel",
+        "alcohol_free_gel"
+      ],
+      "search_terms": [
+        "hair gel",
+        "styling gel",
+        "hold gel"
+      ]
+    },
+    "hair_mousse": {
+      "id": "hair_mousse",
+      "label": "Hair Mousse",
+      "icon": "☁️",
+      "category": "styling",
+      "related_types": [
+        "volumizing_mousse",
+        "curl_mousse",
+        "styling_foam"
+      ],
+      "alternative_formats": [
+        "hair_gel",
+        "volumizing_spray",
+        "hair_cream"
+      ],
+      "sub_types": [
+        "volumizing_mousse",
+        "curl_defining_mousse"
+      ],
+      "search_terms": [
+        "hair mousse",
+        "styling mousse",
+        "foam"
+      ]
+    },
+    "hair_spray": {
+      "id": "hair_spray",
+      "label": "Hair Spray",
+      "icon": "🌫️",
+      "category": "styling",
+      "related_types": [
+        "finishing_spray",
+        "hold_spray",
+        "volumizing_spray",
+        "texture_spray"
+      ],
+      "alternative_formats": [
+        "hair_mousse",
+        "texturizing_spray"
+      ],
+      "sub_types": [
+        "strong_hold_spray",
+        "flexible_hold_spray",
+        "shine_spray"
+      ],
+      "search_terms": [
+        "hair spray",
+        "finishing spray",
+        "hold spray"
+      ]
+    },
+    "texturizing_spray": {
+      "id": "texturizing_spray",
+      "label": "Texturizing Spray",
+      "icon": "🌊",
+      "category": "styling",
+      "related_types": [
+        "sea_salt_spray",
+        "volume_spray"
+      ],
+      "alternative_formats": [
+        "dry_shampoo",
+        "hair_powder"
+      ],
+      "sub_types": [
+        "sea_salt_spray",
+        "dry_texture_spray",
+        "wave_spray"
+      ],
+      "search_terms": [
+        "texturizing spray",
+        "texture spray",
+        "sea salt spray"
+      ]
+    },
+    "pomade": {
+      "id": "pomade",
+      "label": "Pomade",
+      "icon": "🫙",
+      "category": "styling",
+      "related_types": [
+        "hair_wax",
+        "styling_paste",
+        "hair_clay",
+        "edge_control"
+      ],
+      "alternative_formats": [
+        "hair_gel",
+        "hair_wax"
+      ],
+      "sub_types": [
+        "water_based_pomade",
+        "oil_based_pomade",
+        "matte_pomade"
+      ],
+      "search_terms": [
+        "pomade",
+        "styling pomade",
+        "hair pomade"
+      ]
+    },
+    "heat_protectant": {
+      "id": "heat_protectant",
+      "label": "Heat Protectant",
+      "icon": "🔥",
+      "category": "protection",
+      "related_types": [
+        "thermal_spray",
+        "heat_shield",
+        "blow_dry_spray"
+      ],
+      "alternative_formats": [
+        "heat_protect_cream",
+        "heat_protect_serum"
+      ],
+      "sub_types": [
+        "spray_heat_protectant",
+        "cream_heat_protectant",
+        "serum_heat_protectant"
+      ],
+      "search_terms": [
+        "heat protectant",
+        "heat protection",
+        "thermal spray",
+        "heat shield"
+      ]
+    }
+  },
+  "skin_ingredients": {
+    "vitamin_c": {
+      "id": "vitamin_c",
+      "label": "Vitamin C",
+      "icon": "🍊",
+      "category": "brightening",
+      "parent": null,
+      "related_ingredients": [
+        "ethyl_ascorbic_acid",
+        "magnesium_ascorbyl_phosphate",
+        "sodium_ascorbyl_phosphate",
+        "ascorbyl_palmitate",
+        "ascorbic_acid",
+        "ascorbyl_glucoside",
+        "tetrahexyldecyl_ascorbate",
+        "3_o_ethyl_ascorbic_acid"
+      ],
+      "benefits": [
+        "brightening",
+        "dark_spot_correcting",
+        "antioxidant",
+        "collagen_boosting"
+      ],
+      "concerns": [
+        "dullness",
+        "dark_spots",
+        "uneven_tone",
+        "fine_lines"
+      ],
+      "inci_names": [
+        "Ascorbic Acid",
+        "Ethyl Ascorbic Acid",
+        "Sodium Ascorbyl Phosphate",
+        "Magnesium Ascorbyl Phosphate",
+        "Ascorbyl Glucoside",
+        "Tetrahexyldecyl Ascorbate",
+        "3-O-Ethyl Ascorbic Acid",
+        "Ascorbyl Palmitate"
+      ],
+      "search_terms": [
+        "vitamin c",
+        "vit c",
+        "ascorbic acid",
+        "l-ascorbic acid"
+      ],
+      "notes": null
+    },
+    "ethyl_ascorbic_acid": {
+      "id": "ethyl_ascorbic_acid",
+      "label": "Ethyl Ascorbic Acid",
+      "icon": "🍊",
+      "category": "brightening",
+      "parent": "vitamin_c",
+      "related_ingredients": [
+        "vitamin_c",
+        "ascorbic_acid",
+        "magnesium_ascorbyl_phosphate"
+      ],
+      "benefits": [
+        "brightening",
+        "dark_spot_correcting",
+        "antioxidant"
+      ],
+      "concerns": [],
+      "inci_names": [],
+      "search_terms": [
+        "ethyl ascorbic acid",
+        "EAA",
+        "3-O-Ethyl Ascorbic Acid"
+      ],
+      "notes": "high"
+    },
+    "ascorbic_acid": {
+      "id": "ascorbic_acid",
+      "label": "L-Ascorbic Acid (Pure Vitamin C)",
+      "icon": "🍋",
+      "category": "brightening",
+      "parent": "vitamin_c",
+      "related_ingredients": [
+        "vitamin_c",
+        "ethyl_ascorbic_acid"
+      ],
+      "benefits": [
+        "brightening",
+        "collagen_boosting",
+        "antioxidant"
+      ],
+      "concerns": [],
+      "inci_names": [],
+      "search_terms": [
+        "l-ascorbic acid",
+        "pure vitamin c",
+        "ascorbic acid"
+      ],
+      "notes": "10-20%"
+    },
+    "sodium_ascorbyl_phosphate": {
+      "id": "sodium_ascorbyl_phosphate",
+      "label": "Sodium Ascorbyl Phosphate (SAP)",
+      "icon": "🍊",
+      "category": "brightening",
+      "parent": "vitamin_c",
+      "related_ingredients": [
+        "vitamin_c",
+        "magnesium_ascorbyl_phosphate"
+      ],
+      "benefits": [
+        "brightening",
+        "anti_acne",
+        "antioxidant"
+      ],
+      "concerns": [],
+      "inci_names": [],
+      "search_terms": [
+        "SAP",
+        "sodium ascorbyl phosphate"
+      ],
+      "notes": "high"
+    },
+    "magnesium_ascorbyl_phosphate": {
+      "id": "magnesium_ascorbyl_phosphate",
+      "label": "Magnesium Ascorbyl Phosphate (MAP)",
+      "icon": "🍊",
+      "category": "brightening",
+      "parent": "vitamin_c",
+      "related_ingredients": [
+        "vitamin_c",
+        "sodium_ascorbyl_phosphate"
+      ],
+      "benefits": [
+        "brightening",
+        "hydrating"
+      ],
+      "concerns": [],
+      "inci_names": [],
+      "search_terms": [
+        "MAP",
+        "magnesium ascorbyl phosphate"
+      ],
+      "notes": "high"
+    },
+    "ascorbyl_glucoside": {
+      "id": "ascorbyl_glucoside",
+      "label": "Ascorbyl Glucoside",
+      "icon": "🍊",
+      "category": "brightening",
+      "parent": "vitamin_c",
+      "related_ingredients": [
+        "vitamin_c"
+      ],
+      "benefits": [
+        "brightening",
+        "antioxidant"
+      ],
+      "concerns": [],
+      "inci_names": [],
+      "search_terms": [
+        "ascorbyl glucoside",
+        "AA2G"
+      ],
+      "notes": "high"
+    },
+    "tetrahexyldecyl_ascorbate": {
+      "id": "tetrahexyldecyl_ascorbate",
+      "label": "Tetrahexyldecyl Ascorbate",
+      "icon": "🍊",
+      "category": "brightening",
+      "parent": "vitamin_c",
+      "related_ingredients": [
+        "vitamin_c"
+      ],
+      "benefits": [
+        "brightening",
+        "anti_aging"
+      ],
+      "concerns": [],
+      "inci_names": [],
+      "search_terms": [
+        "tetrahexyldecyl ascorbate",
+        "THDA",
+        "vitamin c ester"
+      ],
+      "notes": "high"
+    },
+    "retinol": {
+      "id": "retinol",
+      "label": "Retinol",
+      "icon": "✨",
+      "category": "anti_aging",
+      "parent": null,
+      "related_ingredients": [
+        "retinal",
+        "retinaldehyde",
+        "retinyl_palmitate",
+        "retinoic_acid",
+        "hpr",
+        "granactive_retinoid"
+      ],
+      "benefits": [
+        "anti_aging",
+        "anti_wrinkle",
+        "cell_renewal",
+        "resurfacing",
+        "anti_acne"
+      ],
+      "concerns": [
+        "aging",
+        "fine_lines",
+        "wrinkles",
+        "acne",
+        "uneven_texture"
+      ],
+      "inci_names": [
+        "Retinol",
+        "Retinaldehyde",
+        "Retinyl Palmitate",
+        "Hydroxypinacolone Retinoate"
+      ],
+      "search_terms": [
+        "retinol",
+        "vitamin a",
+        "retinoid"
+      ],
+      "notes": null
+    },
+    "retinal": {
+      "id": "retinal",
+      "label": "Retinal (Retinaldehyde)",
+      "icon": "✨",
+      "category": "anti_aging",
+      "parent": "retinol",
+      "related_ingredients": [
+        "retinol",
+        "retinyl_palmitate"
+      ],
+      "benefits": [
+        "anti_aging",
+        "anti_wrinkle",
+        "anti_acne"
+      ],
+      "concerns": [],
+      "inci_names": [],
+      "search_terms": [
+        "retinal",
+        "retinaldehyde"
+      ],
+      "notes": null
+    },
+    "bakuchiol": {
+      "id": "bakuchiol",
+      "label": "Bakuchiol",
+      "icon": "🌿",
+      "category": "anti_aging",
+      "parent": null,
+      "related_ingredients": [
+        "retinol"
+      ],
+      "benefits": [
+        "anti_aging",
+        "anti_wrinkle",
+        "soothing"
+      ],
+      "concerns": [
+        "aging",
+        "fine_lines",
+        "wrinkles"
+      ],
+      "inci_names": [],
+      "search_terms": [
+        "bakuchiol",
+        "retinol alternative",
+        "natural retinol"
+      ],
+      "notes": "Natural retinol alternative"
+    },
+    "niacinamide": {
+      "id": "niacinamide",
+      "label": "Niacinamide",
+      "icon": "💊",
+      "category": "multi_benefit",
+      "parent": null,
+      "related_ingredients": [
+        "nicotinamide",
+        "vitamin_b3"
+      ],
+      "benefits": [
+        "brightening",
+        "pore_minimizing",
+        "oil_control",
+        "barrier_repair",
+        "anti_inflammatory"
+      ],
+      "concerns": [
+        "large_pores",
+        "oiliness",
+        "uneven_tone",
+        "dullness",
+        "acne"
+      ],
+      "inci_names": [
+        "Niacinamide",
+        "Nicotinamide"
+      ],
+      "search_terms": [
+        "niacinamide",
+        "vitamin b3",
+        "nicotinamide"
+      ],
+      "notes": "2-10%"
+    },
+    "hyaluronic_acid": {
+      "id": "hyaluronic_acid",
+      "label": "Hyaluronic Acid",
+      "icon": "💧",
+      "category": "hydration",
+      "parent": null,
+      "related_ingredients": [
+        "sodium_hyaluronate",
+        "low_molecular_ha",
+        "high_molecular_ha",
+        "polyglutamic_acid"
+      ],
+      "benefits": [
+        "hydrating",
+        "plumping",
+        "moisturizing"
+      ],
+      "concerns": [
+        "dryness",
+        "dehydration",
+        "fine_lines"
+      ],
+      "inci_names": [
+        "Hyaluronic Acid",
+        "Sodium Hyaluronate",
+        "Hydrolyzed Hyaluronic Acid"
+      ],
+      "search_terms": [
+        "hyaluronic acid",
+        "HA",
+        "sodium hyaluronate"
+      ],
+      "notes": null
+    },
+    "polyglutamic_acid": {
+      "id": "polyglutamic_acid",
+      "label": "Polyglutamic Acid (PGA)",
+      "icon": "💧",
+      "category": "hydration",
+      "parent": null,
+      "related_ingredients": [
+        "hyaluronic_acid"
+      ],
+      "benefits": [
+        "hydrating",
+        "plumping"
+      ],
+      "concerns": [],
+      "inci_names": [],
+      "search_terms": [
+        "polyglutamic acid",
+        "PGA"
+      ],
+      "notes": "4x more hydrating than HA"
+    },
+    "salicylic_acid": {
+      "id": "salicylic_acid",
+      "label": "Salicylic Acid (BHA)",
+      "icon": "🎯",
+      "category": "exfoliating",
+      "parent": null,
+      "related_ingredients": [
+        "willow_bark",
+        "betaine_salicylate"
+      ],
+      "benefits": [
+        "anti_acne",
+        "clarifying",
+        "pore_minimizing",
+        "exfoliating"
+      ],
+      "concerns": [
+        "acne",
+        "blackheads",
+        "whiteheads",
+        "large_pores",
+        "congestion"
+      ],
+      "inci_names": [
+        "Salicylic Acid",
+        "Beta Hydroxy Acid"
+      ],
+      "search_terms": [
+        "salicylic acid",
+        "BHA",
+        "beta hydroxy acid"
+      ],
+      "notes": "0.5-2%"
+    },
+    "glycolic_acid": {
+      "id": "glycolic_acid",
+      "label": "Glycolic Acid",
+      "icon": "✨",
+      "category": "exfoliating",
+      "parent": null,
+      "related_ingredients": [
+        "lactic_acid",
+        "mandelic_acid",
+        "aha"
+      ],
+      "benefits": [
+        "exfoliating",
+        "brightening",
+        "resurfacing",
+        "cell_renewal"
+      ],
+      "concerns": [
+        "dullness",
+        "rough_texture",
+        "uneven_tone",
+        "fine_lines"
+      ],
+      "inci_names": [
+        "Glycolic Acid",
+        "Alpha Hydroxy Acid"
+      ],
+      "search_terms": [
+        "glycolic acid",
+        "AHA",
+        "alpha hydroxy acid"
+      ],
+      "notes": "5-30%"
+    },
+    "lactic_acid": {
+      "id": "lactic_acid",
+      "label": "Lactic Acid",
+      "icon": "🥛",
+      "category": "exfoliating",
+      "parent": null,
+      "related_ingredients": [
+        "glycolic_acid",
+        "mandelic_acid"
+      ],
+      "benefits": [
+        "exfoliating",
+        "hydrating",
+        "brightening"
+      ],
+      "concerns": [
+        "dullness",
+        "rough_texture",
+        "dryness"
+      ],
+      "inci_names": [],
+      "search_terms": [
+        "lactic acid",
+        "milk acid"
+      ],
+      "notes": "Gentler than glycolic"
+    },
+    "mandelic_acid": {
+      "id": "mandelic_acid",
+      "label": "Mandelic Acid",
+      "icon": "🍑",
+      "category": "exfoliating",
+      "parent": null,
+      "related_ingredients": [
+        "glycolic_acid",
+        "lactic_acid"
+      ],
+      "benefits": [
+        "exfoliating",
+        "brightening",
+        "anti_acne"
+      ],
+      "concerns": [],
+      "inci_names": [],
+      "search_terms": [
+        "mandelic acid"
+      ],
+      "notes": "Gentlest AHA, good for sensitive skin"
+    },
+    "pha": {
+      "id": "pha",
+      "label": "PHA (Polyhydroxy Acids)",
+      "icon": "💎",
+      "category": "exfoliating",
+      "parent": null,
+      "related_ingredients": [
+        "gluconolactone",
+        "lactobionic_acid"
+      ],
+      "benefits": [
+        "exfoliating",
+        "hydrating",
+        "smoothening"
+      ],
+      "concerns": [],
+      "inci_names": [
+        "Gluconolactone",
+        "Lactobionic Acid"
+      ],
+      "search_terms": [
+        "PHA",
+        "polyhydroxy acid",
+        "gluconolactone"
+      ],
+      "notes": "Gentlest exfoliant, sensitive skin safe"
+    },
+    "alpha_arbutin": {
+      "id": "alpha_arbutin",
+      "label": "Alpha Arbutin",
+      "icon": "⚪",
+      "category": "brightening",
+      "parent": null,
+      "related_ingredients": [
+        "vitamin_c",
+        "kojic_acid",
+        "tranexamic_acid"
+      ],
+      "benefits": [
+        "brightening",
+        "dark_spot_correcting"
+      ],
+      "concerns": [
+        "dark_spots",
+        "uneven_tone",
+        "melasma"
+      ],
+      "inci_names": [],
+      "search_terms": [
+        "alpha arbutin",
+        "arbutin"
+      ],
+      "notes": "1-2%"
+    },
+    "kojic_acid": {
+      "id": "kojic_acid",
+      "label": "Kojic Acid",
+      "icon": "🍄",
+      "category": "brightening",
+      "parent": null,
+      "related_ingredients": [
+        "alpha_arbutin",
+        "vitamin_c"
+      ],
+      "benefits": [
+        "brightening",
+        "dark_spot_correcting",
+        "detan"
+      ],
+      "concerns": [
+        "dark_spots",
+        "tan",
+        "melasma"
+      ],
+      "inci_names": [],
+      "search_terms": [
+        "kojic acid",
+        "kojic dipalmitate"
+      ],
+      "notes": null
+    },
+    "tranexamic_acid": {
+      "id": "tranexamic_acid",
+      "label": "Tranexamic Acid",
+      "icon": "💊",
+      "category": "brightening",
+      "parent": null,
+      "related_ingredients": [
+        "alpha_arbutin",
+        "vitamin_c"
+      ],
+      "benefits": [
+        "dark_spot_correcting",
+        "brightening",
+        "redness_reducing"
+      ],
+      "concerns": [
+        "melasma",
+        "dark_spots",
+        "pih"
+      ],
+      "inci_names": [],
+      "search_terms": [
+        "tranexamic acid",
+        "TXA"
+      ],
+      "notes": "2-5%"
+    },
+    "azelaic_acid": {
+      "id": "azelaic_acid",
+      "label": "Azelaic Acid",
+      "icon": "🌾",
+      "category": "multi_benefit",
+      "parent": null,
+      "related_ingredients": [
+        "niacinamide"
+      ],
+      "benefits": [
+        "brightening",
+        "anti_acne",
+        "anti_inflammatory",
+        "redness_reducing"
+      ],
+      "concerns": [
+        "acne",
+        "rosacea",
+        "dark_spots",
+        "uneven_tone"
+      ],
+      "inci_names": [],
+      "search_terms": [
+        "azelaic acid"
+      ],
+      "notes": "10-20%"
+    },
+    "centella_asiatica": {
+      "id": "centella_asiatica",
+      "label": "Centella Asiatica (Cica)",
+      "icon": "🌿",
+      "category": "soothing",
+      "parent": null,
+      "related_ingredients": [
+        "madecassoside",
+        "asiaticoside"
+      ],
+      "benefits": [
+        "soothing",
+        "barrier_repair",
+        "anti_inflammatory",
+        "calming"
+      ],
+      "concerns": [
+        "sensitivity",
+        "irritation",
+        "redness",
+        "compromised_barrier"
+      ],
+      "inci_names": [
+        "Centella Asiatica Extract",
+        "Madecassoside",
+        "Asiaticoside"
+      ],
+      "search_terms": [
+        "centella",
+        "cica",
+        "tiger grass",
+        "gotu kola"
+      ],
+      "notes": null
+    },
+    "madecassoside": {
+      "id": "madecassoside",
+      "label": "Madecassoside",
+      "icon": "🌿",
+      "category": "soothing",
+      "parent": "centella_asiatica",
+      "related_ingredients": [
+        "centella_asiatica",
+        "asiaticoside"
+      ],
+      "benefits": [
+        "soothing",
+        "barrier_repair"
+      ],
+      "concerns": [],
+      "inci_names": [],
+      "search_terms": [
+        "madecassoside"
+      ],
+      "notes": null
+    },
+    "aloe_vera": {
+      "id": "aloe_vera",
+      "label": "Aloe Vera",
+      "icon": "🌵",
+      "category": "soothing",
+      "parent": null,
+      "related_ingredients": [
+        "centella_asiatica"
+      ],
+      "benefits": [
+        "soothing",
+        "hydrating",
+        "cooling"
+      ],
+      "concerns": [
+        "irritation",
+        "dryness"
+      ],
+      "inci_names": [
+        "Aloe Barbadensis Leaf Extract",
+        "Aloe Vera"
+      ],
+      "search_terms": [
+        "aloe vera",
+        "aloe"
+      ],
+      "notes": null
+    },
+    "ceramides": {
+      "id": "ceramides",
+      "label": "Ceramides",
+      "icon": "🧱",
+      "category": "barrier",
+      "parent": null,
+      "related_ingredients": [
+        "cholesterol",
+        "fatty_acids",
+        "phytosphingosine"
+      ],
+      "benefits": [
+        "barrier_repair",
+        "moisturizing",
+        "strengthening"
+      ],
+      "concerns": [
+        "compromised_barrier",
+        "dryness",
+        "sensitivity"
+      ],
+      "inci_names": [
+        "Ceramide NP",
+        "Ceramide AP",
+        "Ceramide EOP"
+      ],
+      "search_terms": [
+        "ceramides",
+        "ceramide"
+      ],
+      "notes": null
+    },
+    "squalane": {
+      "id": "squalane",
+      "label": "Squalane",
+      "icon": "💧",
+      "category": "moisturizing",
+      "parent": null,
+      "related_ingredients": [
+        "jojoba_oil",
+        "argan_oil"
+      ],
+      "benefits": [
+        "moisturizing",
+        "softening",
+        "barrier_repair"
+      ],
+      "concerns": [
+        "dryness"
+      ],
+      "inci_names": [],
+      "search_terms": [
+        "squalane",
+        "squalene"
+      ],
+      "notes": null
+    },
+    "peptides": {
+      "id": "peptides",
+      "label": "Peptides",
+      "icon": "🔬",
+      "category": "anti_aging",
+      "parent": null,
+      "related_ingredients": [
+        "matrixyl",
+        "argireline",
+        "copper_peptides"
+      ],
+      "benefits": [
+        "anti_aging",
+        "firming",
+        "collagen_boosting"
+      ],
+      "concerns": [
+        "aging",
+        "fine_lines",
+        "sagging"
+      ],
+      "inci_names": [
+        "Palmitoyl Tripeptide-1",
+        "Palmitoyl Tetrapeptide-7",
+        "Acetyl Hexapeptide-8"
+      ],
+      "search_terms": [
+        "peptides",
+        "peptide"
+      ],
+      "notes": null
+    },
+    "matrixyl": {
+      "id": "matrixyl",
+      "label": "Matrixyl",
+      "icon": "🔬",
+      "category": "anti_aging",
+      "parent": "peptides",
+      "related_ingredients": [
+        "peptides",
+        "argireline"
+      ],
+      "benefits": [
+        "anti_wrinkle",
+        "collagen_boosting"
+      ],
+      "concerns": [],
+      "inci_names": [
+        "Palmitoyl Tripeptide-1",
+        "Palmitoyl Tetrapeptide-7"
+      ],
+      "search_terms": [
+        "matrixyl",
+        "matrixyl 3000",
+        "matrixyl synthe 6"
+      ],
+      "notes": null
+    },
+    "argireline": {
+      "id": "argireline",
+      "label": "Argireline",
+      "icon": "🔬",
+      "category": "anti_aging",
+      "parent": "peptides",
+      "related_ingredients": [
+        "peptides",
+        "matrixyl"
+      ],
+      "benefits": [
+        "anti_wrinkle"
+      ],
+      "concerns": [],
+      "inci_names": [
+        "Acetyl Hexapeptide-8"
+      ],
+      "search_terms": [
+        "argireline",
+        "acetyl hexapeptide"
+      ],
+      "notes": "Botox-like peptide"
+    },
+    "copper_peptides": {
+      "id": "copper_peptides",
+      "label": "Copper Peptides",
+      "icon": "🔬",
+      "category": "anti_aging",
+      "parent": "peptides",
+      "related_ingredients": [
+        "peptides"
+      ],
+      "benefits": [
+        "anti_aging",
+        "collagen_boosting",
+        "barrier_repair"
+      ],
+      "concerns": [],
+      "inci_names": [
+        "Copper Tripeptide-1",
+        "GHK-Cu"
+      ],
+      "search_terms": [
+        "copper peptides",
+        "GHK-Cu"
+      ],
+      "notes": null
+    },
+    "benzoyl_peroxide": {
+      "id": "benzoyl_peroxide",
+      "label": "Benzoyl Peroxide",
+      "icon": "💊",
+      "category": "acne",
+      "parent": null,
+      "related_ingredients": [
+        "salicylic_acid"
+      ],
+      "benefits": [
+        "anti_acne",
+        "antibacterial"
+      ],
+      "concerns": [
+        "acne"
+      ],
+      "inci_names": [],
+      "search_terms": [
+        "benzoyl peroxide",
+        "BP"
+      ],
+      "notes": "2.5-10%"
+    },
+    "tea_tree": {
+      "id": "tea_tree",
+      "label": "Tea Tree Oil",
+      "icon": "🌿",
+      "category": "acne",
+      "parent": null,
+      "related_ingredients": [
+        "neem"
+      ],
+      "benefits": [
+        "anti_acne",
+        "antibacterial",
+        "clarifying"
+      ],
+      "concerns": [
+        "acne"
+      ],
+      "inci_names": [
+        "Melaleuca Alternifolia Leaf Oil"
+      ],
+      "search_terms": [
+        "tea tree",
+        "tea tree oil"
+      ],
+      "notes": null
+    },
+    "neem": {
+      "id": "neem",
+      "label": "Neem",
+      "icon": "🌿",
+      "category": "acne",
+      "parent": null,
+      "related_ingredients": [
+        "tea_tree"
+      ],
+      "benefits": [
+        "anti_acne",
+        "antibacterial",
+        "purifying"
+      ],
+      "concerns": [
+        "acne"
+      ],
+      "inci_names": [
+        "Azadirachta Indica Leaf Extract"
+      ],
+      "search_terms": [
+        "neem",
+        "neem extract"
+      ],
+      "notes": null
+    },
+    "sulfur": {
+      "id": "sulfur",
+      "label": "Sulfur",
+      "icon": "🟡",
+      "category": "acne",
+      "parent": null,
+      "related_ingredients": [
+        "salicylic_acid"
+      ],
+      "benefits": [
+        "anti_acne",
+        "oil_control"
+      ],
+      "concerns": [
+        "acne",
+        "oiliness"
+      ],
+      "inci_names": [],
+      "search_terms": [
+        "sulfur",
+        "sulphur"
+      ],
+      "notes": null
+    },
+    "zinc": {
+      "id": "zinc",
+      "label": "Zinc",
+      "icon": "⚪",
+      "category": "multi_benefit",
+      "parent": null,
+      "related_ingredients": [
+        "niacinamide"
+      ],
+      "benefits": [
+        "anti_acne",
+        "oil_control",
+        "anti_inflammatory",
+        "soothing"
+      ],
+      "concerns": [
+        "acne",
+        "oiliness",
+        "irritation"
+      ],
+      "inci_names": [
+        "Zinc PCA",
+        "Zinc Oxide",
+        "Zinc Gluconate"
+      ],
+      "search_terms": [
+        "zinc",
+        "zinc pca"
+      ],
+      "notes": null
+    },
+    "caffeine": {
+      "id": "caffeine",
+      "label": "Caffeine",
+      "icon": "☕",
+      "category": "depuffing",
+      "parent": null,
+      "related_ingredients": [
+        "green_tea"
+      ],
+      "benefits": [
+        "depuffing",
+        "dark_circle_correcting",
+        "firming"
+      ],
+      "concerns": [
+        "puffiness",
+        "dark_circles"
+      ],
+      "inci_names": [],
+      "search_terms": [
+        "caffeine"
+      ],
+      "notes": null
+    },
+    "green_tea": {
+      "id": "green_tea",
+      "label": "Green Tea",
+      "icon": "🍵",
+      "category": "antioxidant",
+      "parent": null,
+      "related_ingredients": [
+        "caffeine",
+        "egcg"
+      ],
+      "benefits": [
+        "antioxidant",
+        "soothing",
+        "anti_inflammatory",
+        "oil_control"
+      ],
+      "concerns": [
+        "oiliness",
+        "aging"
+      ],
+      "inci_names": [
+        "Camellia Sinensis Leaf Extract"
+      ],
+      "search_terms": [
+        "green tea",
+        "camellia sinensis"
+      ],
+      "notes": null
+    },
+    "licorice_extract": {
+      "id": "licorice_extract",
+      "label": "Licorice Extract",
+      "icon": "🌿",
+      "category": "brightening",
+      "parent": null,
+      "related_ingredients": [
+        "alpha_arbutin"
+      ],
+      "benefits": [
+        "brightening",
+        "soothing",
+        "redness_reducing"
+      ],
+      "concerns": [
+        "dark_spots",
+        "redness"
+      ],
+      "inci_names": [
+        "Glycyrrhiza Glabra Root Extract",
+        "Glabridin"
+      ],
+      "search_terms": [
+        "licorice",
+        "licorice root",
+        "glabridin"
+      ],
+      "notes": null
+    },
+    "kaolin": {
+      "id": "kaolin",
+      "label": "Kaolin Clay",
+      "icon": "🏺",
+      "category": "clarifying",
+      "parent": null,
+      "related_ingredients": [
+        "bentonite",
+        "charcoal"
+      ],
+      "benefits": [
+        "oil_control",
+        "clarifying",
+        "purifying"
+      ],
+      "concerns": [
+        "oiliness",
+        "blackheads"
+      ],
+      "inci_names": [],
+      "search_terms": [
+        "kaolin",
+        "kaolin clay",
+        "white clay"
+      ],
+      "notes": null
+    },
+    "bentonite": {
+      "id": "bentonite",
+      "label": "Bentonite Clay",
+      "icon": "🏺",
+      "category": "clarifying",
+      "parent": null,
+      "related_ingredients": [
+        "kaolin",
+        "charcoal"
+      ],
+      "benefits": [
+        "oil_control",
+        "purifying",
+        "pore_minimizing"
+      ],
+      "concerns": [
+        "oiliness",
+        "large_pores"
+      ],
+      "inci_names": [],
+      "search_terms": [
+        "bentonite",
+        "bentonite clay"
+      ],
+      "notes": null
+    },
+    "charcoal": {
+      "id": "charcoal",
+      "label": "Activated Charcoal",
+      "icon": "⬛",
+      "category": "clarifying",
+      "parent": null,
+      "related_ingredients": [
+        "kaolin",
+        "bentonite"
+      ],
+      "benefits": [
+        "purifying",
+        "clarifying",
+        "pollution_protection"
+      ],
+      "concerns": [
+        "congestion",
+        "blackheads"
+      ],
+      "inci_names": [],
+      "search_terms": [
+        "charcoal",
+        "activated charcoal"
+      ],
+      "notes": null
+    },
+    "turmeric": {
+      "id": "turmeric",
+      "label": "Turmeric",
+      "icon": "🟡",
+      "category": "brightening",
+      "parent": null,
+      "related_ingredients": [
+        "vitamin_c"
+      ],
+      "benefits": [
+        "brightening",
+        "anti_inflammatory"
+      ],
+      "concerns": [
+        "dullness",
+        "uneven_tone"
+      ],
+      "inci_names": [
+        "Curcuma Longa Root Extract"
+      ],
+      "search_terms": [
+        "turmeric",
+        "haldi",
+        "curcuma"
+      ],
+      "notes": null
+    },
+    "papaya_enzyme": {
+      "id": "papaya_enzyme",
+      "label": "Papaya Enzyme (Papain)",
+      "icon": "🧡",
+      "category": "exfoliating",
+      "parent": null,
+      "related_ingredients": [
+        "pineapple_enzyme"
+      ],
+      "benefits": [
+        "exfoliating",
+        "brightening",
+        "detan"
+      ],
+      "concerns": [
+        "dullness",
+        "tan",
+        "rough_texture"
+      ],
+      "inci_names": [
+        "Papain",
+        "Carica Papaya Fruit Extract"
+      ],
+      "search_terms": [
+        "papaya enzyme",
+        "papain",
+        "papaya extract"
+      ],
+      "notes": null
+    },
+    "mulberry": {
+      "id": "mulberry",
+      "label": "Mulberry Extract",
+      "icon": "🫐",
+      "category": "brightening",
+      "parent": null,
+      "related_ingredients": [
+        "licorice_extract",
+        "alpha_arbutin"
+      ],
+      "benefits": [
+        "brightening",
+        "dark_spot_correcting"
+      ],
+      "concerns": [
+        "dark_spots",
+        "uneven_tone"
+      ],
+      "inci_names": [],
+      "search_terms": [
+        "mulberry",
+        "mulberry extract"
+      ],
+      "notes": null
+    }
+  },
+  "hair_ingredients": {
+    "biotin": {
+      "id": "biotin",
+      "label": "Biotin (Vitamin B7)",
+      "icon": "💊",
+      "category": "hair_growth",
+      "related_ingredients": [
+        "caffeine",
+        "keratin"
+      ],
+      "benefits": [
+        "hair_fall_control",
+        "strengthening_hair",
+        "thickening"
+      ],
+      "concerns": [
+        "hair_fall",
+        "weak_hair",
+        "thin_hair"
+      ],
+      "inci_names": [
+        "Biotin",
+        "Vitamin B7",
+        "Vitamin H"
+      ],
+      "search_terms": [
+        "biotin",
+        "vitamin b7",
+        "vitamin h"
+      ],
+      "india_priority": null,
+      "notes": null
+    },
+    "caffeine": {
+      "id": "caffeine",
+      "label": "Caffeine",
+      "icon": "☕",
+      "category": "hair_growth",
+      "related_ingredients": [
+        "biotin",
+        "minoxidil"
+      ],
+      "benefits": [
+        "hair_fall_control",
+        "hair_growth",
+        "root_strengthening"
+      ],
+      "concerns": [
+        "hair_fall",
+        "thinning_hair"
+      ],
+      "inci_names": [],
+      "search_terms": [
+        "caffeine",
+        "caffeine hair"
+      ],
+      "india_priority": null,
+      "notes": null
+    },
+    "minoxidil": {
+      "id": "minoxidil",
+      "label": "Minoxidil",
+      "icon": "💊",
+      "category": "hair_growth",
+      "related_ingredients": [
+        "caffeine",
+        "redensyl"
+      ],
+      "benefits": [
+        "hair_growth"
+      ],
+      "concerns": [
+        "hair_fall",
+        "thinning_hair",
+        "receding_hairline"
+      ],
+      "inci_names": [],
+      "search_terms": [
+        "minoxidil",
+        "rogaine"
+      ],
+      "india_priority": null,
+      "notes": "FDA-approved for hair regrowth"
+    },
+    "redensyl": {
+      "id": "redensyl",
+      "label": "Redensyl",
+      "icon": "🧬",
+      "category": "hair_growth",
+      "related_ingredients": [
+        "procapil",
+        "minoxidil"
+      ],
+      "benefits": [
+        "hair_growth",
+        "hair_fall_control"
+      ],
+      "concerns": [
+        "hair_fall",
+        "thinning_hair"
+      ],
+      "inci_names": [],
+      "search_terms": [
+        "redensyl"
+      ],
+      "india_priority": null,
+      "notes": null
+    },
+    "procapil": {
+      "id": "procapil",
+      "label": "Procapil",
+      "icon": "🧬",
+      "category": "hair_growth",
+      "related_ingredients": [
+        "redensyl",
+        "minoxidil"
+      ],
+      "benefits": [
+        "hair_fall_control",
+        "root_strengthening"
+      ],
+      "concerns": [
+        "hair_fall",
+        "weak_roots"
+      ],
+      "inci_names": [],
+      "search_terms": [
+        "procapil"
+      ],
+      "india_priority": null,
+      "notes": null
+    },
+    "keratin": {
+      "id": "keratin",
+      "label": "Keratin",
+      "icon": "💪",
+      "category": "strengthening",
+      "related_ingredients": [
+        "protein",
+        "amino_acids",
+        "biotin"
+      ],
+      "benefits": [
+        "strengthening_hair",
+        "repair",
+        "smoothing",
+        "frizz_control"
+      ],
+      "concerns": [
+        "damage",
+        "breakage",
+        "frizz"
+      ],
+      "inci_names": [],
+      "search_terms": [
+        "keratin",
+        "keratin treatment",
+        "keratin protein"
+      ],
+      "india_priority": null,
+      "notes": null
+    },
+    "collagen": {
+      "id": "collagen",
+      "label": "Collagen",
+      "icon": "🔬",
+      "category": "strengthening",
+      "related_ingredients": [
+        "keratin",
+        "protein"
+      ],
+      "benefits": [
+        "strengthening_hair",
+        "repair"
+      ],
+      "concerns": [
+        "damage",
+        "weak_hair"
+      ],
+      "inci_names": [],
+      "search_terms": [
+        "collagen",
+        "marine collagen"
+      ],
+      "india_priority": null,
+      "notes": null
+    },
+    "amino_acids": {
+      "id": "amino_acids",
+      "label": "Amino Acids",
+      "icon": "🔬",
+      "category": "strengthening",
+      "related_ingredients": [
+        "keratin",
+        "protein"
+      ],
+      "benefits": [
+        "repair",
+        "strengthening_hair"
+      ],
+      "concerns": [
+        "damage",
+        "breakage"
+      ],
+      "inci_names": [],
+      "search_terms": [
+        "amino acids",
+        "protein"
+      ],
+      "india_priority": null,
+      "notes": null
+    },
+    "argan_oil": {
+      "id": "argan_oil",
+      "label": "Argan Oil",
+      "icon": "🫒",
+      "category": "moisturizing",
+      "related_ingredients": [
+        "coconut_oil",
+        "jojoba_oil",
+        "marula_oil"
+      ],
+      "benefits": [
+        "moisturizing_hair",
+        "smoothing",
+        "shine_enhancing",
+        "frizz_control"
+      ],
+      "concerns": [
+        "dry_hair",
+        "frizz",
+        "dull_hair"
+      ],
+      "inci_names": [
+        "Argania Spinosa Kernel Oil"
+      ],
+      "search_terms": [
+        "argan oil",
+        "moroccan oil"
+      ],
+      "india_priority": null,
+      "notes": null
+    },
+    "coconut_oil": {
+      "id": "coconut_oil",
+      "label": "Coconut Oil",
+      "icon": "🥥",
+      "category": "moisturizing",
+      "related_ingredients": [
+        "argan_oil",
+        "olive_oil"
+      ],
+      "benefits": [
+        "moisturizing_hair",
+        "nourishing_hair",
+        "conditioning"
+      ],
+      "concerns": [
+        "dry_hair",
+        "damage"
+      ],
+      "inci_names": [
+        "Cocos Nucifera Oil"
+      ],
+      "search_terms": [
+        "coconut oil",
+        "nariyal tel"
+      ],
+      "india_priority": "high",
+      "notes": null
+    },
+    "castor_oil": {
+      "id": "castor_oil",
+      "label": "Castor Oil",
+      "icon": "🫒",
+      "category": "hair_growth",
+      "related_ingredients": [
+        "coconut_oil",
+        "onion_oil"
+      ],
+      "benefits": [
+        "hair_growth",
+        "hair_fall_control",
+        "moisturizing_hair"
+      ],
+      "concerns": [
+        "hair_fall",
+        "thinning_hair",
+        "dry_hair"
+      ],
+      "inci_names": [
+        "Ricinus Communis Seed Oil"
+      ],
+      "search_terms": [
+        "castor oil",
+        "arandi oil"
+      ],
+      "india_priority": "high",
+      "notes": null
+    },
+    "onion_oil": {
+      "id": "onion_oil",
+      "label": "Onion Oil/Extract",
+      "icon": "🧅",
+      "category": "hair_growth",
+      "related_ingredients": [
+        "castor_oil",
+        "bhringraj"
+      ],
+      "benefits": [
+        "hair_fall_control",
+        "hair_growth",
+        "scalp_health"
+      ],
+      "concerns": [
+        "hair_fall",
+        "thinning_hair"
+      ],
+      "inci_names": [
+        "Allium Cepa Bulb Extract"
+      ],
+      "search_terms": [
+        "onion oil",
+        "onion extract",
+        "pyaz"
+      ],
+      "india_priority": "high",
+      "notes": null
+    },
+    "bhringraj": {
+      "id": "bhringraj",
+      "label": "Bhringraj",
+      "icon": "🌿",
+      "category": "hair_growth",
+      "related_ingredients": [
+        "amla",
+        "onion_oil"
+      ],
+      "benefits": [
+        "hair_fall_control",
+        "hair_growth",
+        "scalp_health"
+      ],
+      "concerns": [
+        "hair_fall",
+        "grey_hair",
+        "dandruff"
+      ],
+      "inci_names": [
+        "Eclipta Prostrata Extract"
+      ],
+      "search_terms": [
+        "bhringraj",
+        "bhringaraj",
+        "false daisy"
+      ],
+      "india_priority": "high",
+      "notes": null
+    },
+    "amla": {
+      "id": "amla",
+      "label": "Amla (Indian Gooseberry)",
+      "icon": "🫒",
+      "category": "hair_growth",
+      "related_ingredients": [
+        "bhringraj",
+        "shikakai"
+      ],
+      "benefits": [
+        "hair_fall_control",
+        "strengthening_hair",
+        "scalp_health"
+      ],
+      "concerns": [
+        "hair_fall",
+        "grey_hair",
+        "dandruff"
+      ],
+      "inci_names": [
+        "Emblica Officinalis Fruit Extract",
+        "Phyllanthus Emblica"
+      ],
+      "search_terms": [
+        "amla",
+        "indian gooseberry",
+        "amalaki"
+      ],
+      "india_priority": "high",
+      "notes": null
+    },
+    "shikakai": {
+      "id": "shikakai",
+      "label": "Shikakai",
+      "icon": "🌿",
+      "category": "cleansing",
+      "related_ingredients": [
+        "amla",
+        "reetha"
+      ],
+      "benefits": [
+        "clarifying_hair",
+        "conditioning",
+        "scalp_health"
+      ],
+      "concerns": [
+        "dandruff",
+        "dry_scalp"
+      ],
+      "inci_names": [
+        "Acacia Concinna Fruit Extract"
+      ],
+      "search_terms": [
+        "shikakai",
+        "acacia concinna"
+      ],
+      "india_priority": "high",
+      "notes": null
+    },
+    "reetha": {
+      "id": "reetha",
+      "label": "Reetha (Soapnut)",
+      "icon": "🌿",
+      "category": "cleansing",
+      "related_ingredients": [
+        "shikakai",
+        "amla"
+      ],
+      "benefits": [
+        "clarifying_hair",
+        "scalp_purifying"
+      ],
+      "concerns": [
+        "scalp_buildup",
+        "oily_scalp"
+      ],
+      "inci_names": [
+        "Sapindus Mukorossi Fruit Extract"
+      ],
+      "search_terms": [
+        "reetha",
+        "soapnut",
+        "ritha"
+      ],
+      "india_priority": "high",
+      "notes": null
+    },
+    "shea_butter": {
+      "id": "shea_butter",
+      "label": "Shea Butter",
+      "icon": "🧈",
+      "category": "moisturizing",
+      "related_ingredients": [
+        "argan_oil",
+        "coconut_oil"
+      ],
+      "benefits": [
+        "moisturizing_hair",
+        "softening",
+        "frizz_control"
+      ],
+      "concerns": [
+        "dry_hair",
+        "frizz",
+        "rough_hair"
+      ],
+      "inci_names": [
+        "Butyrospermum Parkii Butter"
+      ],
+      "search_terms": [
+        "shea butter"
+      ],
+      "india_priority": null,
+      "notes": null
+    },
+    "silicones": {
+      "id": "silicones",
+      "label": "Silicones",
+      "icon": "✨",
+      "category": "smoothing",
+      "related_ingredients": [
+        "dimethicone",
+        "cyclomethicone"
+      ],
+      "benefits": [
+        "smoothing",
+        "frizz_control",
+        "shine_enhancing",
+        "heat_protection"
+      ],
+      "concerns": [
+        "frizz",
+        "dull_hair"
+      ],
+      "inci_names": [
+        "Dimethicone",
+        "Cyclomethicone",
+        "Cyclopentasiloxane",
+        "Amodimethicone"
+      ],
+      "search_terms": [
+        "silicone",
+        "dimethicone"
+      ],
+      "india_priority": null,
+      "notes": null
+    },
+    "tea_tree_oil": {
+      "id": "tea_tree_oil",
+      "label": "Tea Tree Oil",
+      "icon": "🌿",
+      "category": "scalp",
+      "related_ingredients": [
+        "peppermint_oil"
+      ],
+      "benefits": [
+        "anti_dandruff",
+        "scalp_purifying",
+        "scalp_soothing"
+      ],
+      "concerns": [
+        "dandruff",
+        "itchy_scalp",
+        "oily_scalp"
+      ],
+      "inci_names": [
+        "Melaleuca Alternifolia Leaf Oil"
+      ],
+      "search_terms": [
+        "tea tree",
+        "tea tree oil"
+      ],
+      "india_priority": null,
+      "notes": null
+    },
+    "zinc_pyrithione": {
+      "id": "zinc_pyrithione",
+      "label": "Zinc Pyrithione",
+      "icon": "💊",
+      "category": "anti_dandruff",
+      "related_ingredients": [
+        "ketoconazole",
+        "selenium_sulfide"
+      ],
+      "benefits": [
+        "anti_dandruff",
+        "scalp_health"
+      ],
+      "concerns": [
+        "dandruff",
+        "flaky_scalp"
+      ],
+      "inci_names": [
+        "Zinc Pyrithione",
+        "Pyrithione Zinc"
+      ],
+      "search_terms": [
+        "zinc pyrithione",
+        "ZPT",
+        "head and shoulders"
+      ],
+      "india_priority": null,
+      "notes": null
+    },
+    "ketoconazole": {
+      "id": "ketoconazole",
+      "label": "Ketoconazole",
+      "icon": "💊",
+      "category": "anti_dandruff",
+      "related_ingredients": [
+        "zinc_pyrithione"
+      ],
+      "benefits": [
+        "anti_dandruff"
+      ],
+      "concerns": [
+        "dandruff",
+        "seborrheic_dermatitis"
+      ],
+      "inci_names": [],
+      "search_terms": [
+        "ketoconazole",
+        "nizoral"
+      ],
+      "india_priority": null,
+      "notes": "Prescription strength available"
+    },
+    "rosemary": {
+      "id": "rosemary",
+      "label": "Rosemary Oil",
+      "icon": "🌿",
+      "category": "hair_growth",
+      "related_ingredients": [
+        "peppermint_oil",
+        "caffeine"
+      ],
+      "benefits": [
+        "hair_growth",
+        "scalp_health"
+      ],
+      "concerns": [
+        "hair_fall",
+        "thinning_hair"
+      ],
+      "inci_names": [
+        "Rosmarinus Officinalis Leaf Oil"
+      ],
+      "search_terms": [
+        "rosemary",
+        "rosemary oil",
+        "rosemary water"
+      ],
+      "india_priority": null,
+      "notes": null
+    },
+    "peppermint_oil": {
+      "id": "peppermint_oil",
+      "label": "Peppermint Oil",
+      "icon": "🌿",
+      "category": "scalp",
+      "related_ingredients": [
+        "tea_tree_oil",
+        "rosemary"
+      ],
+      "benefits": [
+        "scalp_soothing",
+        "hair_growth",
+        "cooling"
+      ],
+      "concerns": [
+        "itchy_scalp",
+        "hair_fall"
+      ],
+      "inci_names": [
+        "Mentha Piperita Oil"
+      ],
+      "search_terms": [
+        "peppermint",
+        "peppermint oil",
+        "mint oil"
+      ],
+      "india_priority": null,
+      "notes": null
+    },
+    "panthenol": {
+      "id": "panthenol",
+      "label": "Panthenol (Pro-Vitamin B5)",
+      "icon": "💧",
+      "category": "moisturizing",
+      "related_ingredients": [
+        "glycerin",
+        "hyaluronic_acid"
+      ],
+      "benefits": [
+        "moisturizing_hair",
+        "softening",
+        "volumizing"
+      ],
+      "concerns": [
+        "dry_hair",
+        "flat_hair"
+      ],
+      "inci_names": [
+        "Panthenol",
+        "D-Panthenol",
+        "Dexpanthenol"
+      ],
+      "search_terms": [
+        "panthenol",
+        "pro-vitamin b5",
+        "vitamin b5"
+      ],
+      "india_priority": null,
+      "notes": null
+    }
+  },
+  "price_tiers": {
+    "mass_market": {
+      "id": "mass_market",
+      "label": "Mass Market",
+      "icon": "💚",
+      "color": "#10B981",
+      "min_price": 0,
+      "max_price": 299,
+      "display": "< ₹300",
+      "typical_channels": "Chemist, Supermarket, General Trade, E-commerce",
+      "typical_brands": "Himalaya, Pond's, Lakme, Nivea, Garnier, Clean & Clear, Dabur, Parachute",
+      "research_notes": "Compare with Masstige for upgrade opportunity; high volume, low margin"
+    },
+    "masstige": {
+      "id": "masstige",
+      "label": "Masstige",
+      "icon": "💙",
+      "color": "#3B82F6",
+      "min_price": 300,
+      "max_price": 699,
+      "display": "₹300 - ₹700",
+      "typical_channels": "Modern Trade, E-commerce, Beauty Stores",
+      "typical_brands": "Plum, Mamaearth, The Derma Co, Dot & Key, Minimalist, mCaffeine, WOW, St. Botanica, Re'equil, Pilgrim",
+      "research_notes": "Largest D2C segment in India; quality at accessible price points"
+    },
+    "premium": {
+      "id": "premium",
+      "label": "Premium",
+      "icon": "💜",
+      "color": "#8B5CF6",
+      "min_price": 700,
+      "max_price": 1499,
+      "display": "₹700 - ₹1,500",
+      "typical_channels": "E-commerce, Specialty Stores, Department Stores",
+      "typical_brands": "Kama Ayurveda, Forest Essentials, Innisfree, The Body Shop, Biotique, Juicy Chemistry, Earth Rhythm, Deconstruct",
+      "research_notes": "Growing segment - quality-conscious consumers; ingredient-led positioning"
+    },
+    "prestige": {
+      "id": "prestige",
+      "label": "Prestige",
+      "icon": "🧡",
+      "color": "#F59E0B",
+      "min_price": 1500,
+      "max_price": null,
+      "display": "> ₹1,500",
+      "typical_channels": "Department Stores, Brand Boutiques, Luxury E-commerce, Sephora, Nykaa Luxe",
+      "typical_brands": "Clinique, Estee Lauder, SK-II, La Mer, Drunk Elephant, The Ordinary, Paula's Choice, Sunday Riley",
+      "research_notes": "Aspirational segment - imported/luxury positioning; efficacy-focused"
+    }
+  },
+  "market_positioning": {
+    "natural": {
+      "id": "natural",
+      "label": "Natural",
+      "description": "Plant-based, nature-derived ingredients focus",
+      "common_claims": "Natural ingredients, Plant-powered, Nature-inspired",
+      "target_consumer": "Health-conscious, eco-aware consumers",
+      "example_brands": "Plum, Mamaearth, Juicy Chemistry"
+    },
+    "organic": {
+      "id": "organic",
+      "label": "Organic",
+      "description": "Certified organic ingredients, farming practices",
+      "common_claims": "Certified Organic, USDA Organic, Ecocert",
+      "target_consumer": "Premium health-conscious, sustainability-focused",
+      "example_brands": "Organic Harvest, SoulTree"
+    },
+    "clinical": {
+      "id": "clinical",
+      "label": "Clinical",
+      "description": "Science-backed, dermatologist-developed",
+      "common_claims": "Clinically proven, Dermatologist tested, Lab-formulated",
+      "target_consumer": "Results-driven, ingredient-savvy consumers",
+      "example_brands": "The Derma Co, Minimalist, Paula's Choice"
+    },
+    "ayurvedic": {
+      "id": "ayurvedic",
+      "label": "Ayurvedic",
+      "description": "Traditional Indian medicine principles",
+      "common_claims": "Ancient wisdom, Ayurvedic formulation, Traditional herbs",
+      "target_consumer": "Heritage-conscious, holistic wellness seekers",
+      "example_brands": "Kama Ayurveda, Forest Essentials, Biotique"
+    },
+    "korean": {
+      "id": "korean",
+      "label": "Korean (K-Beauty)",
+      "description": "Korean skincare philosophy and innovation",
+      "common_claims": "K-Beauty, Glass skin, 10-step routine",
+      "target_consumer": "Trend-aware, skincare enthusiasts",
+      "example_brands": "Innisfree, Laneige, COSRX"
+    },
+    "japanese": {
+      "id": "japanese",
+      "label": "Japanese (J-Beauty)",
+      "description": "Japanese minimalist skincare approach",
+      "common_claims": "J-Beauty, Mochi skin, Double cleanse",
+      "target_consumer": "Minimalist, quality-focused consumers",
+      "example_brands": "SK-II, Shiseido, Hada Labo"
+    },
+    "french": {
+      "id": "french",
+      "label": "French Pharmacy",
+      "description": "French pharmacy heritage, elegant formulations",
+      "common_claims": "French pharmacy, Parisian beauty, Eau thermale",
+      "target_consumer": "Sophisticated, luxury-oriented consumers",
+      "example_brands": "La Roche-Posay, Vichy, Bioderma"
+    },
+    "sustainable": {
+      "id": "sustainable",
+      "label": "Sustainable",
+      "description": "Eco-friendly packaging, ethical sourcing",
+      "common_claims": "Sustainable, Eco-friendly, Zero waste",
+      "target_consumer": "Environmentally conscious consumers",
+      "example_brands": "Plum, Earth Rhythm, Bare Necessities"
+    },
+    "vegan": {
+      "id": "vegan",
+      "label": "Vegan",
+      "description": "No animal-derived ingredients",
+      "common_claims": "100% Vegan, Plant-based, No animal ingredients",
+      "target_consumer": "Ethical consumers, plant-based lifestyle",
+      "example_brands": "Plum, The Body Shop, Pacifica"
+    },
+    "cruelty_free": {
+      "id": "cruelty_free",
+      "label": "Cruelty-Free",
+      "description": "No animal testing",
+      "common_claims": "Cruelty-free, Leaping Bunny, PETA certified",
+      "target_consumer": "Ethical consumers, animal welfare conscious",
+      "example_brands": "The Body Shop, Plum, Sugar Cosmetics"
+    },
+    "fragrance_free": {
+      "id": "fragrance_free",
+      "label": "Fragrance-Free",
+      "description": "No added fragrances, sensitive skin focus",
+      "common_claims": "Fragrance-free, Unscented, Sensitive skin safe",
+      "target_consumer": "Sensitive skin, allergy-prone consumers",
+      "example_brands": "Cetaphil, CeraVe, Vanicream"
+    },
+    "dermat_tested": {
+      "id": "dermat_tested",
+      "label": "Dermat-Tested",
+      "description": "Dermatologist tested and approved",
+      "common_claims": "Dermatologist tested, Skin-safe, Hypoallergenic",
+      "target_consumer": "Safety-conscious, sensitive skin consumers",
+      "example_brands": "Cetaphil, CeraVe, La Roche-Posay"
+    },
+    "salon_professional": {
+      "id": "salon_professional",
+      "label": "Salon Professional",
+      "description": "Professional-grade, salon quality",
+      "common_claims": "Salon quality, Professional grade, Stylist recommended",
+      "target_consumer": "Quality-seeking, salon-going consumers",
+      "example_brands": "L'Oreal Professional, Matrix, Schwarzkopf"
+    },
+    "pharmacy": {
+      "id": "pharmacy",
+      "label": "Pharmacy",
+      "description": "Pharmacy-distributed, medicinal approach",
+      "common_claims": "Pharmacy brand, Medicinal, Doctor recommended",
+      "target_consumer": "Health-focused, efficacy-driven consumers",
+      "example_brands": "Bioderma, La Roche-Posay, Vichy"
+    },
+    "luxury": {
+      "id": "luxury",
+      "label": "Luxury",
+      "description": "Premium experience, exclusive positioning",
+      "common_claims": "Luxury, Premium, Exclusive",
+      "target_consumer": "Affluent, prestige-seeking consumers",
+      "example_brands": "La Mer, SK-II, Estee Lauder"
+    },
+    "clean_beauty": {
+      "id": "clean_beauty",
+      "label": "Clean Beauty",
+      "description": "Free from controversial ingredients",
+      "common_claims": "Clean, Non-toxic, Free from parabens/sulfates",
+      "target_consumer": "Ingredient-conscious, health-aware consumers",
+      "example_brands": "Drunk Elephant, Beautycounter, RMS Beauty"
+    },
+    "indie": {
+      "id": "indie",
+      "label": "Indie",
+      "description": "Independent brand, founder-led story",
+      "common_claims": "Indie brand, Small batch, Founder story",
+      "target_consumer": "Discovery-oriented, support small business",
+      "example_brands": "Minimalist, Dot & Key, Disguise Cosmetics"
+    }
+  }
+}

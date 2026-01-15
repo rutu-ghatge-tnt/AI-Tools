@@ -11,6 +11,26 @@ Key Distinction:
 """
 
 from typing import Optional, List, Dict, Any
+import json
+from pathlib import Path
+
+# Load enhanced taxonomy data from Excel workbook
+ENHANCED_TAXONOMY_PATH = Path(__file__).parent.parent.parent.parent / "enhanced_formulynx_taxonomy.json"
+
+def load_enhanced_taxonomy():
+    """Load enhanced taxonomy data from JSON file"""
+    try:
+        with open(ENHANCED_TAXONOMY_PATH, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        print(f"Warning: Enhanced taxonomy file not found at {ENHANCED_TAXONOMY_PATH}")
+        return {}
+    except Exception as e:
+        print(f"Error loading enhanced taxonomy: {e}")
+        return {}
+
+# Load enhanced taxonomy data
+ENHANCED_FORMULYNX_TAXONOMY = load_enhanced_taxonomy()
 
 FORMULYNX_CANONICAL_TAXONOMY = {
     # ═══════════════════════════════════════════════════════════════════════════
@@ -774,3 +794,403 @@ def validate_and_filter_keywords(keywords_dict: Dict[str, Any]) -> Dict[str, Any
     validated["subcategory"] = keywords_dict.get("subcategory")
     
     return validated
+
+
+# ============================================================================
+# ENHANCED TAXONOMY RELATIONSHIP FUNCTIONS (from Excel workbook)
+# ============================================================================
+
+def get_related_concerns(concern_id: str) -> List[str]:
+    """Get related concerns for a given concern ID"""
+    if not ENHANCED_FORMULYNX_TAXONOMY:
+        return []
+    
+    concern_data = ENHANCED_FORMULYNX_TAXONOMY.get("skin_concerns", {}).get(concern_id)
+    if concern_data:
+        return concern_data.get("related_concerns", [])
+    
+    # Try hair concerns
+    concern_data = ENHANCED_FORMULYNX_TAXONOMY.get("hair_concerns", {}).get(concern_id)
+    if concern_data:
+        return concern_data.get("related_concerns", [])
+    
+    return []
+
+
+def get_benefits_for_concern(concern_id: str) -> List[str]:
+    """Get benefits that address a given concern"""
+    if not ENHANCED_FORMULYNX_TAXONOMY:
+        return []
+    
+    concern_data = ENHANCED_FORMULYNX_TAXONOMY.get("skin_concerns", {}).get(concern_id)
+    if concern_data:
+        return concern_data.get("addressed_by_benefits", [])
+    
+    # Try hair concerns
+    concern_data = ENHANCED_FORMULYNX_TAXONOMY.get("hair_concerns", {}).get(concern_id)
+    if concern_data:
+        return concern_data.get("addressed_by_benefits", [])
+    
+    return []
+
+
+def get_concerns_for_benefit(benefit_id: str) -> List[str]:
+    """Get concerns addressed by a given benefit"""
+    if not ENHANCED_FORMULYNX_TAXONOMY:
+        return []
+    
+    benefit_data = ENHANCED_FORMULYNX_TAXONOMY.get("skin_benefits", {}).get(benefit_id)
+    if benefit_data:
+        return benefit_data.get("addresses_concerns", [])
+    
+    # Try hair benefits
+    benefit_data = ENHANCED_FORMULYNX_TAXONOMY.get("hair_benefits", {}).get(benefit_id)
+    if benefit_data:
+        return benefit_data.get("addresses_concerns", [])
+    
+    return []
+
+
+def get_related_benefits(benefit_id: str) -> List[str]:
+    """Get related benefits for a given benefit"""
+    if not ENHANCED_FORMULYNX_TAXONOMY:
+        return []
+    
+    benefit_data = ENHANCED_FORMULYNX_TAXONOMY.get("skin_benefits", {}).get(benefit_id)
+    if benefit_data:
+        return benefit_data.get("related_benefits", [])
+    
+    # Try hair benefits
+    benefit_data = ENHANCED_FORMULYNX_TAXONOMY.get("hair_benefits", {}).get(benefit_id)
+    if benefit_data:
+        return benefit_data.get("related_benefits", [])
+    
+    return []
+
+
+def get_ingredients_for_concern(concern_id: str) -> List[str]:
+    """Get ingredients that address a given concern"""
+    if not ENHANCED_FORMULYNX_TAXONOMY:
+        return []
+    
+    ingredients = []
+    
+    # Check skin ingredients
+    skin_ingredients = ENHANCED_FORMULYNX_TAXONOMY.get("skin_ingredients", {})
+    for ingredient_id, ingredient_data in skin_ingredients.items():
+        if concern_id in ingredient_data.get("concerns", []):
+            ingredients.append(ingredient_id)
+    
+    # Check hair ingredients
+    hair_ingredients = ENHANCED_FORMULYNX_TAXONOMY.get("hair_ingredients", {})
+    for ingredient_id, ingredient_data in hair_ingredients.items():
+        if concern_id in ingredient_data.get("concerns", []):
+            ingredients.append(ingredient_id)
+    
+    return list(set(ingredients))  # Remove duplicates
+
+
+def get_ingredients_for_benefit(benefit_id: str) -> List[str]:
+    """Get ingredients that provide a given benefit"""
+    if not ENHANCED_FORMULYNX_TAXONOMY:
+        return []
+    
+    ingredients = []
+    
+    # Check skin ingredients
+    skin_ingredients = ENHANCED_FORMULYNX_TAXONOMY.get("skin_ingredients", {})
+    for ingredient_id, ingredient_data in skin_ingredients.items():
+        if benefit_id in ingredient_data.get("benefits", []):
+            ingredients.append(ingredient_id)
+    
+    # Check hair ingredients
+    hair_ingredients = ENHANCED_FORMULYNX_TAXONOMY.get("hair_ingredients", {})
+    for ingredient_id, ingredient_data in hair_ingredients.items():
+        if benefit_id in ingredient_data.get("benefits", []):
+            ingredients.append(ingredient_id)
+    
+    return list(set(ingredients))  # Remove duplicates
+
+
+def get_products_for_concern(concern_id: str) -> List[str]:
+    """Get product types that address a given concern"""
+    if not ENHANCED_FORMULYNX_TAXONOMY:
+        return []
+    
+    # Get benefits that address this concern
+    addressing_benefits = get_benefits_for_concern(concern_id)
+    
+    # Map benefits to product types using existing taxonomy
+    products = []
+    for benefit_id in addressing_benefits:
+        # This would need mapping from benefits to product types
+        # For now, return common product types for concerns
+        if concern_id in ["acne", "oiliness", "congestion"]:
+            products.extend(["cleanser", "toner", "serum", "moisturizer"])
+        elif concern_id in ["aging", "wrinkles", "fine_lines"]:
+            products.extend(["serum", "moisturizer", "eye_cream", "night_cream"])
+        elif concern_id in ["dryness", "dehydration"]:
+            products.extend(["moisturizer", "serum", "face_oil", "mask"])
+        elif concern_id in ["dark_spots", "uneven_tone", "pigmentation"]:
+            products.extend(["serum", "moisturizer", "spot_treatment", "sunscreen"])
+    
+    return list(set(products))
+
+
+def get_related_forms(form_id: str) -> List[str]:
+    """Get related forms for a given form"""
+    if not form_id:
+        return []
+    
+    # Get all valid forms from existing taxonomy
+    all_forms = get_all_valid_form_ids()
+    
+    # Return forms in same category
+    form_categories = {
+        "cream": ["cream", "lotion", "milk", "balm", "butter", "ointment"],
+        "gel": ["gel", "serum", "essence", "fluid", "drops"],
+        "oil": ["oil", "cleansing_balm"],
+        "foam": ["foam", "mousse", "whip"],
+        "solid": ["stick", "bar", "powder", "wax"],
+        "sheet": ["sheet", "patches", "pad"],
+        "spray": ["spray", "mist", "aerosol"]
+    }
+    
+    for category, forms in form_categories.items():
+        if form_id in forms:
+            return forms
+    
+    # If not found, return all forms
+    return all_forms
+
+
+def get_related_applications(application_id: str) -> List[str]:
+    """Get related applications for a given application"""
+    if not ENHANCED_FORMULYNX_TAXONOMY:
+        return []
+    
+    # Common application groupings
+    application_groups = {
+        "daily_use": ["morning", "evening", "night", "daily_use"],
+        "morning": ["daily_use", "evening"],
+        "evening": ["night", "daily_use"],
+        "night": ["evening", "daily_use"],
+        "spot_treatment": ["acne_spot", "dark_spot", "pimple_patches"],
+        "makeup_remover": ["first_cleanser", "cleanser"],
+        "post_procedure": ["soothing", "barrier_repair"],
+        "outdoor_protection": ["sun_protection", "antioxidant"],
+        "sensitive_skin": ["soothing", "anti_inflammatory"],
+        "acne_prone": ["anti_acne", "oil_control", "purifying"]
+    }
+    
+    return application_groups.get(application_id, [application_id])
+
+
+def get_related_functionality(functionality_id: str) -> List[str]:
+    """Get related functionality/benefits for a given functionality"""
+    if not ENHANCED_FORMULYNX_TAXONOMY:
+        return []
+    
+    # Get related benefits from enhanced taxonomy
+    related_benefits = get_related_benefits(functionality_id)
+    
+    # Also add benefits that address similar concerns
+    functionality_groups = {
+        "brightening": ["tone_evening", "dark_spot_correcting", "anti_oxidant", "exfoliating"],
+        "hydrating": ["moisturizing", "barrier_repair", "plumping"],
+        "anti_aging": ["anti_wrinkle", "firming", "lifting", "collagen_boosting"],
+        "anti_wrinkle": ["anti_aging", "smoothening", "plumping"],
+        "firming": ["lifting", "collagen_boosting", "elasticity_improving"],
+        "anti_acne": ["oil_control", "purifying", "clarifying", "pore_minimizing"],
+        "soothing": ["anti_inflammatory", "redness_reducing", "barrier_repair"]
+    }
+    
+    related = functionality_groups.get(functionality_id, [])
+    if related_benefits:
+        related.extend(related_benefits)
+    
+    return list(set(related))  # Remove duplicates
+
+
+def search_taxonomy_by_keyword(keyword: str) -> Dict[str, List[dict]]:
+    """Search taxonomy by keyword across all categories"""
+    if not ENHANCED_FORMULYNX_TAXONOMY:
+        return {}
+    
+    keyword = keyword.lower().strip()
+    results = {
+        "concerns": [],
+        "benefits": [],
+        "ingredients": [],
+        "product_types": []
+    }
+    
+    # Search skin concerns
+    for concern_id, concern_data in ENHANCED_FORMULYNX_TAXONOMY.get("skin_concerns", {}).items():
+        if (keyword in concern_data["id"] or 
+            keyword in concern_data["label"].lower() or
+            keyword in [term.lower() for term in concern_data.get("search_terms", [])]):
+            results["concerns"].append(concern_data)
+    
+    # Search hair concerns
+    for concern_id, concern_data in ENHANCED_FORMULYNX_TAXONOMY.get("hair_concerns", {}).items():
+        if (keyword in concern_data["id"] or 
+            keyword in concern_data["label"].lower() or
+            keyword in [term.lower() for term in concern_data.get("search_terms", [])]):
+            results["concerns"].append(concern_data)
+    
+    # Search skin benefits
+    for benefit_id, benefit_data in ENHANCED_FORMULYNX_TAXONOMY.get("skin_benefits", {}).items():
+        if (keyword in benefit_data["id"] or 
+            keyword in benefit_data["label"].lower() or
+            keyword in [term.lower() for term in benefit_data.get("search_terms", [])]):
+            results["benefits"].append(benefit_data)
+    
+    # Search hair benefits
+    for benefit_id, benefit_data in ENHANCED_FORMULYNX_TAXONOMY.get("hair_benefits", {}).items():
+        if (keyword in benefit_data["id"] or 
+            keyword in benefit_data["label"].lower() or
+            keyword in [term.lower() for term in benefit_data.get("search_terms", [])]):
+            results["benefits"].append(benefit_data)
+    
+    # Search skin ingredients
+    for ingredient_id, ingredient_data in ENHANCED_FORMULYNX_TAXONOMY.get("skin_ingredients", {}).items():
+        if (keyword in ingredient_data["id"] or 
+            keyword in ingredient_data["label"].lower() or
+            keyword in [term.lower() for term in ingredient_data.get("search_terms", [])] or
+            keyword in [term.lower() for term in ingredient_data.get("inci_names", [])]):
+            results["ingredients"].append(ingredient_data)
+    
+    # Search hair ingredients
+    for ingredient_id, ingredient_data in ENHANCED_FORMULYNX_TAXONOMY.get("hair_ingredients", {}).items():
+        if (keyword in ingredient_data["id"] or 
+            keyword in ingredient_data["label"].lower() or
+            keyword in [term.lower() for term in ingredient_data.get("search_terms", [])] or
+            keyword in [term.lower() for term in ingredient_data.get("inci_names", [])]):
+            results["ingredients"].append(ingredient_data)
+    
+    # Search product types
+    for product_id, product_data in ENHANCED_FORMULYNX_TAXONOMY.get("skin_product_types", {}).items():
+        if (keyword in product_data["id"] or 
+            keyword in product_data["label"].lower() or
+            keyword in [term.lower() for term in product_data.get("search_terms", [])]):
+            results["product_types"].append(product_data)
+    
+    return results
+
+
+def get_available_keywords_for_analysis(analyzed_keywords: Dict[str, Any]) -> Dict[str, Any]:
+    """Generate available keywords based on analysis"""
+    if not ENHANCED_FORMULYNX_TAXONOMY:
+        return {}
+    
+    available = {
+        "form": [],
+        "mrp": ["mass_market", "masstige", "premium", "prestige"],
+        "application": [],
+        "functionality": [],
+        "concerns": [],
+        "benefits": [],
+        "product_types": [],
+        "relationships": {}
+    }
+    
+    # Get related forms
+    form_value = analyzed_keywords.get("form")
+    if form_value:
+        available["form"] = get_related_forms(form_value)
+    
+    # Get related applications
+    app_value = analyzed_keywords.get("application")
+    if isinstance(app_value, list) and app_value:
+        available["application"] = get_related_applications(app_value[0])
+    elif isinstance(app_value, str):
+        available["application"] = get_related_applications(app_value)
+    
+    # Get related functionality
+    func_value = analyzed_keywords.get("functionality")
+    if isinstance(func_value, list) and func_value:
+        available["functionality"] = get_related_functionality(func_value[0])
+    elif isinstance(func_value, str):
+        available["functionality"] = get_related_functionality(func_value)
+    
+    # Get concerns and benefits based on functionality
+    if func_value:
+        func_id = func_value[0] if isinstance(func_value, list) else func_value
+        
+        # Get concerns for this functionality
+        concerns_for_func = get_concerns_for_benefit(func_id)
+        available["concerns"] = concerns_for_func
+        
+        # Get benefits related to this functionality
+        available["benefits"] = get_related_benefits(func_id)
+        
+        # Get products for these concerns
+        products_for_concerns = []
+        for concern in concerns_for_func:
+            products = get_products_for_concern(concern)
+            products_for_concerns.extend(products)
+        available["product_types"] = list(set(products_for_concerns))
+        
+        # Build relationships object
+        available["relationships"] = {
+            "concerns": {
+                concern_id: {
+                    "related_concerns": get_related_concerns(concern_id),
+                    "addressed_by_benefits": get_benefits_for_concern(concern_id)
+                }
+                for concern_id in concerns_for_func[:10]  # Limit to prevent huge responses
+            },
+            "benefits": {
+                func_id: {
+                    "related_benefits": get_related_benefits(func_id),
+                    "addresses_concerns": get_concerns_for_benefit(func_id)
+                }
+            }
+        }
+    
+    return available
+
+
+def get_all_enhanced_concerns() -> Dict[str, dict]:
+    """Get all enhanced concerns (skin + hair)"""
+    if not ENHANCED_FORMULYNX_TAXONOMY:
+        return {}
+    
+    all_concerns = {}
+    all_concerns.update(ENHANCED_FORMULYNX_TAXONOMY.get("skin_concerns", {}))
+    all_concerns.update(ENHANCED_FORMULYNX_TAXONOMY.get("hair_concerns", {}))
+    return all_concerns
+
+
+def get_all_enhanced_benefits() -> Dict[str, dict]:
+    """Get all enhanced benefits (skin + hair)"""
+    if not ENHANCED_FORMULYNX_TAXONOMY:
+        return {}
+    
+    all_benefits = {}
+    all_benefits.update(ENHANCED_FORMULYNX_TAXONOMY.get("skin_benefits", {}))
+    all_benefits.update(ENHANCED_FORMULYNX_TAXONOMY.get("hair_benefits", {}))
+    return all_benefits
+
+
+def get_all_enhanced_ingredients() -> Dict[str, dict]:
+    """Get all enhanced ingredients (skin + hair)"""
+    if not ENHANCED_FORMULYNX_TAXONOMY:
+        return {}
+    
+    all_ingredients = {}
+    all_ingredients.update(ENHANCED_FORMULYNX_TAXONOMY.get("skin_ingredients", {}))
+    all_ingredients.update(ENHANCED_FORMULYNX_TAXONOMY.get("hair_ingredients", {}))
+    return all_ingredients
+
+
+def get_all_enhanced_product_types() -> Dict[str, dict]:
+    """Get all enhanced product types (skin + hair)"""
+    if not ENHANCED_FORMULYNX_TAXONOMY:
+        return {}
+    
+    all_products = {}
+    all_products.update(ENHANCED_FORMULYNX_TAXONOMY.get("skin_product_types", {}))
+    all_products.update(ENHANCED_FORMULYNX_TAXONOMY.get("hair_product_types", {}))
+    return all_products
