@@ -362,21 +362,16 @@ class MarketResearchProduct(BaseModel):
     active_match_count: int = Field(0, description="Number of active ingredients that matched")
     active_ingredients: List[str] = Field(default_factory=list, description="List of matched active ingredients")
     sequence: Optional[int] = Field(None, description="Sequence number in base ranking (1-indexed)")
-    # Missing fields added as arrays of strings
-    functional_categories: List[str] = Field(default_factory=list, description="Functional categories")
-    market_positioning: List[str] = Field(default_factory=list, description="Market positioning")
-    main_category: List[str] = Field(default_factory=list, description="Main category")
-    subcategory: List[str] = Field(default_factory=list, description="Subcategory")
-    product_types: List[str] = Field(default_factory=list, description="Product types")
-    application: List[str] = Field(default_factory=list, description="Application")
-    mrp: List[str] = Field(default_factory=list, description="MRP information")
-
-
-class MarketResearchRequest(BaseModel):
-    """Request schema for market research"""
-    url: Optional[str] = Field(None, description="Product URL to extract ingredients from")
+    # Missing fields added as arrays of strings, but can accept both strings and lists
+    functional_categories: Union[List[str], str, None] = Field(default_factory=list, description="Functional categories")
+    market_positioning: Union[List[str], str, None] = Field(default_factory=list, description="Market positioning")
+    main_category: Union[List[str], str, None] = Field(default_factory=list, description="Main category")
+    subcategory: Union[List[str], str, None] = Field(default_factory=list, description="Subcategory")
+    product_types: Union[List[str], str, None] = Field(default_factory=list, description="Product types")
+    application: Union[List[str], str, None] = Field(default_factory=list, description="Application")
+    mrp: Union[List[str], str, None] = Field(default_factory=list, description="MRP information")
     inci: Optional[List[str]] = Field(None, description="INCI ingredient list (array of strings)")
-    input_type: str = Field(..., description="Type of input: 'url' or 'inci'")
+    input_type: Optional[str] = Field(None, description="Type of input: 'url' or 'inci'")
 
 
 class MarketResearchResponse(BaseModel):
@@ -567,10 +562,10 @@ class ActiveIngredient(BaseModel):
 class ProductKeywords(BaseModel):
     """Schema for keywords organized by feature category - includes all Formulynx taxonomy fields"""
     # Form-related keywords
-    form: List[str] = Field(default_factory=list, description="Product form keywords - uses Formulynx taxonomy form IDs (e.g., 'serum', 'cream', 'gel')")
+    form: Union[List[str], str, None] = Field(default_factory=list, description="Product form keywords - uses Formulynx taxonomy form IDs (e.g., 'serum', 'cream', 'gel')")
     
     # Price tier
-    price_tier: List[str] = Field(default_factory=list, description="Price tier - Formulynx taxonomy price_tier IDs: 'mass_market', 'masstige', 'premium', 'prestige'")
+    price_tier: Union[List[str], str, None] = Field(default_factory=list, description="Price tier - Formulynx taxonomy price_tier IDs: 'mass_market', 'masstige', 'premium', 'prestige'")
     
     # Application/Use case keywords
     application: List[str] = Field(default_factory=list, description="Use case keywords (e.g., 'night_cream', 'brightening', 'sun_protection')")
@@ -580,15 +575,22 @@ class ProductKeywords(BaseModel):
     benefits: List[str] = Field(default_factory=list, description="Formulynx benefit IDs (e.g., 'brightening', 'hydrating', 'anti_aging')")
     
     # Formulynx Taxonomy Fields
-    target_area: List[str] = Field(default_factory=list, description="Formulynx target area IDs (e.g., 'face', 'hair', 'body', 'lips', 'undereye', 'neck', 'hands', 'feet', 'scalp')")
+    target_area: Union[List[str], str, None] = Field(default_factory=list, description="Formulynx target area IDs (e.g., 'face', 'hair', 'body', 'lips', 'undereye', 'neck', 'hands', 'feet', 'scalp')")
     product_type: List[str] = Field(default_factory=list, description="Formulynx product type IDs (e.g., 'cleanser', 'serum', 'moisturizer', 'shampoo')")
     concerns: List[str] = Field(default_factory=list, description="Formulynx concern IDs (e.g., 'acne', 'dark_spots', 'dryness')")
     market_positioning: List[str] = Field(default_factory=list, description="Formulynx market positioning IDs (e.g., 'natural', 'organic', 'clinical', 'korean')")
     
     # Legacy fields (for backward compatibility)
     functional_categories: List[str] = Field(default_factory=list, description="Functional categories as keywords (legacy)")
-    main_category: List[str] = Field(default_factory=list, description="Main category: skincare, haircare, lipcare, bodycare (legacy)")
-    subcategory: List[str] = Field(default_factory=list, description="Subcategory/product type (legacy)")
+    main_category: Union[List[str], str, None] = Field(default_factory=list, description="Main category: skincare, haircare, lipcare, bodycare (legacy)")
+    subcategory: Union[List[str], str, None] = Field(default_factory=list, description="Subcategory/product type (legacy)")
+    
+    def __init__(self, **data):
+        # Convert string values to single-item lists for the specified fields
+        for field in ['form', 'price_tier', 'target_area', 'main_category', 'subcategory']:
+            if field in data and isinstance(data[field], str):
+                data[field] = [data[field]]
+        super().__init__(**data)
     
     @model_serializer
     def serialize_model(self):
