@@ -20,3 +20,19 @@ inspiration_boards_col = db["inspiration_boards"]
 inspiration_products_col = db["inspiration_products"]
 product_tags_col = db["product_tags"]
 url_cache_col = db["url_cache"]
+
+# ============================================================================
+# NEW COLLECTIONS FOR REVISED MAKE A WISH FLOW (January 2025)
+# ============================================================================
+
+# Commercialization requests collection
+commercialization_requests_col = db["commercialization_requests"]
+
+# Formula versions collection for edit history
+formula_versions_col = db["formula_versions"]
+
+# Quotes collection for manufacturing quotes
+quotes_col = db["quotes"]
+
+# Ingredient alternatives cache collection
+ingredient_alternatives_cache_col = db["ingredient_alternatives_cache"]

@@ -35,21 +35,30 @@ class HybridFaceFilter:
         self.use_mediapipe = MEDIAPIPE_AVAILABLE
         
         if self.use_mediapipe:
-            # Initialize MediaPipe components
-            self.mp_face_detection = mp.solutions.face_detection
-            self.mp_face_mesh = mp.solutions.face_mesh
-            self.mp_drawing = mp.solutions.drawing_utils
-            
-            self.face_detection = self.mp_face_detection.FaceDetection(
-                model_selection=0, min_detection_confidence=0.5
-            )
-            self.face_mesh = self.mp_face_mesh.FaceMesh(
-                static_image_mode=True,
-                max_num_faces=1,
-                refine_landmarks=True,
-                min_detection_confidence=0.5,
-                min_tracking_confidence=0.5
-            )
+            # Initialize MediaPipe components using legacy solution API
+            try:
+                # Try to use legacy solutions API first
+                self.mp_face_detection = mp.solutions.face_detection
+                self.mp_face_mesh = mp.solutions.face_mesh
+                self.mp_drawing = mp.solutions.drawing_utils
+                
+                self.face_detection = self.mp_face_detection.FaceDetection(
+                    model_selection=0, min_detection_confidence=0.5
+                )
+                self.face_mesh = self.mp_face_mesh.FaceMesh(
+                    static_image_mode=True,
+                    max_num_faces=1,
+                    refine_landmarks=True,
+                    min_detection_confidence=0.5,
+                    min_tracking_confidence=0.5
+                )
+                print("MediaPipe legacy API initialized successfully")
+            except AttributeError:
+                # If legacy API not available, disable MediaPipe
+                print("MediaPipe legacy API not available, falling back to OpenCV")
+                self.use_mediapipe = False
+                self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+                self.eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
         else:
             # Initialize OpenCV components
             self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')

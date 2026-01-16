@@ -145,12 +145,12 @@ class FaceAnalyzer:
             """
             
             # Call Claude API
-            print("🔍 Using Claude 3 Opus for analysis...")
+            print(f"🔍 Using {settings.CLAUDE_MODEL} for analysis...")
             print(f"📊 Analyzing image for: {ethnicity}, {gender}, {age} years old")
             print("⏰ This may take 30-90 seconds depending on image complexity...")
             response = self.claude_client.messages.create(
-                model="claude-3-opus-20240229",
-                max_tokens=1500,  # Reduced for faster response
+                model=settings.CLAUDE_MODEL,
+                max_tokens=4000,  # Increased to get complete response
                 temperature=0.2,  # Lower temperature for more consistent, faster responses
                 messages=[
                     {
@@ -182,6 +182,15 @@ class FaceAnalyzer:
                 # Clean the response text first
                 analysis_text = analysis_text.strip()
                 
+                # Remove markdown code blocks if present
+                if analysis_text.startswith('```json'):
+                    analysis_text = analysis_text[7:]  # Remove ```json
+                if analysis_text.startswith('```'):
+                    analysis_text = analysis_text[3:]   # Remove ```
+                if analysis_text.endswith('```'):
+                    analysis_text = analysis_text[:-3]  # Remove ```
+                analysis_text = analysis_text.strip()
+                
                 # Find JSON in the response
                 start_idx = analysis_text.find('{')
                 end_idx = analysis_text.rfind('}') + 1
@@ -189,7 +198,7 @@ class FaceAnalyzer:
                 if start_idx != -1 and end_idx != 0:
                     json_str = analysis_text[start_idx:end_idx]
                     
-                    # Clean the JSON string of any control characters
+                    # Clean the JSON string of any control characters but preserve newlines
                     json_str = ''.join(char for char in json_str if ord(char) >= 32 or char in '\n\r\t')
                     
                     print(f"🔍 Parsing JSON: {json_str[:200]}...")
