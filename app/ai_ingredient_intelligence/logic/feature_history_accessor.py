@@ -234,19 +234,28 @@ def _extract_market_research_product(history_data: Dict[str, Any]) -> Dict[str, 
 def _extract_make_wish_product(history_data: Dict[str, Any]) -> Dict[str, Any]:
     """Extract product data from make a wish history"""
     # Make a wish history contains:
-    # - wish parameters
-    # - generated formula
-    # - cost analysis
-    # - manufacturing process
+    # - wish_data: User input parameters
+    # - formula_result: Generated formula with all analysis
+    # - name, tag, notes: User-provided metadata
     
     wish_data = history_data.get("wish_data", {})
-    formula_data = history_data.get("formula_data", {})
-    optimized_formula = formula_data.get("optimized_formula", {})
+    formula_result = history_data.get("formula_result", {})
+    optimized_formula = formula_result.get("optimized_formula", {})
     
-    # Extract product name
-    name = wish_data.get("product_name") or wish_data.get("productName") or "My Formulation"
+    # Extract product name - use user-provided name first, then generate from wish data
+    user_name = history_data.get("name", "")
+    if user_name and user_name.strip():
+        name = user_name.strip()
+    else:
+        # Generate name from wish parameters
+        product_type = wish_data.get("productType", "Formulation")
+        benefits = wish_data.get("benefits", [])
+        if benefits:
+            name = f"{product_type} - {', '.join(benefits[:2])}"
+        else:
+            name = f"Custom {product_type}"
     
-    # Extract ingredients from formula
+    # Extract ingredients from optimized formula
     ingredients = []
     if optimized_formula:
         # Extract ingredient names from formula structure
@@ -260,23 +269,61 @@ def _extract_make_wish_product(history_data: Dict[str, Any]) -> Dict[str, Any]:
                 elif isinstance(item, str):
                     ingredients.append(item)
     
-    # Build notes with ingredients if available
-    notes = f"Generated from wish: {wish_data.get('wish_text', 'Unknown wish')}"
+    # Build comprehensive notes
+    notes_parts = []
+    
+    # Add user notes if available
+    user_notes = history_data.get("notes", "")
+    if user_notes and user_notes.strip():
+        notes_parts.append(f"Notes: {user_notes.strip()}")
+    
+    # Add wish parameters
+    if wish_data.get("benefits"):
+        notes_parts.append(f"Benefits: {', '.join(wish_data['benefits'])}")
+    
+    if wish_data.get("heroIngredients"):
+        notes_parts.append(f"Hero Ingredients: {', '.join(wish_data['heroIngredients'])}")
+    
+    if wish_data.get("exclusions"):
+        notes_parts.append(f"Exclusions: {', '.join(wish_data['exclusions'])}")
+    
+    # Add ingredients list
     if ingredients:
-        notes += f"\n\nIngredients: {', '.join(ingredients[:15])}"  # First 15 ingredients
+        notes_parts.append(f"Ingredients: {', '.join(ingredients[:15])}")  # First 15 ingredients
+    
+    # Add cost analysis if available
+    cost_analysis = formula_result.get("cost_analysis", {})
+    if cost_analysis:
+        total_cost = cost_analysis.get("raw_material_cost", {}).get("total_per_100g", 0)
+        if total_cost:
+            notes_parts.append(f"Estimated Cost: ₹{total_cost}/100g")
+    
+    # Add compliance status if available
+    compliance = formula_result.get("compliance", {})
+    if compliance:
+        overall_status = compliance.get("overall_status", "")
+        if overall_status:
+            notes_parts.append(f"Compliance: {overall_status}")
+    
+    notes = "\n".join(notes_parts) if notes_parts else "Custom formulation generated from wish"
+    
+    # Extract cost from formula result
+    cost_per_100g = 0
+    if cost_analysis:
+        cost_per_100g = cost_analysis.get("raw_material_cost", {}).get("total_per_100g", 0) or 0
     
     product_data = {
         "name": name,
         "brand": "Custom Formulation",
         "url": None,  # No real URL for formulations
         "platform": "formulation",
-        "price": formula_data.get("estimated_cost_per_100g", 0) or 0,
+        "price": cost_per_100g,
         "size": 100,  # Standard 100g
         "unit": "g",
-        "category": wish_data.get("product_category") or wish_data.get("productType") or "Custom",
+        "category": wish_data.get("productType", "Custom"),
         "image": PRODUCT_TYPE_CONFIG["make_wish"]["emoji"],  # Use emoji instead of real image
         "notes": notes,
-        "tags": ["formulation", "custom"],
+        "tags": ["formulation", "custom"] + (wish_data.get("benefits", [])[:2] if wish_data.get("benefits") else []),
         "product_type": PRODUCT_TYPE_CONFIG["make_wish"]["type_name"],
         "ingredients": ingredients
     }
