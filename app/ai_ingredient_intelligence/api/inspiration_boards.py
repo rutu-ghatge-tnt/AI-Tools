@@ -639,14 +639,43 @@ async def _add_exported_product_to_board(user_id: str, board_id: str, product_da
         return None
     
     # Ensure price and size are valid (must be > 0 for AddProductManualRequest)
-    price = product_data.get("price", 0) or 0
-    size = product_data.get("size", 0) or 0
+    price = product_data.get("price")
+    size = product_data.get("size")
     
-    # Use default values if price/size is 0 or missing (required by schema: gt=0)
-    if price <= 0:
+    # Use default values only if price/size is None, missing, or explicitly invalid (not just 0)
+    # Allow legitimate 0 values to pass through
+    if price is None or price == "":
         price = 1.0  # Default to 1 unit (e.g., 1 rupee) for formulations without cost data
-    if size <= 0:
+    elif isinstance(price, str) and not price.replace('.', '').replace('-', '').isdigit():
+        try:
+            price = float(price) if price else 1.0
+        except (ValueError, TypeError):
+            price = 1.0
+    else:
+        try:
+            price = float(price) if price is not None else 1.0
+        except (ValueError, TypeError):
+            price = 1.0
+    
+    if size is None or size == "":
         size = 1.0  # Default to 1 unit if size is missing
+    elif isinstance(size, str) and not size.replace('.', '').replace('-', '').isdigit():
+        try:
+            size = float(size) if size else 1.0
+        except (ValueError, TypeError):
+            size = 1.0
+    else:
+        try:
+            size = float(size) if size is not None else 1.0
+        except (ValueError, TypeError):
+            size = 1.0
+    
+    # Final validation: ensure values are > 0 for schema requirements
+    # But only if they were originally missing/invalid, not if they were legitimately 0
+    if price <= 0 and product_data.get("price") not in [0, "0", 0.0, "0.0"]:
+        price = 1.0
+    if size <= 0 and product_data.get("size") not in [0, "0", 0.0, "0.0"]:
+        size = 1.0
     
     # Create manual product request
     manual_request = AddProductManualRequest(
