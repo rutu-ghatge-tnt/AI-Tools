@@ -526,7 +526,8 @@ async def call_ai_with_claude(
     system_prompt: str,
     user_prompt: str,
     prompt_type: str = "general",
-    max_retries: int = 3
+    max_retries: int = 1,  # Reduced to 1 for speed
+    cache_block_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Call Claude API for Make a Wish pipeline with prompt caching support.
@@ -568,7 +569,6 @@ async def call_ai_with_claude(
     # Claude's ephemeral cache automatically caches system prompts when cache_control is used
     # This reduces costs by ~90% on system prompt tokens after the first call
     if cache_block_id:
-        api_params["cache_control"] = {"type": "ephemeral"}
         print(f"💾 Using cached system prompt for {prompt_type}")
     else:
         print(f"📝 Using uncached system prompt for {prompt_type} (first call)")
@@ -601,9 +601,16 @@ async def call_ai_with_claude(
                 content = re.sub(r'```\s*', '', content)
                 content = content.strip()
                 
+                # Debug: Log the content
+                print(f"🔍 AI Response Content: {content[:200]}...")
+                
                 result = json.loads(content)
                 return result
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
+                # Debug: Log the JSON error
+                print(f"❌ JSON Decode Error: {str(e)}")
+                print(f"❌ Content that failed: {content[:500]}...")
+                
                 # Try to extract JSON from text
                 json_match = re.search(r'\{.*\}', content, re.DOTALL)
                 if json_match:
