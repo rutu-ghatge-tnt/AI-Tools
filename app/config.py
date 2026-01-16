@@ -8,7 +8,12 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Load variables from .env file in project root
-load_dotenv(BASE_DIR / ".env")
+env_path = BASE_DIR / ".env"
+if env_path.exists():
+    load_dotenv(env_path)
+    print(f"✅ Loaded .env from: {env_path}")
+else:
+    print(f"⚠️ .env file not found at: {env_path}")
 
 # Claude API settings
 from typing import Optional

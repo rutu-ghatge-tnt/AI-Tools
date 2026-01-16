@@ -4,6 +4,16 @@ import sys
 import warnings
 import logging
 
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+    print("✅ Environment variables loaded from .env file")
+except ImportError:
+    print("⚠️ python-dotenv not installed, environment variables may not be loaded")
+except Exception as e:
+    print(f"⚠️ Error loading .env file: {e}")
+
 
 # Suppress TensorFlow/MediaPipe warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
