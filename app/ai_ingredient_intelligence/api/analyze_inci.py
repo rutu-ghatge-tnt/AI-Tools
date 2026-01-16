@@ -942,7 +942,7 @@ async def analyze_inci(
         print(f"{'='*80}\n")
         
     except Exception as e:
-        # Analysis failed - show error but don't save to history
+        # Analysis failed - show error but don't fail the response
         print(f"\n{'='*80}")
         print(f"[DEBUG] ❌ Error in analyze_inci: {e}")
         print(f"{'='*80}\n")
@@ -952,6 +952,18 @@ async def analyze_inci(
         print(f"{'='*60}")
         traceback.print_exc()
         print(f"{'='*60}\n")
+        
+        # 🔹 CRITICAL FIX: Update history status to 'failed' to prevent stuck entries
+        if history_id and user_id_value:
+            try:
+                await decode_history_col.update_one(
+                    {"_id": ObjectId(history_id), "user_id": user_id_value},
+                    {"$set": {"status": "failed", "error_message": str(e)}}
+                )
+                print(f"[AUTO-SAVE] Updated history {history_id} to 'failed' status due to analysis error")
+            except Exception as save_error:
+                print(f"[AUTO-SAVE] Warning: Failed to update history to failed status: {save_error}")
+        
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
     
     # FINAL CHECK: Verify supplier_id before building final response
@@ -970,7 +982,7 @@ async def analyze_inci(
     response = AnalyzeInciResponse(
         detected=response.detected,
         unable_to_decode=response.unable_to_decode,
-            processing_time=response.processing_time,
+        processing_time=response.processing_time,
         bis_cautions=response.bis_cautions if response.bis_cautions else None,
         categories=response.categories if response.categories else None,
         distributor_info=response.distributor_info if response.distributor_info else None,

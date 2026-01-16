@@ -484,10 +484,14 @@ def parse_report_to_json(report_text: str) -> FormulationReportResponse:
         elif line.startswith('9) Expected Benefits Analysis'):
             current_section = 'expected_benefits'
             in_table = False
+            print(f"\n[DEBUG] Detected '9) Expected Benefits Analysis' section header")
             i += 1
             if i < len(lines) and '|' in lines[i]:
                 table_headers = [h.strip() for h in lines[i].split('|')]
+                print(f"[DEBUG] Found table headers: {table_headers}")
                 i += 1
+            else:
+                print(f"[DEBUG] No table headers found on next line")
             continue
         
         # Process content based on current section
@@ -598,6 +602,7 @@ def parse_report_to_json(report_text: str) -> FormulationReportResponse:
                     elif current_section == 'claim':
                         claim_panel.append(ReportTableRow(cells=cells))
                     elif current_section == 'expected_benefits':
+                        print(f"[DEBUG] Processing expected benefits row: {cells}")
                         expected_benefits_analysis.append(ReportTableRow(cells=cells))
             
             # Skip the lines we've already processed
@@ -653,10 +658,18 @@ def parse_report_to_json(report_text: str) -> FormulationReportResponse:
     
     # Expected benefits analysis headers
     if expected_benefits_analysis and len(expected_benefits_analysis) > 0:
+        print(f"\n[DEBUG] Expected benefits analysis parsing:")
+        print(f"   - Found {len(expected_benefits_analysis)} rows before header check")
         first_row_cells = expected_benefits_analysis[0].cells if expected_benefits_analysis else []
+        print(f"   - First row cells: {first_row_cells}")
         is_header = any(c.upper() in ['EXPECTED BENEFIT', 'CAN BE ACHIEVED', 'SUPPORTING INGREDIENTS'] for c in first_row_cells)
+        print(f"   - Is header row: {is_header}")
         if not is_header:
+            print(f"   - Adding default header row")
             expected_benefits_analysis.insert(0, ReportTableRow(cells=["Expected Benefit", "Can Be Achieved?", "Supporting Ingredients", "Evidence/Mechanism", "Limitations"]))
+        print(f"   - Final expected benefits analysis rows: {len(expected_benefits_analysis)}")
+    else:
+        print(f"\n[DEBUG] Expected benefits analysis: No rows found")
     
     # Extract pH from section 8 if not in summary
     if not summary_data["recommended_ph_range"] and recommended_ph_range:
@@ -704,13 +717,25 @@ def parse_report_to_json(report_text: str) -> FormulationReportResponse:
 
 
 async def generate_report_text(
-    inci_str: str, 
-    branded_ingredients: Optional[List[str]] = None, 
+    inci_str: str,
+    branded_ingredients: Optional[List[str]] = None,
     not_branded_ingredients: Optional[List[str]] = None,
     bis_cautions: Optional[Dict[str, List[str]]] = None,
     expected_benefits: Optional[str] = None
 ) -> str:
     """Generate report text using Claude"""
+    
+    print(f"\n[DEBUG] === generate_report_text called ===")
+    print(f"[DEBUG] inci_str: {inci_str[:100]}..." if len(inci_str) > 100 else f"[DEBUG] inci_str: {inci_str}")
+    print(f"[DEBUG] branded_ingredients: {branded_ingredients}")
+    print(f"[DEBUG] not_branded_ingredients: {not_branded_ingredients}")
+    print(f"[DEBUG] bis_cautions: {bis_cautions is not None and len(bis_cautions) > 0 if bis_cautions else False}")
+    print(f"[DEBUG] expected_benefits: {expected_benefits}")
+    print(f"[DEBUG] expected_benefits type: {type(expected_benefits)}")
+    print(f"[DEBUG] expected_benefits is None: {expected_benefits is None}")
+    print(f"[DEBUG] expected_benefits.strip(): {expected_benefits.strip() if expected_benefits else 'N/A'}")
+    print(f"[DEBUG] expected_benefits and expected_benefits.strip(): {expected_benefits and expected_benefits.strip()}")
+    print(f"[DEBUG] ======================================\n")
     
     # Build categorization context if provided
     categorization_info = ""
@@ -886,8 +911,18 @@ REFORMATTED CAUTIONS:"""
     
     # Build expected benefits context if provided (optional - only include if provided)
     expected_benefits_info = ""
+    print(f"[DEBUG] Building expected benefits info...")
+    print(f"[DEBUG]   - expected_benefits: {expected_benefits}")
+    print(f"[DEBUG]   - expected_benefits is None: {expected_benefits is None}")
+    if expected_benefits:
+        print(f"[DEBUG]   - expected_benefits.strip(): '{expected_benefits.strip()}'")
+        print(f"[DEBUG]   - len(expected_benefits.strip()): {len(expected_benefits.strip())}")
+    
     if expected_benefits and expected_benefits.strip():
         expected_benefits_info = f"\n\nEXPECTED BENEFITS FROM USER:\n{expected_benefits.strip()}\n\nCRITICAL: You MUST add a section at the end of the report (after section 8) titled:\n\n9) Expected Benefits Analysis\n\nFor each expected benefit mentioned by the user, analyze:\n- Can this benefit be achieved from this formulation? (YES/NO/PARTIALLY)\n- Which ingredients support this benefit?\n- What is the evidence/mechanism?\n- Any limitations or concerns?\n\nFormat as a table with columns: Expected Benefit | Can Be Achieved? | Supporting Ingredients | Evidence/Mechanism | Limitations\n\nThis section should ONLY be included if expected benefits are provided above. If no expected benefits are provided, DO NOT include section 9 - end the report after section 8.\n"
+        print(f"[DEBUG] ✅ Expected benefits info built (length: {len(expected_benefits_info)})")
+    else:
+        print(f"[DEBUG] ❌ Expected benefits info is empty - will not be included")
     
     user_prompt = f"Generate report for this INCI list:\n{inci_str}{categorization_info}{bis_cautions_info}{expected_benefits_info}\n\nREMEMBER: Every table cell must have content. NO EMPTY CELLS!\n\nCRITICAL FOR BIS CAUTIONS - THIS IS MANDATORY:\n- If BIS cautions are provided above for an ingredient, you MUST include ALL of them - DO NOT SKIP ANY\n- Count the number of cautions provided for each ingredient and ensure ALL are included\n- Each caution must be on a SEPARATE LINE within the BIS Cautions column (use actual line breaks)\n- Number each caution starting with 1., 2., 3., 4., etc. on its own line\n- Do NOT combine multiple cautions into one line separated by commas or semicolons\n- Do NOT skip any cautions - if 4 are provided, include all 4; if 5 are provided, include all 5\n- Do NOT summarize or shorten - include the FULL text of each caution exactly as provided\n- Write each caution exactly as provided, preserving all numerical values, percentages, limits, and exact wording\n- Missing even one caution is a CRITICAL ERROR - verify you have included every single caution listed above\n\nCRITICAL: You MUST generate ALL 9 sections (or 8 if no expected benefits). Do NOT stop after section 2. Include sections 3-9:\n- 3) Compliance Panel\n- 4) Preservative Efficacy Check\n- 5) Risk Panel\n- 6) Cumulative Benefit Panel\n- 7) Claim Panel\n- 8) Recommended pH Range\n- 9) Expected Benefits Analysis (if expected benefits provided)"
     
@@ -943,6 +978,31 @@ REFORMATTED CAUTIONS:"""
                         print(f"   - {ingredient}: appears {count} time(s), found {caution_numbers_found}/{len(cautions)} caution numbers, {caution_text_found}/{len(cautions)} caution texts")
                         if caution_numbers_found < len(cautions):
                             print(f"      ⚠️ WARNING: Only {caution_numbers_found} out of {len(cautions)} cautions detected in response!")
+            
+            # Debug: Check if expected benefits are in the response
+            if expected_benefits and expected_benefits.strip():
+                print("\n🔍 Checking Expected Benefits Analysis in Claude response:")
+                if "9) Expected Benefits Analysis" in report_text:
+                    print("   ✅ Expected Benefits Analysis section found in report")
+                    # Count rows in the expected benefits table
+                    lines = report_text.split('\n')
+                    in_expected_benefits = False
+                    table_rows = 0
+                    for line in lines:
+                        line = line.strip()
+                        if line.startswith('9) Expected Benefits Analysis'):
+                            in_expected_benefits = True
+                            continue
+                        elif in_expected_benefits and line.startswith(('0)', '1)', '2)', '3)', '4)', '5)', '6)', '7)', '8)', '10)')):
+                            break
+                        elif in_expected_benefits and '|' in line and not any(c.upper() in ['EXPECTED BENEFIT', 'CAN BE ACHIEVED', 'SUPPORTING INGREDIENTS'] for c in line.split('|')):
+                            table_rows += 1
+                    print(f"   - Found {table_rows} data rows in Expected Benefits Analysis table")
+                else:
+                    print("   ❌ ERROR: Expected Benefits Analysis section NOT found in report!")
+                    print(f"   - Expected benefits provided: {expected_benefits[:100]}..." if len(expected_benefits) > 100 else f"   - Expected benefits provided: {expected_benefits}")
+            else:
+                print("\n🔍 No expected benefits provided - skipping check")
             
             print("✅ Report generated successfully with Claude")
             return report_text
@@ -1048,6 +1108,8 @@ async def generate_report_json(
         # Generate report text using Claude
         print(f"[DEBUG] 🤖 Generating report text with Claude...")
         print(f"[DEBUG]    Passing BIS cautions to generate_report_text: {payload.bisCautions is not None and len(payload.bisCautions) > 0 if payload.bisCautions else False}")
+        print(f"[DEBUG]    Passing expected benefits to generate_report_text: {payload.expectedBenefits is not None and payload.expectedBenefits.strip() if payload.expectedBenefits else False}")
+        print(f"[DEBUG]    Expected benefits value: {payload.expectedBenefits[:100] + '...' if payload.expectedBenefits and len(payload.expectedBenefits) > 100 else payload.expectedBenefits}")
         report_text = await generate_report_text(
             inci_str, 
             branded_ingredients=payload.brandedIngredients,
@@ -1178,6 +1240,18 @@ async def generate_report_json(
         print(f"❌ Error generating report JSON: {type(e).__name__}: {e}")
         import traceback
         traceback.print_exc()
+        
+        # 🔹 CRITICAL FIX: Update history status to 'failed' to prevent stuck entries
+        if history_id and user_id_value:
+            try:
+                await decode_history_col.update_one(
+                    {"_id": ObjectId(history_id), "user_id": user_id_value},
+                    {"$set": {"status": "failed", "error_message": str(e)}}
+                )
+                print(f"[AUTO-SAVE] Updated history {history_id} to 'failed' status due to report generation error")
+            except Exception as save_error:
+                print(f"[AUTO-SAVE] Warning: Failed to update history to failed status: {save_error}")
+        
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {str(e)}")
 
 @router.post("/formulation-report")
