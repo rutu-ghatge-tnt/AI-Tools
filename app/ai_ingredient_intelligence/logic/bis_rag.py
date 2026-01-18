@@ -441,11 +441,21 @@ async def get_bis_cautions_for_single_ingredient(ingredient: str, retriever) -> 
                         'for external use only',
                         'external use only'
                     ]
+                    # Additional filtering for terms that should not appear in responses
+                    unwanted_terms = [
+                        'pregnancy safe',
+                        'pregnancy-safe',
+                        'fungal acne',
+                        'fungal-acne',
+                        'acne free',
+                        'acne-free'
+                    ]
                     has_generic_phrase = any(phrase in caution_lower for phrase in generic_safety_phrases)
+                    has_unwanted_term = any(term in caution_lower for term in unwanted_terms)
                     has_numerical_limit = bool(re.search(r'\d+\.?\d*\s*(?:%|percent|w/w|w/v|mg/kg|ppm|g/kg|mg/l|g/l|mg|g|kg|ml|l)', caution, re.IGNORECASE))
                     
-                    # Skip generic safety cautions that don't have numerical limits
-                    if has_generic_phrase and not has_numerical_limit:
+                    # Skip generic safety cautions that don't have numerical limits OR contain unwanted terms
+                    if (has_generic_phrase and not has_numerical_limit) or has_unwanted_term:
                         continue
                 
                 # Ensure caution is meaningful (at least 15 characters - reduced threshold for better coverage)

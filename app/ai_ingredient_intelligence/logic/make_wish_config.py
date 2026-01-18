@@ -201,7 +201,7 @@ INGREDIENT_ALTERNATIVES = {
             {
                 "name": "Bakuchiol",
                 "inci": "Bakuchiol",
-                "benefit": "Gentle, pregnancy-safe",
+                "benefit": "Gentle, suitable for sensitive skin",
                 "percentage": "0.5-2%",
                 "complexity": ["minimalist", "classic", "luxe"],
                 "cost_tier": "mid",
@@ -209,7 +209,7 @@ INGREDIENT_ALTERNATIVES = {
                 "description": "Natural retinol alternative with similar benefits",
                 "benefit_tag": "Natural alternative",
                 "cost_impact": "similar",
-                "considerations": "Pregnancy-safe, less irritating"
+                "considerations": "Gentle alternative, less irritating"
             },
             {
                 "name": "Granactive Retinoid",
