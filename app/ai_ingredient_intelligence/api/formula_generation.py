@@ -812,29 +812,33 @@ async def get_wish_history(
             query,
             {
                 "_id": 1,
-                "user_id": 1,
                 "name": 1,
                 "notes": 1,
                 "created_at": 1,
-                "wish_data": 1,  # Check if exists, but don't return full data
-                "formula_result": 1  # Check if exists, but don't return full data
+                "tag": 1,
+                "status": 1,
+                "wish_text": 1,
             }
         ).sort("created_at", -1).skip(skip).limit(limit)
         
         items = []
         async for doc in cursor:
             # Create summary item (exclude large fields)
-            wish_data = doc.get("wish_data", {})
-            formula_result = doc.get("formula_result", {})
+            # wish_data = doc.get("wish_data", {})
+            # formula_result = doc.get("formula_result", {})
             
             items.append({
                 "id": str(doc["_id"]),
-                "user_id": doc.get("user_id"),
+                # "user_id": doc.get("user_id"),
                 "name": doc.get("name", ""),
+                "tag": doc.get("tag", ""),
+                "wish_text": doc.get("wish_text", ""),
+                "status": doc.get("status", ""),
                 "notes": doc.get("notes", ""),
                 "created_at": doc.get("created_at", ""),
-                "has_wish_data": wish_data is not None and bool(wish_data),
-                "has_formula_result": formula_result is not None and bool(formula_result)
+                # "formula_data": doc.get("formula_data", None),
+                # "has_wish_data": wish_data is not None and bool(wish_data),
+                # "has_formula_result": formula_result is not None and bool(formula_result)
             })
         
         return {
@@ -918,15 +922,22 @@ async def get_wish_history_detail(
         if not doc:
             raise HTTPException(status_code=404, detail="History item not found")
         
-        # Return full data
+        # Return full data - handle both old and new data gracefully
         return {
             "id": str(doc["_id"]),
             "user_id": doc.get("user_id"),
             "name": doc.get("name", ""),
-            "wish_data": doc.get("wish_data", {}),
-            "formula_result": doc.get("formula_result", {}),
             "notes": doc.get("notes", ""),
-            "created_at": doc.get("created_at", "")
+            "wish_text": doc.get("wish_text", ""),
+            "tag": doc.get("tag", ""),
+            "parsed_data": doc.get("parsed_data", None),
+            "complexity": doc.get("complexity", ""),
+            "formula_id": doc.get("formula_id", ""),
+            "created_at": doc.get("created_at", ""),
+            "formula_data": doc.get("formula_data", None),
+            # Legacy fields - optional for backward compatibility
+            "wish_data": doc.get("wish_data", None),  # Changed from {} to None to handle missing gracefully
+            "formula_result": doc.get("formula_result", None)  # Changed from {} to None to handle missing gracefully
         }
         
     except HTTPException:
