@@ -628,6 +628,77 @@ async def get_ingredient_alternatives(
             detail=f"Error getting alternatives: {str(e)}"
         )
 
+# STAGE 4.5: EDIT METADATA ENDPOINT
+# ============================================================================
+
+@router.patch("/{wishId}", response_model=dict)
+async def edit_formula_metadata(
+    wishId: str,
+    request: dict,
+    current_user: dict = Depends(verify_jwt_token)
+):
+    """
+    Edit formula metadata (name, tag, notes) without changing formula itself.
+    
+    This endpoint allows users to:
+    - Update formula name
+    - Update tag for categorization  
+    - Update notes
+    - Preserve all formula data unchanged
+    """
+    try:
+        print(f"📝 Editing formula metadata: {wishId}")
+        
+        obj_id = ObjectId(wishId)
+        # Extract user info
+        user_id = current_user.get("user_id") or current_user.get("_id")
+        
+       # Allowed fields whitelist (defense-in-depth)
+        ALLOWED_FIELDS = {"name", "tag", "notes"}
+
+          # Filter allowed fields only
+        data = {k: v for k, v in request.items() if k in ALLOWED_FIELDS and v is not None}
+
+        # Trim name
+        if "name" in data and isinstance(data["name"], str):
+            data["name"] = data["name"].strip()
+
+        # No valid fields
+        if not data:
+            raise HTTPException(400, "No valid fields provided")
+
+        # Build update document
+        update_doc = {
+            **data,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }
+
+        # Atomic update (ownership enforced)
+        result = await wish_history_col.update_one(
+            {"_id": obj_id, "user_id": user_id},
+            {"$set": update_doc}
+        )
+
+        # Not found or unauthorized
+        if result.matched_count == 0:
+            raise HTTPException(404, "Formula not found or access denied")
+
+        return {
+            "success": True,
+            "message": "Updated successfully"
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error editing metadata: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error: {str(e)}"
+        )
+
 
 # ============================================================================
 # STAGE 4: EDIT FORMULA ENDPOINT
