@@ -929,6 +929,7 @@ async def get_wish_history_detail(
             "name": doc.get("name", ""),
             "notes": doc.get("notes", ""),
             "wish_text": doc.get("wish_text", ""),
+            "status": doc.get("status", ""),
             "tag": doc.get("tag", ""),
             "parsed_data": doc.get("parsed_data", None),
             "complexity": doc.get("complexity", ""),
