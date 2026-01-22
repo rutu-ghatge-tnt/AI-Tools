@@ -72,7 +72,7 @@ class ParsedWishData(BaseModel):
     detected_skin_types: List[str] = Field(default_factory=list, description="Skin types mentioned")
     detected_hair_concerns: List[str] = Field(default_factory=list, description="Hair concerns mentioned")
     auto_texture: TextureInfo = Field(..., description="Auto-detected texture")
-    needs_clarification: List[ClarificationQuestion] = Field(default_factory=list, description="Questions if ambiguous")
+    needs_clarification: List[Dict[str, Any]] = Field(default_factory=list, description="Simple clarification questions from AI")
 
 
 class ParseWishResponse(BaseModel):

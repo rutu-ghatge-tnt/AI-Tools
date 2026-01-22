@@ -155,6 +155,26 @@ async def parse_natural_language_wish(
         
         parsed_result["compatibility_issues"] = compatibility_issues
         
+        # Transform needs_clarification to ensure proper format
+        needs_clarification = parsed_result.get("needs_clarification", [])
+        if needs_clarification:
+            transformed_clarifications = []
+            for item in needs_clarification:
+                if isinstance(item, str):
+                    # Convert string to dictionary format
+                    transformed_clarifications.append({
+                        "question": item,
+                        "reason": f"Clarification needed for: {item}"
+                    })
+                elif isinstance(item, dict):
+                    # Already in correct format
+                    transformed_clarifications.append(item)
+                else:
+                    # Skip invalid items
+                    continue
+            
+            parsed_result["needs_clarification"] = transformed_clarifications
+        
         processing_time = time.time() - start_time
         print(f"✅ Wish parsed in {processing_time:.2f}s")
         print(f"   Category: {parsed_result.get('category', 'unknown')}")
@@ -273,8 +293,8 @@ async def generate_formula_revised(
         # Stage 2: Formula Optimization
         print("🔧 Stage 2: Formula Optimization...")
         
-        optimization_prompt = f"""
-You are a cosmetic formulation expert. Optimize ingredient percentages for a balanced formula.
+        # Simplified optimization prompt
+        optimization_prompt = f"""You are a cosmetic formulation expert. Optimize ingredient percentages for a balanced formula.
 
 ## FORMULA REQUIREMENTS
 - Product: {request.parsed_data.product_type.name} ({request.parsed_data.category})
@@ -335,7 +355,7 @@ You are a cosmetic formulation expert. Optimize ingredient percentages for a bal
             "function": "Purpose",
             "is_hero": true|false,
             "is_base": true|false,
-            "cost_contribution": ₹X.XX per 100g
+            "cost_contribution": "₹X.XX per 100g"
         }}
     ],
     "phase_summary": [
@@ -356,8 +376,7 @@ You are a cosmetic formulation expert. Optimize ingredient percentages for a bal
     }}
 }}
 
-Ensure percentages are realistic and the formula is manufacturable.
-"""
+Ensure percentages are realistic and formula is manufacturable. Return ONLY the JSON object above, no markdown formatting."""
         
         optimized_formula = await call_ai_with_claude(
             system_prompt="You are a cosmetic formulation expert. Optimize ingredient percentages for balanced, stable formulas.",
@@ -365,10 +384,27 @@ Ensure percentages are realistic and the formula is manufacturable.
             prompt_type="formula_optimization_revised"
         )
         
-        if not optimized_formula or "ingredients" not in optimized_formula:
+        # Debug: Log the actual structure returned
+        print(f"🔍 Optimized formula structure: {type(optimized_formula)}")
+        if isinstance(optimized_formula, dict):
+            print(f"   Keys: {list(optimized_formula.keys())}")
+        
+        if not optimized_formula:
             raise HTTPException(
                 status_code=500,
-                detail="Failed to optimize formula"
+                detail="Failed to optimize formula - empty response"
+            )
+        
+        # Check for multiple possible response formats
+        has_ingredients = "ingredients" in optimized_formula
+        has_optimized_formula = "optimized_formula" in optimized_formula
+        has_formula = "formula" in optimized_formula
+        
+        if not has_ingredients and not has_optimized_formula and not has_formula:
+            print(f"❌ Missing expected keys. Available keys: {list(optimized_formula.keys())}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to optimize formula - unexpected response format. Expected 'ingredients', 'optimized_formula', or 'formula' keys"
             )
         
         print(f"✅ Optimized formula: {optimized_formula['optimized_formula']['total_percentage']}%")
@@ -396,7 +432,14 @@ Ensure percentages are realistic and the formula is manufacturable.
         # Stage 5: Insights Generation (NEW)
         print("💡 Stage 5: Insights Generation...")
         
-        key_ingredients = [ing for ing in optimized_formula["ingredients"] if ing.get("is_hero", False)]
+        # Get ingredients from the correct nested structure
+        ingredients_list = []
+        if "ingredients" in optimized_formula:
+            ingredients_list = optimized_formula["ingredients"]
+        elif "formula" in optimized_formula and "ingredients" in optimized_formula["formula"]:
+            ingredients_list = optimized_formula["formula"]["ingredients"]
+        
+        key_ingredients = [ing for ing in ingredients_list if ing.get("is_hero", False)]
         
         insights_prompt = INSIGHTS_GENERATION_PROMPT.format(
             formula_name=optimized_formula["optimized_formula"]["name"],
@@ -416,6 +459,11 @@ Ensure percentages are realistic and the formula is manufacturable.
         # Generate unique IDs
         formula_id = str(uuid.uuid4())
         if not history_id:
+            optimized_formula["insights"] = insights
+            optimized_formula["manufacturing"] = manufacturing
+            optimized_formula["compliance"] = compliance
+            # optimized_formula["complexity_config"] = complexity_config
+
             # Create new history record
             try:
                 history_doc = {
@@ -428,7 +476,7 @@ Ensure percentages are realistic and the formula is manufacturable.
                     "complexity": request.complexity,
                     "formula_id": formula_id,
                     "formula_data": optimized_formula,
-                    "insights": insights,
+                    # "insights": insights,
                     "status": "completed",
                     "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat(),
                     "updated_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
@@ -459,8 +507,8 @@ Ensure percentages are realistic and the formula is manufacturable.
                 "texture": request.parsed_data.auto_texture.model_dump(),
                 "phases": [],  # TODO: Convert from optimized format
                 "hero_ingredients": [],  # TODO: Convert from optimized format
-                "total_ingredients": len(optimized_formula["ingredients"]),
-                "total_hero_actives": len([ing for ing in optimized_formula["ingredients"] if ing.get("is_hero", False)]),
+                "total_ingredients": len(ingredients_list),
+                "total_hero_actives": len(key_ingredients),
                 "available_claims": request.claims or [],
                 "exclusions_met": request.parsed_data.detected_exclusions
             },
@@ -578,6 +626,77 @@ async def get_ingredient_alternatives(
         raise HTTPException(
             status_code=500,
             detail=f"Error getting alternatives: {str(e)}"
+        )
+
+# STAGE 4.5: EDIT METADATA ENDPOINT
+# ============================================================================
+
+@router.patch("/{wishId}", response_model=dict)
+async def edit_formula_metadata(
+    wishId: str,
+    request: dict,
+    current_user: dict = Depends(verify_jwt_token)
+):
+    """
+    Edit formula metadata (name, tag, notes) without changing formula itself.
+    
+    This endpoint allows users to:
+    - Update formula name
+    - Update tag for categorization  
+    - Update notes
+    - Preserve all formula data unchanged
+    """
+    try:
+        print(f"📝 Editing formula metadata: {wishId}")
+        
+        obj_id = ObjectId(wishId)
+        # Extract user info
+        user_id = current_user.get("user_id") or current_user.get("_id")
+        
+       # Allowed fields whitelist (defense-in-depth)
+        ALLOWED_FIELDS = {"name", "tag", "notes"}
+
+          # Filter allowed fields only
+        data = {k: v for k, v in request.items() if k in ALLOWED_FIELDS and v is not None}
+
+        # Trim name
+        if "name" in data and isinstance(data["name"], str):
+            data["name"] = data["name"].strip()
+
+        # No valid fields
+        if not data:
+            raise HTTPException(400, "No valid fields provided")
+
+        # Build update document
+        update_doc = {
+            **data,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }
+
+        # Atomic update (ownership enforced)
+        result = await wish_history_col.update_one(
+            {"_id": obj_id, "user_id": user_id},
+            {"$set": update_doc}
+        )
+
+        # Not found or unauthorized
+        if result.matched_count == 0:
+            raise HTTPException(404, "Formula not found or access denied")
+
+        return {
+            "success": True,
+            "message": "Updated successfully"
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error editing metadata: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error: {str(e)}"
         )
 
 
