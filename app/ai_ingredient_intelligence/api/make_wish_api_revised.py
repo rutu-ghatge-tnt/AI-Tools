@@ -409,15 +409,16 @@ Ensure percentages are realistic and formula is manufacturable. Return ONLY the 
         
         print(f"✅ Optimized formula: {optimized_formula['optimized_formula']['total_percentage']}%")
         
-        # Stage 3: Manufacturing Process (reuse existing)
-        print("🏭 Stage 3: Manufacturing Process...")
-        from app.ai_ingredient_intelligence.logic.make_wish_generator import generate_manufacturing_prompt
-        manufacturing_prompt = generate_manufacturing_prompt(optimized_formula)
-        manufacturing = await call_ai_with_claude(
-            system_prompt="Generate detailed manufacturing instructions for cosmetic formulations.",
-            user_prompt=manufacturing_prompt,
-            prompt_type="manufacturing_process"
-        )
+        # Stage 3: Manufacturing Process (reuse existing) - COMMENTED FOR NOW
+        # print("🏭 Stage 3: Manufacturing Process...")
+        # from app.ai_ingredient_intelligence.logic.make_wish_generator import generate_manufacturing_prompt
+        # manufacturing_prompt = generate_manufacturing_prompt(optimized_formula)
+        # manufacturing = await call_ai_with_claude(
+        #     system_prompt="Generate detailed manufacturing instructions for cosmetic formulations.",
+        #     user_prompt=manufacturing_prompt,
+        #     prompt_type="manufacturing_process"
+        # )
+        manufacturing = {}  # Placeholder for future use
         
         # Stage 4: Compliance Check (reuse existing)
         print("✅ Stage 4: Compliance Check...")
