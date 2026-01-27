@@ -1011,66 +1011,80 @@ async def submit_commercialization_request(
                 detail="Formula not found or access denied"
             )
         
+        # Check if commercialization request already exists for this formula
+        existing_request = await commercialization_requests_col.find_one({
+            "user_id": user_id,
+            "formula_id": request.formula_id,
+            "history_id": request.history_id,
+            "status": {"$in": ["submitted", "in_progress", "review", "approved"]}
+        })
+        
+        if existing_request:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Commercialization request already exists for this formula. Request ID: {existing_request.get('request_id', 'N/A')}, Queue Number: {existing_request.get('queue_number', 'N/A')}"
+            )
+        
         # Generate queue number and request ID
         queue_number = generate_queue_number()
         request_id = str(uuid.uuid4())
-        submitted_at = datetime.now(timezone(timedelta(hours=5, minutes=30)))
+        created_at = datetime.now(timezone(timedelta(hours=5, minutes=30)))
         
         # Determine queue position (simplified)
         queue_position = None  # Would be calculated from database
         
         # Define next steps based on experience level
         next_steps = []
-        if request.user_profile.experience_level == "dreaming":
+        if request.experience_level == "dreaming":
             next_steps = [
                 {
                     "order": 1,
-                    "emoji": "💬",
+                    "icon": "phone-arrow-up-right",  # Consultation
                     "title": "Consultation Call",
                     "description": "Our formulation expert will call you to understand your vision and requirements",
                     "estimated_timeline": "1-2 business days"
                 },
                 {
                     "order": 2,
-                    "emoji": "🧪",
+                    "icon": "beaker",  # Sample development
                     "title": "Sample Development",
                     "description": "We'll create and test samples based on your formula",
                     "estimated_timeline": "2-3 weeks"
                 },
                 {
                     "order": 3,
-                    "emoji": "📋",
+                    "icon": "document-check",  # Regulatory review
                     "title": "Regulatory Review",
                     "description": "Complete compliance and documentation review",
                     "estimated_timeline": "1 week"
                 },
                 {
                     "order": 4,
-                    "emoji": "🏭",
+                    "icon": "building-office-2",  # Production planning
                     "title": "Production Planning",
                     "description": "Finalize manufacturing specifications and schedule",
                     "estimated_timeline": "1 week"
                 }
             ]
-        elif request.user_profile.experience_level == "ready":
+        elif request.experience_level == "ready":
             next_steps = [
                 {
                     "order": 1,
-                    "emoji": "🧪",
+                    "icon": "beaker",
                     "title": "Sample Batch",
                     "description": "Create production samples for your approval",
                     "estimated_timeline": "1-2 weeks"
                 },
                 {
                     "order": 2,
-                    "emoji": "📋",
+                    "icon": "document-text",
                     "title": "Final Documentation",
                     "description": "Prepare all manufacturing and compliance documents",
                     "estimated_timeline": "3-5 days"
                 },
                 {
                     "order": 3,
-                    "emoji": "🏭",
+                    "icon": "factory",  # Requires Heroicons v2 custom or fallback
                     "title": "Production Start",
                     "description": "Begin manufacturing your product",
                     "estimated_timeline": "2-3 weeks"
@@ -1080,14 +1094,14 @@ async def submit_commercialization_request(
             next_steps = [
                 {
                     "order": 1,
-                    "emoji": "💬",
+                    "icon": "chat-bubble-left-right",
                     "title": "Discovery Call",
                     "description": "Let's discuss your product goals and timeline",
                     "estimated_timeline": "1-2 business days"
                 },
                 {
                     "order": 2,
-                    "emoji": "📊",
+                    "icon": "chart-bar",
                     "title": "Feasibility Analysis",
                     "description": "Technical and commercial viability assessment",
                     "estimated_timeline": "1 week"
@@ -1095,14 +1109,14 @@ async def submit_commercialization_request(
             ]
         
         # Commitment information
-        commitment_info = {
-            "amount": 5000,
-            "currency": "INR",
-            "refundable": True,
-            "refund_policy": "100% refundable if you decide not to proceed after consultation",
-            "platform_charges": "No platform charges",
-            "purpose": "To ensure dedicated time and resources for your project"
-        }
+        # commitment_info = {
+        #     "amount": 5000,
+        #     "currency": "INR",
+        #     "refundable": True,
+        #     "refund_policy": "100% refundable if you decide not to proceed after consultation",
+        #     "platform_charges": "No platform charges",
+        #     "purpose": "To ensure dedicated time and resources for your project"
+        # }
         
         # Save commercialization request to database
         commercialization_doc = {
@@ -1111,13 +1125,18 @@ async def submit_commercialization_request(
             "user_id": user_id,
             "formula_id": request.formula_id,
             "history_id": request.history_id,
-            "user_profile": request.user_profile.model_dump(),
-            "formula_snapshot": request.formula_snapshot,
+            "name": request.name,
+            "phone": request.phone,
+            "city": request.city,
+            "experience_level": request.experience_level,
+            "timeline": request.timeline,
+            "quantity_interest": request.quantity_interest,
+            "additional_notes": request.additional_notes,
             "status": "submitted",
-            "submitted_at": submitted_at.isoformat(),
+            "created_at": created_at.isoformat(),
             "next_steps": next_steps,
-            "commitment_info": commitment_info,
-            "updated_at": submitted_at.isoformat()
+            # "commitment_info": commitment_info,
+            "updated_at": created_at.isoformat()
         }
         
         try:
@@ -1129,17 +1148,17 @@ async def submit_commercialization_request(
         
         print(f"✅ Commercialization request submitted")
         print(f"   Queue Number: {queue_number}")
-        print(f"   Experience Level: {request.user_profile.experience_level}")
-        print(f"   Timeline: {request.user_profile.timeline}")
+        print(f"   Experience Level: {request.experience_level}")
+        print(f"   Timeline: {request.timeline}")
         
         return GetThisMadeResponse(
             success=True,
             queue_number=queue_number,
             queue_position=queue_position,
             request_id=request_id,
-            submitted_at=submitted_at,
+            created_at=created_at,
             next_steps=next_steps,
-            commitment_info=commitment_info
+            # commitment_info=commitment_info
         )
     
     except HTTPException:

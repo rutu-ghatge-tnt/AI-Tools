@@ -45,7 +45,7 @@ from app.ai_ingredient_intelligence.logic.formula_generator import (
 from app.ai_ingredient_intelligence.logic.make_wish_generator import (
     generate_formula_from_wish as generate_make_wish_formula
 )
-from app.ai_ingredient_intelligence.db.collections import wish_history_col
+from app.ai_ingredient_intelligence.db.collections import wish_history_col, commercialization_requests_col
 
 router = APIRouter(prefix="/formula", tags=["Formula Generation"])
 
@@ -922,6 +922,28 @@ async def get_wish_history_detail(
         if not doc:
             raise HTTPException(status_code=404, detail="History item not found")
         
+        # Check if commercialization request exists for this formula
+        formula_id = doc.get("formula_id", "")
+        commercialization_request = None
+        
+        if formula_id:
+            commercialization_request = await commercialization_requests_col.find_one({
+                "user_id": user_id,
+                "formula_id": formula_id,
+                "history_id": history_id,
+                "status": {"$in": ["submitted", "in_progress", "review", "completed"]}
+            })
+            
+            # If found, format the response
+            if commercialization_request:
+                commercialization_request = {
+                    "_id": str(commercialization_request.get("_id")),
+                    "queue_number": commercialization_request.get("queue_number"),
+                    "status": commercialization_request.get("status"),
+                    "created_at": commercialization_request.get("created_at"),
+                    "additional_notes": commercialization_request.get("additional_notes"),
+                }
+        
         # Return full data - handle both old and new data gracefully
         return {
             "id": str(doc["_id"]),
@@ -938,7 +960,9 @@ async def get_wish_history_detail(
             "formula_data": doc.get("formula_data", None),
             # Legacy fields - optional for backward compatibility
             "wish_data": doc.get("wish_data", None),  # Changed from {} to None to handle missing gracefully
-            "formula_result": doc.get("formula_result", None)  # Changed from {} to None to handle missing gracefully
+            "formula_result": doc.get("formula_result", None),  # Changed from {} to None to handle missing gracefully
+            # Commercialization request if exists
+            "quote_data": commercialization_request
         }
         
     except HTTPException:
