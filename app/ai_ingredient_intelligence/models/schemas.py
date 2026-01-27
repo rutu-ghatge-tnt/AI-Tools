@@ -843,3 +843,45 @@ class FetchPlatformsResponse(BaseModel):
     platforms: List[PlatformInfo] = Field(..., description="List of platform links for the product")
     total_platforms: int = Field(..., description="Total number of unique platforms found")
     product_name: str = Field(..., description="The product name that was searched")
+
+
+# ============================================================================
+# INGREDIENT INFO API SCHEMAS
+# ============================================================================
+
+class IngredientInfoRequest(BaseModel):
+    """Request schema for batch ingredient info lookup"""
+    ingredient_names: List[str] = Field(..., description="List of ingredient names to lookup")
+    include_all_info: bool = Field(False, description="If true, return all available info. If false, return only description")
+
+
+class SupplierInfo(BaseModel):
+    """Schema for supplier information"""
+    supplier_id: Optional[str] = Field(None, description="Supplier ID")
+    supplier_name: Optional[str] = Field(None, description="Supplier name")
+
+
+class IngredientInfoFull(BaseModel):
+    """Schema for full ingredient information"""
+    ingredient_id: str = Field(..., description="Ingredient ID")
+    ingredient_name: str = Field(..., description="Ingredient name")
+    description: Optional[str] = Field(None, description="Enhanced description (only enhanced_description, no fallback)")
+    supplier: Optional[SupplierInfo] = Field(None, description="Supplier information")
+    category: Optional[str] = Field(None, description="Category: 'Active' or 'Excipient'")
+    inci_names: List[str] = Field(default_factory=list, description="List of INCI names")
+    functional_categories: List[List[str]] = Field(default_factory=list, description="Functional category tree paths")
+    chemical_classes: List[List[str]] = Field(default_factory=list, description="Chemical class tree paths")
+    cost_per_kg: Optional[float] = Field(None, description="Cost per kg from distributor")
+    found: bool = Field(..., description="Whether ingredient was found in database")
+
+
+class IngredientInfoDescriptionOnly(BaseModel):
+    """Schema for description-only ingredient information"""
+    ingredient_name: str = Field(..., description="Ingredient name")
+    description: Optional[str] = Field(None, description="Enhanced description (only enhanced_description, no fallback)")
+    found: bool = Field(..., description="Whether ingredient was found in database")
+
+
+class IngredientInfoResponse(BaseModel):
+    """Response schema for ingredient info lookup"""
+    results: List[Union[IngredientInfoFull, IngredientInfoDescriptionOnly]] = Field(..., description="List of ingredient info results")

@@ -1,7 +1,9 @@
 """Ingredient Search API - Autocomplete for ingredient names"""
 
 from fastapi import APIRouter, HTTPException, Depends, Query
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Union
+from bson import ObjectId
+import re
 
 # Import authentication
 from app.ai_ingredient_intelligence.auth import verify_jwt_token
@@ -9,7 +11,17 @@ from app.ai_ingredient_intelligence.db.collections import (
     branded_ingredients_col, 
     inci_col,
     distributor_col,
-    suppliers_col
+    suppliers_col,
+    functional_categories_col,
+    chemical_classes_col
+)
+from app.ai_ingredient_intelligence.logic.matcher import build_category_tree
+from app.ai_ingredient_intelligence.models.schemas import (
+    IngredientInfoRequest,
+    IngredientInfoResponse,
+    IngredientInfoFull,
+    IngredientInfoDescriptionOnly,
+    SupplierInfo
 )
 
 router = APIRouter(prefix="/ingredients", tags=["Ingredient Search"])
@@ -593,6 +605,342 @@ async def get_ingredients_by_supplier_id(
         }
     except HTTPException:
         raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+
+@router.post("/info", response_model=IngredientInfoResponse)
+async def get_ingredients_info(
+    request: IngredientInfoRequest,
+    current_user: dict = Depends(verify_jwt_token)  # JWT token validation
+):
+    """
+    Get ingredient information by names.
+    
+    If include_all_info is True: Returns all available info including supplier, functionality, cost, etc.
+    If include_all_info is False: Returns only the enhanced_description field.
+    
+    Request body:
+    {
+        "ingredient_names": ["Ingredient Name 1", "Ingredient Name 2"],
+        "include_all_info": true/false
+    }
+    """
+    try:
+        if not request.ingredient_names:
+            return IngredientInfoResponse(results=[])
+        
+        # Build query to find all ingredients by name (case-insensitive)
+        # We'll match each ingredient name individually for better accuracy
+        ingredient_names_clean = [name.strip() for name in request.ingredient_names if name.strip()]
+        if not ingredient_names_clean:
+            return IngredientInfoResponse(results=[])
+        
+        # Find all matching ingredients using $or with regex for each name
+        query = {
+            "$or": [
+                {"ingredient_name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}}
+                for name in ingredient_names_clean
+            ]
+        }
+        
+        # Fetch all matching documents
+        cursor = branded_ingredients_col.find(query)
+        all_docs = await cursor.to_list(length=None)
+        
+        # Create a map of ingredient_name (lowercase) -> document for quick lookup
+        ingredient_map = {}
+        for doc in all_docs:
+            ing_name_lower = doc.get("ingredient_name", "").strip().lower()
+            # If multiple matches, keep the first one (or you could handle duplicates differently)
+            if ing_name_lower not in ingredient_map:
+                ingredient_map[ing_name_lower] = doc
+        
+        results = []
+        
+        # If only description is needed, return simple results
+        if not request.include_all_info:
+            for ingredient_name in ingredient_names_clean:
+                ing_name_lower = ingredient_name.lower()
+                
+                if ing_name_lower in ingredient_map:
+                    doc = ingredient_map[ing_name_lower]
+                    # Only use enhanced_description, no fallback
+                    description = doc.get("enhanced_description")
+                    
+                    results.append(IngredientInfoDescriptionOnly(
+                        ingredient_name=ingredient_name,
+                        description=description,
+                        found=True
+                    ))
+                else:
+                    results.append(IngredientInfoDescriptionOnly(
+                        ingredient_name=ingredient_name,
+                        description=None,
+                        found=False
+                    ))
+            
+            return IngredientInfoResponse(results=results)
+        
+        # Full info mode - batch fetch all related data
+        # Collect all IDs for batch queries
+        all_ingredient_ids = []
+        all_inci_ids = []
+        all_func_category_ids = []
+        all_chem_class_ids = []
+        all_supplier_ids = []
+        doc_inci_map = {}  # Map ingredient_id -> list of inci_ids
+        doc_func_map = {}  # Map ingredient_id -> list of func_category_ids
+        doc_chem_map = {}  # Map ingredient_id -> list of chem_class_ids
+        
+        for doc in all_docs:
+            ing_id = str(doc["_id"])
+            all_ingredient_ids.append(ing_id)
+            
+            # Collect INCI IDs
+            if doc.get("inci_ids"):
+                valid_inci_ids = []
+                for inci_id in doc["inci_ids"]:
+                    try:
+                        if isinstance(inci_id, str):
+                            valid_inci_ids.append(ObjectId(inci_id))
+                        else:
+                            valid_inci_ids.append(inci_id)
+                    except:
+                        pass
+                if valid_inci_ids:
+                    doc_inci_map[ing_id] = valid_inci_ids
+                    all_inci_ids.extend(valid_inci_ids)
+            
+            # Collect functional category IDs
+            if doc.get("functional_category_ids"):
+                valid_func_ids = []
+                for func_id in doc.get("functional_category_ids", []):
+                    try:
+                        if isinstance(func_id, str):
+                            valid_func_ids.append(ObjectId(func_id))
+                        else:
+                            valid_func_ids.append(func_id)
+                    except:
+                        pass
+                if valid_func_ids:
+                    doc_func_map[ing_id] = valid_func_ids
+                    all_func_category_ids.extend(valid_func_ids)
+            
+            # Collect chemical class IDs
+            if doc.get("chemical_class_ids"):
+                valid_chem_ids = []
+                for chem_id in doc.get("chemical_class_ids", []):
+                    try:
+                        if isinstance(chem_id, str):
+                            valid_chem_ids.append(ObjectId(chem_id))
+                        else:
+                            valid_chem_ids.append(chem_id)
+                    except:
+                        pass
+                if valid_chem_ids:
+                    doc_chem_map[ing_id] = valid_chem_ids
+                    all_chem_class_ids.extend(valid_chem_ids)
+            
+            # Collect supplier IDs
+            supplier_id = doc.get("supplier_id")
+            if supplier_id:
+                if isinstance(supplier_id, ObjectId):
+                    all_supplier_ids.append(supplier_id)
+                elif isinstance(supplier_id, str):
+                    try:
+                        all_supplier_ids.append(ObjectId(supplier_id))
+                    except:
+                        pass
+        
+        # Batch fetch INCI documents
+        inci_map = {}
+        if all_inci_ids:
+            unique_inci_ids = []
+            seen = set()
+            for inci_id in all_inci_ids:
+                inci_id_str = str(inci_id)
+                if inci_id_str not in seen:
+                    seen.add(inci_id_str)
+                    unique_inci_ids.append(inci_id)
+            
+            inci_cursor = inci_col.find(
+                {"_id": {"$in": unique_inci_ids}},
+                {"inciName": 1, "category": 1}
+            )
+            async for inci_doc in inci_cursor:
+                inci_map[inci_doc["_id"]] = {
+                    "inciName": inci_doc.get("inciName", ""),
+                    "category": inci_doc.get("category", "")
+                }
+        
+        # Batch fetch supplier documents
+        supplier_map = {}
+        unique_supplier_ids = []
+        if all_supplier_ids:
+            seen = set()
+            for sup_id in all_supplier_ids:
+                sup_id_str = str(sup_id)
+                if sup_id_str not in seen:
+                    seen.add(sup_id_str)
+                    unique_supplier_ids.append(sup_id)
+            
+            if unique_supplier_ids:
+                supplier_cursor = suppliers_col.find(
+                    {"_id": {"$in": unique_supplier_ids}},
+                    {"supplierName": 1}
+                )
+                async for sup_doc in supplier_cursor:
+                    supplier_map[sup_doc["_id"]] = sup_doc.get("supplierName", "")
+        
+        # Batch fetch distributor costs by supplierId
+        supplier_distributor_map = {}
+        if unique_supplier_ids:
+            for sup_id in unique_supplier_ids:
+                dist_doc = await distributor_col.find_one(
+                    {"supplierId": str(sup_id)},
+                    sort=[("createdAt", -1)]
+                )
+                if dist_doc and dist_doc.get("pricePerKg") is not None:
+                    try:
+                        supplier_distributor_map[str(sup_id)] = float(dist_doc.get("pricePerKg", 0))
+                    except (ValueError, TypeError):
+                        pass
+        
+        # Batch fetch distributor costs by ingredientIds
+        ingredient_distributor_map = {}
+        if all_ingredient_ids:
+            dist_cursor = distributor_col.find(
+                {"ingredientIds": {"$in": all_ingredient_ids}},
+                {"ingredientIds": 1, "pricePerKg": 1, "createdAt": 1}
+            ).sort("createdAt", -1)
+            
+            async for dist_doc in dist_cursor:
+                price = dist_doc.get("pricePerKg")
+                if price is not None:
+                    try:
+                        cost = float(price)
+                        for ing_id in dist_doc.get("ingredientIds", []):
+                            if ing_id not in ingredient_distributor_map:
+                                ingredient_distributor_map[ing_id] = cost
+                    except (ValueError, TypeError):
+                        pass
+        
+        # Build results in the same order as input
+        for ingredient_name in ingredient_names_clean:
+            ing_name_lower = ingredient_name.lower()
+            
+            if ing_name_lower in ingredient_map:
+                doc = ingredient_map[ing_name_lower]
+                ing_id = str(doc["_id"])
+                
+                # Get enhanced_description only (no fallback)
+                description = doc.get("enhanced_description")
+                
+                # Get supplier info
+                supplier_info = None
+                supplier_id = doc.get("supplier_id")
+                if supplier_id:
+                    supplier_id_str = str(supplier_id) if isinstance(supplier_id, ObjectId) else supplier_id
+                    supplier_id_obj = supplier_id if isinstance(supplier_id, ObjectId) else ObjectId(supplier_id)
+                    
+                    supplier_name = supplier_map.get(supplier_id_obj)
+                    if supplier_name:
+                        supplier_info = SupplierInfo(
+                            supplier_id=supplier_id_str,
+                            supplier_name=supplier_name
+                        )
+                
+                # Get category
+                category = doc.get("category_decided", "")
+                
+                # Get INCI names
+                inci_names = []
+                original_inci = doc.get("original_inci_name", "")
+                if original_inci:
+                    inci_names.append(original_inci)
+                
+                if ing_id in doc_inci_map:
+                    for inci_id_obj in doc_inci_map[ing_id]:
+                        if inci_id_obj in inci_map:
+                            inci_name = inci_map[inci_id_obj].get("inciName", "")
+                            if inci_name and inci_name not in inci_names:
+                                inci_names.append(inci_name)
+                            if not category:
+                                category = inci_map[inci_id_obj].get("category", "")
+                
+                # Get functional categories
+                functional_categories = []
+                if ing_id in doc_func_map:
+                    func_ids = doc_func_map[ing_id]
+                    for func_id in func_ids:
+                        func_tree = await build_category_tree(
+                            functional_categories_col,
+                            [func_id],
+                            "functionalName"
+                        )
+                        functional_categories.extend(func_tree)
+                
+                # Get chemical classes
+                chemical_classes = []
+                if ing_id in doc_chem_map:
+                    chem_ids = doc_chem_map[ing_id]
+                    for chem_id in chem_ids:
+                        chem_tree = await build_category_tree(
+                            chemical_classes_col,
+                            [chem_id],
+                            "chemicalClassName"
+                        )
+                        chemical_classes.extend(chem_tree)
+                
+                # Get cost
+                cost_per_kg = None
+                if supplier_id:
+                    supplier_id_str = str(supplier_id) if isinstance(supplier_id, ObjectId) else supplier_id
+                    if supplier_id_str in supplier_distributor_map:
+                        cost_per_kg = supplier_distributor_map[supplier_id_str]
+                
+                if cost_per_kg is None and ing_id in ingredient_distributor_map:
+                    cost_per_kg = ingredient_distributor_map[ing_id]
+                
+                # Default cost based on category
+                if cost_per_kg is None:
+                    if category == "Active":
+                        cost_per_kg = 5000.0
+                    else:
+                        cost_per_kg = 500.0
+                
+                results.append(IngredientInfoFull(
+                    ingredient_id=ing_id,
+                    ingredient_name=ingredient_name,
+                    description=description,
+                    supplier=supplier_info,
+                    category=category or None,
+                    inci_names=inci_names,
+                    functional_categories=functional_categories,
+                    chemical_classes=chemical_classes,
+                    cost_per_kg=cost_per_kg,
+                    found=True
+                ))
+            else:
+                # Ingredient not found
+                results.append(IngredientInfoFull(
+                    ingredient_id="",
+                    ingredient_name=ingredient_name,
+                    description=None,
+                    supplier=None,
+                    category=None,
+                    inci_names=[],
+                    functional_categories=[],
+                    chemical_classes=[],
+                    cost_per_kg=None,
+                    found=False
+                ))
+        
+        return IngredientInfoResponse(results=results)
+        
     except Exception as e:
         import traceback
         traceback.print_exc()
