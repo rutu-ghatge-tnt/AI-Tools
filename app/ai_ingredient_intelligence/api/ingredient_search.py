@@ -620,7 +620,9 @@ async def get_ingredients_info(
     Get ingredient information by names.
     
     If include_all_info is True: Returns all available info including supplier, functionality, cost, etc.
-    If include_all_info is False: Returns only the enhanced_description field.
+    If include_all_info is False: Returns only the description field.
+    
+    Description field: Uses enhanced_description if available, otherwise falls back to description.
     
     Request body:
     {
@@ -667,8 +669,8 @@ async def get_ingredients_info(
                 
                 if ing_name_lower in ingredient_map:
                     doc = ingredient_map[ing_name_lower]
-                    # Only use enhanced_description, no fallback
-                    description = doc.get("enhanced_description")
+                    # Use enhanced_description if available, otherwise fallback to description
+                    description = doc.get("enhanced_description") or doc.get("description")
                     
                     results.append(IngredientInfoDescriptionOnly(
                         ingredient_name=ingredient_name,
@@ -836,8 +838,8 @@ async def get_ingredients_info(
                 doc = ingredient_map[ing_name_lower]
                 ing_id = str(doc["_id"])
                 
-                # Get enhanced_description only (no fallback)
-                description = doc.get("enhanced_description")
+                # Get enhanced_description if available, otherwise fallback to description
+                description = doc.get("enhanced_description") or doc.get("description")
                 
                 # Get supplier info
                 supplier_info = None
