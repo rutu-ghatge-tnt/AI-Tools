@@ -620,7 +620,9 @@ async def get_ingredients_info(
     Get ingredient information by names.
     
     If include_all_info is True: Returns all available info including supplier, functionality, cost, etc.
-    If include_all_info is False: Returns only the enhanced_description field.
+    If include_all_info is False: Returns only the description field.
+    
+    Description field: Uses enhanced_description if available, otherwise falls back to description.
     
     Request body:
     {
@@ -638,25 +640,78 @@ async def get_ingredients_info(
         if not ingredient_names_clean:
             return IngredientInfoResponse(results=[])
         
-        # Find all matching ingredients using $or with regex for each name
-        query = {
-            "$or": [
-                {"ingredient_name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}}
-                for name in ingredient_names_clean
-            ]
-        }
+        # Helper function to normalize ingredient names for matching
+        def normalize_for_match(name: str) -> str:
+            """Normalize ingredient name by removing common variations"""
+            if not name:
+                return ""
+            # Remove common prefixes/suffixes and normalize
+            normalized = name.lower().strip()
+            # Remove content in parentheses (e.g., "Aqua (Water)" -> "Aqua")
+            normalized = re.sub(r'\s*\([^)]*\)', '', normalized).strip()
+            # Remove extra whitespace
+            normalized = re.sub(r'\s+', ' ', normalized).strip()
+            return normalized
+        
+        # Build query to match both ingredient_name and original_inci_name
+        # Also try normalized versions (without parentheses)
+        query_conditions = []
+        for name in ingredient_names_clean:
+            escaped_name = re.escape(name)
+            normalized_name = normalize_for_match(name)
+            escaped_normalized = re.escape(normalized_name)
+            
+            # Exact match on ingredient_name
+            query_conditions.append({"ingredient_name": {"$regex": f"^{escaped_name}$", "$options": "i"}})
+            # Exact match on original_inci_name
+            query_conditions.append({"original_inci_name": {"$regex": f"^{escaped_name}$", "$options": "i"}})
+            
+            # If normalized is different, also try normalized match
+            if normalized_name != name.lower():
+                query_conditions.append({"ingredient_name": {"$regex": f"^{escaped_normalized}$", "$options": "i"}})
+                query_conditions.append({"original_inci_name": {"$regex": f"^{escaped_normalized}$", "$options": "i"}})
+            
+            # Also try partial match (contains) for cases like "Aqua (Water)" matching "Water"
+            # But only if the search term is a single word or short
+            if len(name.split()) <= 2:
+                query_conditions.append({"ingredient_name": {"$regex": escaped_name, "$options": "i"}})
+                query_conditions.append({"original_inci_name": {"$regex": escaped_name, "$options": "i"}})
+        
+        query = {"$or": query_conditions}
         
         # Fetch all matching documents
         cursor = branded_ingredients_col.find(query)
         all_docs = await cursor.to_list(length=None)
         
         # Create a map of ingredient_name (lowercase) -> document for quick lookup
+        # Also create maps for normalized names and original_inci_name
         ingredient_map = {}
+        normalized_map = {}  # normalized name -> document
+        inci_name_map = {}  # original_inci_name (lowercase) -> document
+        
         for doc in all_docs:
-            ing_name_lower = doc.get("ingredient_name", "").strip().lower()
-            # If multiple matches, keep the first one (or you could handle duplicates differently)
+            ing_name = doc.get("ingredient_name", "").strip()
+            ing_name_lower = ing_name.lower()
+            original_inci = doc.get("original_inci_name", "").strip()
+            original_inci_lower = original_inci.lower() if original_inci else ""
+            
+            # Map by exact ingredient_name
             if ing_name_lower not in ingredient_map:
                 ingredient_map[ing_name_lower] = doc
+            
+            # Map by normalized ingredient_name (without parentheses)
+            ing_name_normalized = normalize_for_match(ing_name)
+            if ing_name_normalized and ing_name_normalized not in normalized_map:
+                normalized_map[ing_name_normalized] = doc
+            
+            # Map by original_inci_name (exact and normalized)
+            if original_inci_lower:
+                if original_inci_lower not in inci_name_map:
+                    inci_name_map[original_inci_lower] = doc
+                # Also map normalized version of original_inci_name
+                original_inci_normalized = normalize_for_match(original_inci)
+                if original_inci_normalized and original_inci_normalized not in inci_name_map:
+                    inci_name_map[original_inci_normalized] = doc
         
         results = []
         
@@ -664,11 +719,41 @@ async def get_ingredients_info(
         if not request.include_all_info:
             for ingredient_name in ingredient_names_clean:
                 ing_name_lower = ingredient_name.lower()
+                ing_name_normalized = normalize_for_match(ingredient_name)
                 
+                # Try multiple matching strategies
+                doc = None
+                
+                # 1. Try exact match on ingredient_name
                 if ing_name_lower in ingredient_map:
                     doc = ingredient_map[ing_name_lower]
-                    # Only use enhanced_description, no fallback
-                    description = doc.get("enhanced_description")
+                # 2. Try normalized match
+                elif ing_name_normalized in normalized_map:
+                    doc = normalized_map[ing_name_normalized]
+                # 3. Try match on original_inci_name
+                elif ing_name_lower in inci_name_map:
+                    doc = inci_name_map[ing_name_lower]
+                # 4. Try normalized match on original_inci_name
+                elif ing_name_normalized in inci_name_map:
+                    doc = inci_name_map[ing_name_normalized]
+                # 5. Fallback: check if search term is contained in any found document's name
+                else:
+                    # Search through all found documents for partial match
+                    for found_doc in all_docs:
+                        found_ing_name = found_doc.get("ingredient_name", "").lower()
+                        found_original_inci = found_doc.get("original_inci_name", "").lower()
+                        
+                        # Check if search term is contained in ingredient_name or original_inci_name
+                        if (ing_name_lower in found_ing_name or 
+                            ing_name_normalized in found_ing_name or
+                            ing_name_lower in found_original_inci or
+                            ing_name_normalized in found_original_inci):
+                            doc = found_doc
+                            break
+                
+                if doc:
+                    # Use enhanced_description if available, otherwise fallback to description
+                    description = doc.get("enhanced_description") or doc.get("description")
                     
                     results.append(IngredientInfoDescriptionOnly(
                         ingredient_name=ingredient_name,
@@ -831,13 +916,44 @@ async def get_ingredients_info(
         # Build results in the same order as input
         for ingredient_name in ingredient_names_clean:
             ing_name_lower = ingredient_name.lower()
+            ing_name_normalized = normalize_for_match(ingredient_name)
             
+            # Try multiple matching strategies
+            doc = None
+            
+            # 1. Try exact match on ingredient_name
             if ing_name_lower in ingredient_map:
+                doc = ingredient_map[ing_name_lower]
+            # 2. Try normalized match
+            elif ing_name_normalized in normalized_map:
+                doc = normalized_map[ing_name_normalized]
+            # 3. Try match on original_inci_name
+            elif ing_name_lower in inci_name_map:
+                doc = inci_name_map[ing_name_lower]
+            # 4. Try normalized match on original_inci_name
+            elif ing_name_normalized in inci_name_map:
+                doc = inci_name_map[ing_name_normalized]
+            # 5. Fallback: check if search term is contained in any found document's name
+            else:
+                # Search through all found documents for partial match
+                for found_doc in all_docs:
+                    found_ing_name = found_doc.get("ingredient_name", "").lower()
+                    found_original_inci = found_doc.get("original_inci_name", "").lower()
+                    
+                    # Check if search term is contained in ingredient_name or original_inci_name
+                    if (ing_name_lower in found_ing_name or 
+                        ing_name_normalized in found_ing_name or
+                        ing_name_lower in found_original_inci or
+                        ing_name_normalized in found_original_inci):
+                        doc = found_doc
+                        break
+            
+            if doc:
                 doc = ingredient_map[ing_name_lower]
                 ing_id = str(doc["_id"])
                 
-                # Get enhanced_description only (no fallback)
-                description = doc.get("enhanced_description")
+                # Get enhanced_description if available, otherwise fallback to description
+                description = doc.get("enhanced_description") or doc.get("description")
                 
                 # Get supplier info
                 supplier_info = None
