@@ -46,6 +46,7 @@ from app.ai_ingredient_intelligence.logic.make_wish_config import (
     get_alternatives_for_ingredient, check_compatibility,
     generate_queue_number, EDIT_RULES
 )
+from app.ai_ingredient_intelligence.logic.make_wish_icon_mapping import emoji_to_icon
 
 # Import AI prompts
 from app.ai_ingredient_intelligence.logic.make_wish_prompts_revised import (
@@ -450,7 +451,7 @@ Ensure percentages are realistic and the formula is manufacturable.
                 "complexity_info": {
                     "id": request.complexity,
                     "name": complexity_config["name"],
-                    "emoji": complexity_config["emoji"],
+                    "icon": complexity_config.get("icon", "circle"),
                     "description": complexity_config["description"],
                     "highlights": complexity_config["highlights"],
                     "marketing_angle": complexity_config["marketing_angle"]
@@ -542,7 +543,7 @@ async def get_ingredient_alternatives(
             "current": {
                 "name": current_variant.get("name", "Unknown"),
                 "inci_name": current_variant.get("inci", "Unknown"),
-                "emoji": current_variant.get("emoji", "🧪"),
+                "icon": current_variant.get("icon", emoji_to_icon(current_variant.get("emoji", "🧪"), "flask")),
                 "description": current_variant.get("description", ""),
                 "benefit_tag": current_variant.get("benefit", ""),
                 "suggested_percentage": current_variant.get("percentage", ""),
@@ -554,7 +555,7 @@ async def get_ingredient_alternatives(
                 {
                     "name": alt.get("name", "Unknown"),
                     "inci_name": alt.get("inci", "Unknown"),
-                    "emoji": alt.get("emoji", "🌿"),
+                    "icon": alt.get("icon", emoji_to_icon(alt.get("emoji", "🌿"), "leaf")),
                     "description": alt.get("description", ""),
                     "benefit_tag": alt.get("benefit", ""),
                     "suggested_percentage": alt.get("percentage", ""),
@@ -905,28 +906,28 @@ async def submit_commercialization_request(
             next_steps = [
                 {
                     "order": 1,
-                    "emoji": "💬",
+                    "icon": "message-circle",
                     "title": "Consultation Call",
                     "description": "Our formulation expert will call you to understand your vision and requirements",
                     "estimated_timeline": "1-2 business days"
                 },
                 {
                     "order": 2,
-                    "emoji": "🧪",
+                    "icon": "flask",
                     "title": "Sample Development",
                     "description": "We'll create and test samples based on your formula",
                     "estimated_timeline": "2-3 weeks"
                 },
                 {
                     "order": 3,
-                    "emoji": "📋",
+                    "icon": "clipboard",
                     "title": "Regulatory Review",
                     "description": "Complete compliance and documentation review",
                     "estimated_timeline": "1 week"
                 },
                 {
                     "order": 4,
-                    "emoji": "🏭",
+                    "icon": "factory",
                     "title": "Production Planning",
                     "description": "Finalize manufacturing specifications and schedule",
                     "estimated_timeline": "1 week"
@@ -936,21 +937,21 @@ async def submit_commercialization_request(
             next_steps = [
                 {
                     "order": 1,
-                    "emoji": "🧪",
+                    "icon": "flask",
                     "title": "Sample Batch",
                     "description": "Create production samples for your approval",
                     "estimated_timeline": "1-2 weeks"
                 },
                 {
                     "order": 2,
-                    "emoji": "📋",
+                    "icon": "clipboard",
                     "title": "Final Documentation",
                     "description": "Prepare all manufacturing and compliance documents",
                     "estimated_timeline": "3-5 days"
                 },
                 {
                     "order": 3,
-                    "emoji": "🏭",
+                    "icon": "factory",
                     "title": "Production Start",
                     "description": "Begin manufacturing your product",
                     "estimated_timeline": "2-3 weeks"
@@ -960,14 +961,14 @@ async def submit_commercialization_request(
             next_steps = [
                 {
                     "order": 1,
-                    "emoji": "💬",
+                    "icon": "message-circle",
                     "title": "Discovery Call",
                     "description": "Let's discuss your product goals and timeline",
                     "estimated_timeline": "1-2 business days"
                 },
                 {
                     "order": 2,
-                    "emoji": "📊",
+                    "icon": "bar-chart",
                     "title": "Feasibility Analysis",
                     "description": "Technical and commercial viability assessment",
                     "estimated_timeline": "1 week"

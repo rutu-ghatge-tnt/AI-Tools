@@ -134,7 +134,7 @@ Always include appropriate:
   
   "insights": [
     {
-      "icon": "💡",
+      "icon": "lightbulb",
       "category": "efficacy|stability|cost|safety",
       "title": "Niacinamide at 5%",
       "text": "Clinical studies show 5% niacinamide provides optimal brightening benefits while minimizing potential flushing."
@@ -315,7 +315,7 @@ CRITICAL: This is a BRAND NEW formula being created from scratch. There is NO "o
   
   "insights": [
     {
-      "icon": "💡",
+      "icon": "lightbulb",
       "title": "Niacinamide at 5%",
       "text": "Optimized at 5% for maximum efficacy. Higher percentages show diminishing returns."
     }
@@ -685,9 +685,9 @@ You are a regulatory affairs specialist for cosmetics with expertise in BIS (Bur
   "ingredient_status": [
     {
       "ingredient": "Niacinamide",
-      "bis": "✅ Allowed",
-      "eu": "✅ Allowed",
-      "fda": "✅ Allowed",
+      "bis": "Allowed",
+      "eu": "Allowed",
+      "fda": "Allowed",
       "concentration": "5%",
       "limit": "No limit",
       "status": "COMPLIANT"

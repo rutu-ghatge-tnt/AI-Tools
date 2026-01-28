@@ -22,7 +22,7 @@ Return ONLY valid JSON with this structure:
     "product_type": {{
         "id": "serum",
         "name": "Serum",
-        "emoji": "🧪",
+        "icon": "flask",
         "confidence": 0.95
     }},
     "detected_ingredients": [
@@ -61,7 +61,7 @@ Return JSON:
             "id": "vitamin_c",
             "inci_name": "Ascorbic Acid",
             "display_name": "Vitamin C",
-            "emoji": "🧪",
+            "icon": "flask",
             "percentage_range": "10-15%",
             "phase": "C",
             "purpose": "brightening",
@@ -130,7 +130,7 @@ Return JSON:
     "why_these_ingredients": [
         {{
             "ingredient_name": "Ingredient Name",
-            "emoji": "🧪",
+            "icon": "flask",
             "explanation": "Why chosen",
             "complexity_reason": "Why for {complexity}"
         }}
@@ -138,7 +138,7 @@ Return JSON:
     "challenges": [
         {{
             "title": "Challenge Title",
-            "emoji": "⚠️",
+            "icon": "alert-triangle",
             "description": "What to expect",
             "tip": "How to handle",
             "severity": "info|attention"
@@ -147,7 +147,7 @@ Return JSON:
     "marketing_tips": [
         {{
             "title": "Tip Title",
-            "emoji": "💡",
+            "icon": "lightbulb",
             "content": "Actionable advice",
             "category": "positioning|pricing|targeting"
         }}
@@ -179,7 +179,7 @@ Return JSON:
     "current_analysis": {{
         "name": "{current_variant}",
         "inci": "INCI Name",
-        "emoji": "🧪",
+        "icon": "flask",
         "description": "Current ingredient description",
         "benefit_tag": "Key benefit",
         "suggested_percentage": "X-X%",
@@ -190,7 +190,7 @@ Return JSON:
         {{
             "name": "Alternative Name",
             "inci": "INCI Name",
-            "emoji": "🌿",
+            "icon": "leaf",
             "description": "Description",
             "benefit_tag": "Unique benefit",
             "suggested_percentage": "X-X%",
