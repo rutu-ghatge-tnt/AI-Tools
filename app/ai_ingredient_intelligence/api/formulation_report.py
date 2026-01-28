@@ -335,7 +335,7 @@ def parse_report_to_json(report_text: str) -> FormulationReportResponse:
             claim_panel=[],
             recommended_ph_range=None,
             expected_benefits_analysis=[],
-            raw_text=report_text
+            # raw_text=report_text
         )
     
     lines = report_text.split('\n')
@@ -712,7 +712,7 @@ def parse_report_to_json(report_text: str) -> FormulationReportResponse:
         claim_panel=claim_panel,
         recommended_ph_range=recommended_ph_range,
         expected_benefits_analysis=expected_benefits_analysis,
-        raw_text=report_text
+        # raw_text=report_text
     )
 
 
@@ -1216,8 +1216,9 @@ async def generate_report_json(
                 
                 update_doc = {
                     "status": "completed",
-                    "analysis_result": analysis_result_dict,  # Use analysis_result for consistency
-                    "report_data": report_text,  # Store raw report text for detail API
+                    # "analysis_result": analysis_result_dict,  # Use analysis_result for consistency
+                    # "report_data": report_text,  # Store raw report text for detail API
+                    "report_data": analysis_result_dict,  # Store raw report text for detail API
                     "processing_time": processing_time
                 }
                 
@@ -1765,7 +1766,7 @@ async def test_generate_ppt(current_user: dict = Depends(verify_jwt_token)):  # 
         ],
         recommended_ph_range="Recommended pH range: 5.5-6.2. This range optimizes stability and efficacy.",
         expected_benefits_analysis=[],
-        raw_text="Sample formulation report for testing"
+        # raw_text="Sample formulation report for testing"
     )
     
     # Use the existing generate_ppt logic
@@ -1812,7 +1813,7 @@ async def test_generate_pdf(current_user: dict = Depends(verify_jwt_token)):  # 
         ],
         recommended_ph_range="Recommended pH range: 5.5-6.2. This range optimizes stability and efficacy.",
         expected_benefits_analysis=[],
-        raw_text="Sample formulation report for testing"
+        # raw_text="Sample formulation report for testing"
     )
     
     # Use the existing generate_pdf logic

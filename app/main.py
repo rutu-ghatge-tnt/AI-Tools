@@ -61,7 +61,7 @@ except ImportError as e:
 
 # Import Make a Wish router (with error handling for missing dependencies)
 try:
-    from app.ai_ingredient_intelligence.api.make_wish_api import router as make_wish_router
+    from app.ai_ingredient_intelligence.api.make_wish_api_revised import router as make_wish_router
 except ImportError as e:
     print(f"Warning: Could not import make_wish router: {e}")
     print("   Make a Wish API will not be available. This is not critical.")
