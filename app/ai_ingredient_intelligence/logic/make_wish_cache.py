@@ -36,7 +36,7 @@ def get_fallback_parse_wish(wish_text: str) -> Dict[str, Any]:
         "product_type": {
             "id": "serum",
             "name": "Serum",
-            "emoji": "🧪",
+            "icon": "flask",
             "confidence": 0.8
         },
         "detected_ingredients": [],
@@ -238,7 +238,7 @@ def get_fallback_generate_formula(parsed_data: Dict[str, Any], complexity: str) 
                 "why_these_ingredients": [
                     {
                         "ingredient_name": "Vitamin C",
-                        "emoji": "🧪",
+                        "icon": "flask",
                         "explanation": "Powerful antioxidant for brightening",
                         "complexity_reason": "Essential active for minimalist formula"
                     }
@@ -246,7 +246,7 @@ def get_fallback_generate_formula(parsed_data: Dict[str, Any], complexity: str) 
                 "challenges": [
                     {
                         "title": "Stability",
-                        "emoji": "⚠️",
+                        "icon": "alert-triangle",
                         "description": "Vitamin C can oxidize quickly",
                         "tip": "Store in dark, cool place",
                         "severity": "attention"
@@ -255,7 +255,7 @@ def get_fallback_generate_formula(parsed_data: Dict[str, Any], complexity: str) 
                 "marketing_tips": [
                     {
                         "title": "Positioning",
-                        "emoji": "💡",
+                        "icon": "lightbulb",
                         "content": "Pure and simple formulation",
                         "category": "positioning"
                     }
@@ -367,13 +367,13 @@ def get_fallback_generate_formula(parsed_data: Dict[str, Any], complexity: str) 
                 "why_these_ingredients": [
                     {
                         "ingredient_name": "Vitamin C",
-                        "emoji": "🧪",
+                        "icon": "flask",
                         "explanation": "Powerful antioxidant for brightening",
                         "complexity_reason": "Key active for classic formula"
                     },
                     {
                         "ingredient_name": "Niacinamide",
-                        "emoji": "🧪",
+                        "icon": "flask",
                         "explanation": "Multi-tasking vitamin for skin health",
                         "complexity_reason": "Complements Vitamin C for classic formula"
                     }
@@ -381,7 +381,7 @@ def get_fallback_generate_formula(parsed_data: Dict[str, Any], complexity: str) 
                 "challenges": [
                     {
                         "title": "pH Balance",
-                        "emoji": "⚠️",
+                        "icon": "alert-triangle",
                         "description": "Multiple actives require careful pH balancing",
                         "tip": "Test pH after adding all ingredients",
                         "severity": "attention"
@@ -390,7 +390,7 @@ def get_fallback_generate_formula(parsed_data: Dict[str, Any], complexity: str) 
                 "marketing_tips": [
                     {
                         "title": "Positioning",
-                        "emoji": "💡",
+                        "icon": "lightbulb",
                         "content": "Balanced formula for everyday use",
                         "category": "positioning"
                     }
@@ -542,13 +542,13 @@ def get_fallback_generate_formula(parsed_data: Dict[str, Any], complexity: str) 
                 "why_these_ingredients": [
                     {
                         "ingredient_name": "Vitamin C",
-                        "emoji": "🧪",
+                        "icon": "flask",
                         "explanation": "Premium antioxidant with Ferulic Acid booster",
                         "complexity_reason": "Luxury formulation with multiple antioxidants"
                     },
                     {
                         "ingredient_name": "Peptides",
-                        "emoji": "🧪",
+                        "icon": "flask",
                         "explanation": "Advanced anti-aging ingredient",
                         "complexity_reason": "Premium active for luxe formula"
                     }
@@ -556,7 +556,7 @@ def get_fallback_generate_formula(parsed_data: Dict[str, Any], complexity: str) 
                 "challenges": [
                     {
                         "title": "Cost",
-                        "emoji": "⚠️",
+                        "icon": "alert-triangle",
                         "description": "Premium ingredients increase cost",
                         "tip": "Position as luxury product",
                         "severity": "info"
@@ -565,7 +565,7 @@ def get_fallback_generate_formula(parsed_data: Dict[str, Any], complexity: str) 
                 "marketing_tips": [
                     {
                         "title": "Positioning",
-                        "emoji": "💡",
+                        "icon": "lightbulb",
                         "content": "Premium formulation with advanced actives",
                         "category": "positioning"
                     }

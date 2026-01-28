@@ -25,7 +25,7 @@ class ProductTypeInfo(BaseModel):
     """Detected product type information"""
     id: str = Field(..., description="Product type ID (e.g., 'serum', 'moisturizer')")
     name: str = Field(..., description="Display name for product type")
-    emoji: str = Field(..., description="Emoji representing product type")
+    icon: str = Field(..., description="Heroicon/Lucide icon name representing product type")
     confidence: float = Field(..., ge=0.0, le=1.0, description="Detection confidence score")
 
 
@@ -112,7 +112,7 @@ class ComplexityInfo(BaseModel):
     """Information about formula complexity"""
     id: str = Field(..., description="Complexity ID")
     name: str = Field(..., description="Complexity name")
-    emoji: str = Field(..., description="Emoji representing complexity")
+    icon: str = Field(..., description="Heroicon/Lucide icon name representing complexity")
     description: str = Field(..., description="Description of this complexity level")
     highlights: List[str] = Field(..., description="Key highlights of this complexity")
     marketing_angle: str = Field(..., description="Marketing angle for this complexity")
@@ -123,7 +123,7 @@ class FormulaIngredientRevised(BaseModel):
     id: str = Field(..., description="Ingredient ID")
     inci_name: str = Field(..., description="INCI name")
     display_name: str = Field(..., description="Display name")
-    emoji: str = Field(..., description="Emoji representing ingredient")
+    icon: str = Field(..., description="Heroicon/Lucide icon name representing ingredient")
     percentage: str = Field(..., description="Percentage (e.g., '5%' or 'q.s.')")
     percentage_range: Optional[str] = Field(None, description="Percentage range (e.g., '3-5%')")
     phase: str = Field(..., description="Phase assignment")
@@ -145,7 +145,7 @@ class HeroIngredient(BaseModel):
     """Hero ingredient information"""
     id: str = Field(..., description="Hero ingredient ID")
     name: str = Field(..., description="Ingredient name")
-    emoji: str = Field(..., description="Ingredient emoji")
+    icon: str = Field(..., description="Heroicon/Lucide icon name for ingredient")
     percentage: str = Field(..., description="Percentage used")
     why_included: str = Field(..., description="Why this ingredient was included")
     complexity_variant: str = Field(..., description="Variant used for this complexity")
@@ -173,7 +173,7 @@ class FormulaOutput(BaseModel):
 class WhyIngredient(BaseModel):
     """Explanation for why an ingredient was chosen"""
     ingredient_name: str = Field(..., description="Ingredient name")
-    emoji: str = Field(..., description="Ingredient emoji")
+    icon: str = Field(..., description="Heroicon/Lucide icon name for ingredient")
     explanation: str = Field(..., description="User-friendly explanation")
     complexity_reason: Optional[str] = Field(None, description="Why this variant for this complexity")
 
@@ -181,7 +181,7 @@ class WhyIngredient(BaseModel):
 class Challenge(BaseModel):
     """Potential challenge with the formula"""
     title: str = Field(..., description="Challenge title")
-    emoji: str = Field(..., description="Emoji representing challenge")
+    icon: str = Field(..., description="Heroicon/Lucide icon name representing challenge")
     description: str = Field(..., description="What to expect")
     tip: str = Field(..., description="How to handle it")
     severity: str = Field(..., description="Severity: 'info' or 'attention'")
@@ -190,7 +190,7 @@ class Challenge(BaseModel):
 class MarketingTip(BaseModel):
     """Marketing tip for the formula"""
     title: str = Field(..., description="Tip title")
-    emoji: str = Field(..., description="Emoji representing tip")
+    icon: str = Field(..., description="Heroicon/Lucide icon name representing tip")
     content: str = Field(..., description="The actual tip content")
     category: str = Field(..., description="Tip category: 'positioning', 'pricing', or 'targeting'")
 
@@ -244,7 +244,7 @@ class AlternativeOption(BaseModel):
     """Alternative ingredient option"""
     name: str = Field(..., description="Alternative name")
     inci_name: str = Field(..., description="INCI name")
-    emoji: str = Field(..., description="Emoji")
+    icon: str = Field(..., description="Heroicon/Lucide icon name")
     description: str = Field(..., description="Description")
     benefit_tag: str = Field(..., description="Benefit tag")
     suggested_percentage: str = Field(..., description="Suggested percentage")

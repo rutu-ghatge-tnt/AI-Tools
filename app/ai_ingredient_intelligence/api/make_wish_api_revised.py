@@ -46,6 +46,7 @@ from app.ai_ingredient_intelligence.logic.make_wish_config import (
     get_alternatives_for_ingredient, check_compatibility,
     generate_queue_number, EDIT_RULES
 )
+from app.ai_ingredient_intelligence.logic.make_wish_icon_mapping import emoji_to_icon
 
 # Import AI prompts
 from app.ai_ingredient_intelligence.logic.make_wish_prompts_revised import (
@@ -499,7 +500,7 @@ Ensure percentages are realistic and formula is manufacturable. Return ONLY the 
                 "complexity_info": {
                     "id": request.complexity,
                     "name": complexity_config["name"],
-                    "emoji": complexity_config["emoji"],
+                    "icon": complexity_config.get("icon", "circle"),
                     "description": complexity_config["description"],
                     "highlights": complexity_config["highlights"],
                     "marketing_angle": complexity_config["marketing_angle"]
@@ -591,7 +592,7 @@ async def get_ingredient_alternatives(
             "current": {
                 "name": current_variant.get("name", "Unknown"),
                 "inci_name": current_variant.get("inci", "Unknown"),
-                "emoji": current_variant.get("emoji", "🧪"),
+                "icon": current_variant.get("icon", emoji_to_icon(current_variant.get("emoji", "🧪"), "flask")),
                 "description": current_variant.get("description", ""),
                 "benefit_tag": current_variant.get("benefit", ""),
                 "suggested_percentage": current_variant.get("percentage", ""),
@@ -603,7 +604,7 @@ async def get_ingredient_alternatives(
                 {
                     "name": alt.get("name", "Unknown"),
                     "inci_name": alt.get("inci", "Unknown"),
-                    "emoji": alt.get("emoji", "🌿"),
+                    "icon": alt.get("icon", emoji_to_icon(alt.get("emoji", "🌿"), "leaf")),
                     "description": alt.get("description", ""),
                     "benefit_tag": alt.get("benefit", ""),
                     "suggested_percentage": alt.get("percentage", ""),
