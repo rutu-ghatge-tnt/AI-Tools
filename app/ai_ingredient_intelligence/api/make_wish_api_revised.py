@@ -156,6 +156,26 @@ async def parse_natural_language_wish(
         
         parsed_result["compatibility_issues"] = compatibility_issues
         
+        # Transform needs_clarification to ensure proper format
+        needs_clarification = parsed_result.get("needs_clarification", [])
+        if needs_clarification:
+            transformed_clarifications = []
+            for item in needs_clarification:
+                if isinstance(item, str):
+                    # Convert string to dictionary format
+                    transformed_clarifications.append({
+                        "question": item,
+                        "reason": f"Clarification needed for: {item}"
+                    })
+                elif isinstance(item, dict):
+                    # Already in correct format
+                    transformed_clarifications.append(item)
+                else:
+                    # Skip invalid items
+                    continue
+            
+            parsed_result["needs_clarification"] = transformed_clarifications
+        
         processing_time = time.time() - start_time
         print(f"✅ Wish parsed in {processing_time:.2f}s")
         print(f"   Category: {parsed_result.get('category', 'unknown')}")
@@ -274,8 +294,8 @@ async def generate_formula_revised(
         # Stage 2: Formula Optimization
         print("🔧 Stage 2: Formula Optimization...")
         
-        optimization_prompt = f"""
-You are a cosmetic formulation expert. Optimize ingredient percentages for a balanced formula.
+        # Simplified optimization prompt
+        optimization_prompt = f"""You are a cosmetic formulation expert. Optimize ingredient percentages for a balanced formula.
 
 ## FORMULA REQUIREMENTS
 - Product: {request.parsed_data.product_type.name} ({request.parsed_data.category})
@@ -336,7 +356,7 @@ You are a cosmetic formulation expert. Optimize ingredient percentages for a bal
             "function": "Purpose",
             "is_hero": true|false,
             "is_base": true|false,
-            "cost_contribution": ₹X.XX per 100g
+            "cost_contribution": "₹X.XX per 100g"
         }}
     ],
     "phase_summary": [
@@ -357,8 +377,7 @@ You are a cosmetic formulation expert. Optimize ingredient percentages for a bal
     }}
 }}
 
-Ensure percentages are realistic and the formula is manufacturable.
-"""
+Ensure percentages are realistic and formula is manufacturable. Return ONLY the JSON object above, no markdown formatting."""
         
         optimized_formula = await call_ai_with_claude(
             system_prompt="You are a cosmetic formulation expert. Optimize ingredient percentages for balanced, stable formulas.",
@@ -366,23 +385,41 @@ Ensure percentages are realistic and the formula is manufacturable.
             prompt_type="formula_optimization_revised"
         )
         
-        if not optimized_formula or "ingredients" not in optimized_formula:
+        # Debug: Log the actual structure returned
+        print(f"🔍 Optimized formula structure: {type(optimized_formula)}")
+        if isinstance(optimized_formula, dict):
+            print(f"   Keys: {list(optimized_formula.keys())}")
+        
+        if not optimized_formula:
             raise HTTPException(
                 status_code=500,
-                detail="Failed to optimize formula"
+                detail="Failed to optimize formula - empty response"
+            )
+        
+        # Check for multiple possible response formats
+        has_ingredients = "ingredients" in optimized_formula
+        has_optimized_formula = "optimized_formula" in optimized_formula
+        has_formula = "formula" in optimized_formula
+        
+        if not has_ingredients and not has_optimized_formula and not has_formula:
+            print(f"❌ Missing expected keys. Available keys: {list(optimized_formula.keys())}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to optimize formula - unexpected response format. Expected 'ingredients', 'optimized_formula', or 'formula' keys"
             )
         
         print(f"✅ Optimized formula: {optimized_formula['optimized_formula']['total_percentage']}%")
         
-        # Stage 3: Manufacturing Process (reuse existing)
-        print("🏭 Stage 3: Manufacturing Process...")
-        from app.ai_ingredient_intelligence.logic.make_wish_generator import generate_manufacturing_prompt
-        manufacturing_prompt = generate_manufacturing_prompt(optimized_formula)
-        manufacturing = await call_ai_with_claude(
-            system_prompt="Generate detailed manufacturing instructions for cosmetic formulations.",
-            user_prompt=manufacturing_prompt,
-            prompt_type="manufacturing_process"
-        )
+        # Stage 3: Manufacturing Process (reuse existing) - COMMENTED FOR NOW
+        # print("🏭 Stage 3: Manufacturing Process...")
+        # from app.ai_ingredient_intelligence.logic.make_wish_generator import generate_manufacturing_prompt
+        # manufacturing_prompt = generate_manufacturing_prompt(optimized_formula)
+        # manufacturing = await call_ai_with_claude(
+        #     system_prompt="Generate detailed manufacturing instructions for cosmetic formulations.",
+        #     user_prompt=manufacturing_prompt,
+        #     prompt_type="manufacturing_process"
+        # )
+        manufacturing = {}  # Placeholder for future use
         
         # Stage 4: Compliance Check (reuse existing)
         print("✅ Stage 4: Compliance Check...")
@@ -397,7 +434,14 @@ Ensure percentages are realistic and the formula is manufacturable.
         # Stage 5: Insights Generation (NEW)
         print("💡 Stage 5: Insights Generation...")
         
-        key_ingredients = [ing for ing in optimized_formula["ingredients"] if ing.get("is_hero", False)]
+        # Get ingredients from the correct nested structure
+        ingredients_list = []
+        if "ingredients" in optimized_formula:
+            ingredients_list = optimized_formula["ingredients"]
+        elif "formula" in optimized_formula and "ingredients" in optimized_formula["formula"]:
+            ingredients_list = optimized_formula["formula"]["ingredients"]
+        
+        key_ingredients = [ing for ing in ingredients_list if ing.get("is_hero", False)]
         
         insights_prompt = INSIGHTS_GENERATION_PROMPT.format(
             formula_name=optimized_formula["optimized_formula"]["name"],
@@ -417,6 +461,11 @@ Ensure percentages are realistic and the formula is manufacturable.
         # Generate unique IDs
         formula_id = str(uuid.uuid4())
         if not history_id:
+            optimized_formula["insights"] = insights
+            optimized_formula["manufacturing"] = manufacturing
+            optimized_formula["compliance"] = compliance
+            # optimized_formula["complexity_config"] = complexity_config
+
             # Create new history record
             try:
                 history_doc = {
@@ -429,7 +478,7 @@ Ensure percentages are realistic and the formula is manufacturable.
                     "complexity": request.complexity,
                     "formula_id": formula_id,
                     "formula_data": optimized_formula,
-                    "insights": insights,
+                    # "insights": insights,
                     "status": "completed",
                     "created_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat(),
                     "updated_at": datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
@@ -460,8 +509,8 @@ Ensure percentages are realistic and the formula is manufacturable.
                 "texture": request.parsed_data.auto_texture.model_dump(),
                 "phases": [],  # TODO: Convert from optimized format
                 "hero_ingredients": [],  # TODO: Convert from optimized format
-                "total_ingredients": len(optimized_formula["ingredients"]),
-                "total_hero_actives": len([ing for ing in optimized_formula["ingredients"] if ing.get("is_hero", False)]),
+                "total_ingredients": len(ingredients_list),
+                "total_hero_actives": len(key_ingredients),
                 "available_claims": request.claims or [],
                 "exclusions_met": request.parsed_data.detected_exclusions
             },
@@ -579,6 +628,77 @@ async def get_ingredient_alternatives(
         raise HTTPException(
             status_code=500,
             detail=f"Error getting alternatives: {str(e)}"
+        )
+
+# STAGE 4.5: EDIT METADATA ENDPOINT
+# ============================================================================
+
+@router.patch("/{wishId}", response_model=dict)
+async def edit_formula_metadata(
+    wishId: str,
+    request: dict,
+    current_user: dict = Depends(verify_jwt_token)
+):
+    """
+    Edit formula metadata (name, tag, notes) without changing formula itself.
+    
+    This endpoint allows users to:
+    - Update formula name
+    - Update tag for categorization  
+    - Update notes
+    - Preserve all formula data unchanged
+    """
+    try:
+        print(f"📝 Editing formula metadata: {wishId}")
+        
+        obj_id = ObjectId(wishId)
+        # Extract user info
+        user_id = current_user.get("user_id") or current_user.get("_id")
+        
+       # Allowed fields whitelist (defense-in-depth)
+        ALLOWED_FIELDS = {"name", "tag", "notes"}
+
+          # Filter allowed fields only
+        data = {k: v for k, v in request.items() if k in ALLOWED_FIELDS and v is not None}
+
+        # Trim name
+        if "name" in data and isinstance(data["name"], str):
+            data["name"] = data["name"].strip()
+
+        # No valid fields
+        if not data:
+            raise HTTPException(400, "No valid fields provided")
+
+        # Build update document
+        update_doc = {
+            **data,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }
+
+        # Atomic update (ownership enforced)
+        result = await wish_history_col.update_one(
+            {"_id": obj_id, "user_id": user_id},
+            {"$set": update_doc}
+        )
+
+        # Not found or unauthorized
+        if result.matched_count == 0:
+            raise HTTPException(404, "Formula not found or access denied")
+
+        return {
+            "success": True,
+            "message": "Updated successfully"
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error editing metadata: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error: {str(e)}"
         )
 
 
@@ -892,66 +1012,80 @@ async def submit_commercialization_request(
                 detail="Formula not found or access denied"
             )
         
+        # Check if commercialization request already exists for this formula
+        existing_request = await commercialization_requests_col.find_one({
+            "user_id": user_id,
+            "formula_id": request.formula_id,
+            "history_id": request.history_id,
+            "status": {"$in": ["submitted", "in_progress", "review", "approved"]}
+        })
+        
+        if existing_request:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Commercialization request already exists for this formula. Request ID: {existing_request.get('request_id', 'N/A')}, Queue Number: {existing_request.get('queue_number', 'N/A')}"
+            )
+        
         # Generate queue number and request ID
         queue_number = generate_queue_number()
         request_id = str(uuid.uuid4())
-        submitted_at = datetime.now(timezone(timedelta(hours=5, minutes=30)))
+        created_at = datetime.now(timezone(timedelta(hours=5, minutes=30)))
         
         # Determine queue position (simplified)
         queue_position = None  # Would be calculated from database
         
         # Define next steps based on experience level
         next_steps = []
-        if request.user_profile.experience_level == "dreaming":
+        if request.experience_level == "dreaming":
             next_steps = [
                 {
                     "order": 1,
-                    "icon": "message-circle",
+                    "icon": "phone-arrow-up-right",  # Consultation
                     "title": "Consultation Call",
                     "description": "Our formulation expert will call you to understand your vision and requirements",
                     "estimated_timeline": "1-2 business days"
                 },
                 {
                     "order": 2,
-                    "icon": "flask",
+                    "icon": "beaker",  # Sample development
                     "title": "Sample Development",
                     "description": "We'll create and test samples based on your formula",
                     "estimated_timeline": "2-3 weeks"
                 },
                 {
                     "order": 3,
-                    "icon": "clipboard",
+                    "icon": "document-check",  # Regulatory review
                     "title": "Regulatory Review",
                     "description": "Complete compliance and documentation review",
                     "estimated_timeline": "1 week"
                 },
                 {
                     "order": 4,
-                    "icon": "factory",
+                    "icon": "building-office-2",  # Production planning
                     "title": "Production Planning",
                     "description": "Finalize manufacturing specifications and schedule",
                     "estimated_timeline": "1 week"
                 }
             ]
-        elif request.user_profile.experience_level == "ready":
+        elif request.experience_level == "ready":
             next_steps = [
                 {
                     "order": 1,
-                    "icon": "flask",
+                    "icon": "beaker",
                     "title": "Sample Batch",
                     "description": "Create production samples for your approval",
                     "estimated_timeline": "1-2 weeks"
                 },
                 {
                     "order": 2,
-                    "icon": "clipboard",
+                    "icon": "document-text",
                     "title": "Final Documentation",
                     "description": "Prepare all manufacturing and compliance documents",
                     "estimated_timeline": "3-5 days"
                 },
                 {
                     "order": 3,
-                    "icon": "factory",
+                    "icon": "factory",  # Requires Heroicons v2 custom or fallback
                     "title": "Production Start",
                     "description": "Begin manufacturing your product",
                     "estimated_timeline": "2-3 weeks"
@@ -961,14 +1095,14 @@ async def submit_commercialization_request(
             next_steps = [
                 {
                     "order": 1,
-                    "icon": "message-circle",
+                    "icon": "chat-bubble-left-right",
                     "title": "Discovery Call",
                     "description": "Let's discuss your product goals and timeline",
                     "estimated_timeline": "1-2 business days"
                 },
                 {
                     "order": 2,
-                    "icon": "bar-chart",
+                    "icon": "chart-bar",
                     "title": "Feasibility Analysis",
                     "description": "Technical and commercial viability assessment",
                     "estimated_timeline": "1 week"
@@ -976,14 +1110,14 @@ async def submit_commercialization_request(
             ]
         
         # Commitment information
-        commitment_info = {
-            "amount": 5000,
-            "currency": "INR",
-            "refundable": True,
-            "refund_policy": "100% refundable if you decide not to proceed after consultation",
-            "platform_charges": "No platform charges",
-            "purpose": "To ensure dedicated time and resources for your project"
-        }
+        # commitment_info = {
+        #     "amount": 5000,
+        #     "currency": "INR",
+        #     "refundable": True,
+        #     "refund_policy": "100% refundable if you decide not to proceed after consultation",
+        #     "platform_charges": "No platform charges",
+        #     "purpose": "To ensure dedicated time and resources for your project"
+        # }
         
         # Save commercialization request to database
         commercialization_doc = {
@@ -992,13 +1126,18 @@ async def submit_commercialization_request(
             "user_id": user_id,
             "formula_id": request.formula_id,
             "history_id": request.history_id,
-            "user_profile": request.user_profile.model_dump(),
-            "formula_snapshot": request.formula_snapshot,
+            "name": request.name,
+            "phone": request.phone,
+            "city": request.city,
+            "experience_level": request.experience_level,
+            "timeline": request.timeline,
+            "quantity_interest": request.quantity_interest,
+            "additional_notes": request.additional_notes,
             "status": "submitted",
-            "submitted_at": submitted_at.isoformat(),
+            "created_at": created_at.isoformat(),
             "next_steps": next_steps,
-            "commitment_info": commitment_info,
-            "updated_at": submitted_at.isoformat()
+            # "commitment_info": commitment_info,
+            "updated_at": created_at.isoformat()
         }
         
         try:
@@ -1010,17 +1149,17 @@ async def submit_commercialization_request(
         
         print(f"✅ Commercialization request submitted")
         print(f"   Queue Number: {queue_number}")
-        print(f"   Experience Level: {request.user_profile.experience_level}")
-        print(f"   Timeline: {request.user_profile.timeline}")
+        print(f"   Experience Level: {request.experience_level}")
+        print(f"   Timeline: {request.timeline}")
         
         return GetThisMadeResponse(
             success=True,
             queue_number=queue_number,
             queue_position=queue_position,
             request_id=request_id,
-            submitted_at=submitted_at,
+            created_at=created_at,
             next_steps=next_steps,
-            commitment_info=commitment_info
+            # commitment_info=commitment_info
         )
     
     except HTTPException:

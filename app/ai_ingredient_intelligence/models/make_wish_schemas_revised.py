@@ -72,7 +72,7 @@ class ParsedWishData(BaseModel):
     detected_skin_types: List[str] = Field(default_factory=list, description="Skin types mentioned")
     detected_hair_concerns: List[str] = Field(default_factory=list, description="Hair concerns mentioned")
     auto_texture: TextureInfo = Field(..., description="Auto-detected texture")
-    needs_clarification: List[ClarificationQuestion] = Field(default_factory=list, description="Questions if ambiguous")
+    needs_clarification: List[Dict[str, Any]] = Field(default_factory=list, description="Simple clarification questions from AI")
 
 
 class ParseWishResponse(BaseModel):
@@ -380,7 +380,6 @@ class CommercializationProfile(BaseModel):
     timeline: str = Field(..., description="Timeline: 'asap', '3months', '6months', or 'exploring'")
     
     # Optional
-    brand_name: Optional[str] = Field(None, description="Brand name if they have one")
     quantity_interest: Optional[str] = Field(None, description="Quantity interest")
     additional_notes: Optional[str] = Field(None, description="Additional notes")
 
@@ -389,14 +388,19 @@ class GetThisMadeRequest(BaseModel):
     """Request schema for commercialization"""
     formula_id: str = Field(..., description="Formula ID")
     history_id: str = Field(..., description="History ID")
-    user_profile: CommercializationProfile = Field(..., description="User commercialization profile")
-    formula_snapshot: Dict[str, Any] = Field(..., description="Current formula state")
+    name: str = Field(..., description="User name")
+    phone: str = Field(..., description="WhatsApp phone number")
+    city: str = Field(..., description="City")
+    experience_level: str = Field(..., description="Experience level")
+    timeline: str = Field(..., description="Timeline")
+    quantity_interest: Optional[str] = Field(None, description="Quantity interest")
+    additional_notes: Optional[str] = Field(None, description="Additional notes")
 
 
 class NextStep(BaseModel):
     """Next step in commercialization process"""
     order: int = Field(..., description="Step order")
-    icon: str = Field(..., description="Heroicon/Lucide icon name for step")
+    icon: str = Field(..., description="Step icon name")
     title: str = Field(..., description="Step title")
     description: str = Field(..., description="Step description")
     estimated_timeline: Optional[str] = Field(None, description="Estimated timeline")
@@ -418,6 +422,6 @@ class GetThisMadeResponse(BaseModel):
     queue_number: str = Field(..., description="Queue number assigned")
     queue_position: Optional[int] = Field(None, description="Position in queue")
     request_id: str = Field(..., description="Request tracking ID")
-    submitted_at: datetime = Field(..., description="Submission timestamp")
+    created_at: datetime = Field(..., description="Creation timestamp")
     next_steps: List[NextStep] = Field(..., description="Next steps")
-    commitment_info: CommitmentInfo = Field(..., description="Commitment information")
+    # commitment_info: CommitmentInfo = Field(..., description="Commitment information")

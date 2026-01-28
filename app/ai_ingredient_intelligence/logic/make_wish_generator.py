@@ -611,11 +611,57 @@ async def call_ai_with_claude(
                 print(f"❌ JSON Decode Error: {str(e)}")
                 print(f"❌ Content that failed: {content[:500]}...")
                 
-                # Try to extract JSON from text
-                json_match = re.search(r'\{.*\}', content, re.DOTALL)
-                if json_match:
+                # Try to extract JSON from text - improved regex
+                # Look for JSON that starts with a typical JSON structure
+                json_patterns = [
+                    r'\{[^{}]*"[^"]+"\s*:\s*[^{}]*\}',  # Simple JSON objects
+                    r'\{.*?"formula_name".*?\}',        # JSON with formula_name
+                    r'\{.*?"analysis_date".*?\}',        # JSON with analysis_date
+                    r'\{.*?"target_markets".*?\}',       # JSON with target_markets
+                    r'\{.*?"critical_note".*?\}',        # JSON with critical_note
+                ]
+                
+                for pattern in json_patterns:
+                    json_match = re.search(pattern, content, re.DOTALL)
+                    if json_match:
+                        try:
+                            json_str = json_match.group()
+                            # Try to balance braces
+                            open_count = json_str.count('{')
+                            close_count = json_str.count('}')
+                            if open_count > close_count:
+                                # Add missing closing braces
+                                json_str += '}' * (open_count - close_count)
+                            
+                            result = json.loads(json_str)
+                            print(f"✅ Extracted JSON using pattern: {pattern}")
+                            return result
+                        except json.JSONDecodeError:
+                            continue
+                
+                # Last resort - find the largest JSON-like structure
+                lines = content.split('\n')
+                json_lines = []
+                in_json = False
+                brace_count = 0
+                
+                for line in lines:
+                    line = line.strip()
+                    if line.startswith('{'):
+                        in_json = True
+                        brace_count = line.count('{') - line.count('}')
+                        json_lines.append(line)
+                    elif in_json:
+                        brace_count += line.count('{') - line.count('}')
+                        json_lines.append(line)
+                        if brace_count <= 0:
+                            break
+                
+                if json_lines:
                     try:
-                        result = json.loads(json_match.group())
+                        json_str = '\n'.join(json_lines)
+                        result = json.loads(json_str)
+                        print(f"✅ Extracted JSON using line-by-line method")
                         return result
                     except json.JSONDecodeError:
                         pass

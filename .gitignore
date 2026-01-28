@@ -24,6 +24,8 @@ venv311/
 venv311/pyvenv.cfg
 venv311/docx-template/docProps/thumbnail.jpeg
 
+endpoint_timing.xlsx
+
 # Database folder
 chroma_db/
 chroma_db/chroma.sqlite3

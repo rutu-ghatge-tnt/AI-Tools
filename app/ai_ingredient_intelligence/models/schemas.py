@@ -220,7 +220,7 @@ class DecodeHistoryItem(BaseModel):
     input_data: str = Field(..., description="Input data (INCI list or URL)")
     status: str = Field(..., description="Status: 'pending' (analysis in progress), 'analyzed' (completed), or 'failed'")
     analysis_result: Optional[Dict] = Field(None, description="Full analysis result (only present when status is 'analyzed')")
-    report_data: Optional[str] = Field(None, description="Generated report HTML (if available)")
+    report_data: Optional[Union[str, Dict]] = Field(None, description="Generated report HTML or JSON data (if available)")
     notes: Optional[str] = Field(None, description="User notes for this decode")
     created_at: Optional[str] = Field(None, description="Creation timestamp")
 
